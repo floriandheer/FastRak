@@ -1,8 +1,8 @@
 {
     "woocommerce": {
         "url": "https://yourdomain.com",
-        "consumer_key": "",
-        "consumer_secret": "",
+        "consumer_key": "ck_YOUR_CONSUMER_KEY_HERE",
+        "consumer_secret": "cs_YOUR_CONSUMER_SECRET_HERE",
         "api_version": "wc/v3"
     },
     "bpost": {
@@ -14,11 +14,11 @@
         "poll_interval": 300,
         "check_orders_since_hours": 48,
         "base_directory": "I:/Physical/Orders",
-        "processed_orders_file": "processed_orders.json"
+        "processed_orders_file": "P:/_Script/floriandheer/modules/processed_orders.json"
     },
     "logging": {
         "enabled": true,
-        "log_file": "woocommerce_bpost_monitor.log",
+        "log_file": "P:/_Script/floriandheer/modules/woocommerce_bpost_monitor.log",
         "log_level": "INFO"
     }
 }

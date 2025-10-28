@@ -36,6 +36,9 @@ class Config:
     
     def load_config(self) -> Dict:
         """Load configuration from file"""
+        # Use absolute paths relative to script directory
+        script_dir = Path(__file__).parent
+
         default_config = {
             "woocommerce": {
                 "url": "https://yourdomain.com",
@@ -52,11 +55,11 @@ class Config:
                 "poll_interval": 300,  # seconds (5 minutes)
                 "check_orders_since_hours": 48,  # Check orders from last 48 hours
                 "base_directory": "I:/Physical/Orders",
-                "processed_orders_file": "processed_orders.json"
+                "processed_orders_file": str(script_dir / "processed_orders.json")
             },
             "logging": {
                 "enabled": True,
-                "log_file": "woocommerce_bpost_monitor.log",
+                "log_file": str(script_dir / "woocommerce_bpost_monitor.log"),
                 "log_level": "INFO"
             }
         }
@@ -67,6 +70,16 @@ class Config:
                     loaded_config = json.load(f)
                     # Merge with defaults
                     self._merge_config(default_config, loaded_config)
+
+                    # Convert relative paths to absolute paths
+                    log_file = default_config['logging']['log_file']
+                    if not os.path.isabs(log_file):
+                        default_config['logging']['log_file'] = str(script_dir / log_file)
+
+                    processed_file = default_config['monitoring']['processed_orders_file']
+                    if not os.path.isabs(processed_file):
+                        default_config['monitoring']['processed_orders_file'] = str(script_dir / processed_file)
+
                     return default_config
             except Exception as e:
                 print(f"Error loading config: {e}")

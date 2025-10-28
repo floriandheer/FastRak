@@ -63,3 +63,8 @@ desktop.ini
 data/
 backups/
 output/
+
+# WooCommerce bpost Monitor - Sensitive data
+modules/woocommerce_bpost_config.json
+modules/processed_orders.json
+modules/woocommerce_bpost_monitor.log
