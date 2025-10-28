@@ -83,6 +83,24 @@ python floriandheer_pipeline.py
 - Double-click `floriandheer_pipeline_launcher.vbs`
 - This method hides the console window for a cleaner experience
 
+### Creating a Taskbar Shortcut (Windows)
+
+To pin a VBS launcher shortcut to your Windows taskbar:
+
+1. Create a shortcut to the VBS file
+2. Right-click the shortcut and select **Properties**
+3. In the **Target** field, add `explorer` before the path:
+   ```
+   explorer C:\path\to\floriandheer_pipeline_launcher.vbs
+   ```
+4. Click **OK** to save
+5. Right-click the shortcut and select **Pin to taskbar**
+6. After pinning, right-click the taskbar icon → **Properties** to change the icon back to your preferred icon
+
+**Example:** `explorer C:\iTunes.VBS`
+
+**Note:** You'll need to reapply the custom icon after adding the `explorer` prefix, as Windows may reset it.
+
 ### Available Pipeline Scripts
 
 The Pipeline Manager includes 14+ specialized scripts organized by category:
