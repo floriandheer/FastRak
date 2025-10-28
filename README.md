@@ -16,7 +16,7 @@ The Pipeline-Manager is a comprehensive toolkit designed to streamline various c
 
 ## Screenshots
 
-![Pipeline Manager Interface](docs/Screenshot 2025-10-28..png)
+![Pipeline Manager Interface](docs/Screenshot 2025-10-28.png)
 ## Requirements
 
 ### System Requirements
