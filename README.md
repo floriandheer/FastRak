@@ -123,7 +123,7 @@ The Pipeline Manager includes 14+ specialized scripts organized by category:
 
 #### 🖨️ 3D Printing
 - **New 3D Printing Project** - Organize 3D printing files and iterations
-- **WooCommerce Order Monitor** - Monitor WooCommerce orders and organize folders with packing slips, labels, invoices and details
+- [**WooCommerce Order Monitor**](README_ORDER_MONITOR.md) - Monitor WooCommerce orders and organize folders with packing slips, labels, invoices and details
 
 #### 📊 Business & Bookkeeping
 - **New Bookkeeping Project** - Financial organization structure
