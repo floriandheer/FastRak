@@ -11,7 +11,7 @@ This workflow manages reference image collections using broad categories as fold
 - [Advanced Renamer](https://www.advancedrenamer.com/) - Batch file renaming
 - [Allusion](https://allusion-app.github.io/) - Visual library management
 - Python - Automation scripting
-- [taggui](https://github.com/jhc13/taggui) - AI-powered image captioning
+- [TagGUI](https://github.com/jhc13/taggui) - AI-powered image captioning
 
 ## 📋 Workflow
 
