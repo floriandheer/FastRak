@@ -115,7 +115,7 @@ The Pipeline Manager includes 14+ specialized scripts organized by category:
 #### 🎨 Visual Design
 - **New CG Project** - Computer graphics project structure
 - **New GD Project** - Graphic design project structure
-- **Add Text to Image Metadata** - Embed text descriptions in image EXIF data
+- [**Add Text to Image Metadata**](README_ADD_TEXT_TO_IMAGE_METADATA.md) - Embed text descriptions in image EXIF data
 
 #### 🌐 Web Development
 - **New Web Project** - Standardized web development structure
