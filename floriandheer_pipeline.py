@@ -211,10 +211,10 @@ CREATIVE_CATEGORIES = {
                         "description": "Create standardized folder structure for 3D printing projects based on template",
                         "icon": "📁"
                     },
-                    "woocommerce_bpost": {
-                        "name": "WooCommerce bpost Monitor",
-                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Physical_WooCommerceBpostMonitor.py"),
-                        "description": "Automatically monitor WooCommerce orders and download bpost shipping labels",
+                    "woocommerce_monitor": {
+                        "name": "WooCommerce Order Monitor",
+                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Physical_WooCommerceOrderMonitor.py"),
+                        "description": "Automatically monitor WooCommerce orders and organize folders with invoices, labels, and details",
                         "icon": "📦"
                     }
                 }

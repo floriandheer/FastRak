@@ -1,0 +1,2 @@
+# WooCommerce Order Monitor Requirements
+requests>=2.28.0

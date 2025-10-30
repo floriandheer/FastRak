@@ -1,0 +1,31 @@
+{
+    "woocommerce": {
+        "url": "https://yourdomain.com",
+        "consumer_key": "ck_YOUR_CONSUMER_KEY_HERE",
+        "consumer_secret": "cs_YOUR_CONSUMER_SECRET_HERE",
+        "api_version": "wc/v3",
+        "monitor_secret_key": ""
+    },
+    "monitoring": {
+        "poll_interval": 300,
+        "check_orders_since_hours": 48,
+        "base_directory": "I:/Physical/Orders",
+        "download_invoices": true,
+        "download_labels": true
+    },
+    "folder_structure": {
+        "naming_format": "Order_{order_number}_{customer_name}",
+        "include_date": false,
+        "subfolder_documents": false
+    },
+    "documents": {
+        "invoice_filename": "Invoice_{order_number}.pdf",
+        "label_filename": "Shipping_Label_{order_number}.pdf",
+        "order_details_filename": "Order_Details_{order_number}.txt"
+    },
+    "filters": {
+        "order_statuses": ["processing", "completed"],
+        "shipping_methods": [],
+        "payment_methods": []
+    }
+}
