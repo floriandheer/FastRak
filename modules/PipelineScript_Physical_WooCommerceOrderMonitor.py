@@ -81,16 +81,6 @@ class Config:
                 with open(self.config_file, 'r') as f:
                     loaded_config = json.load(f)
                     self._merge_config(default_config, loaded_config)
-
-                    # Convert relative paths to absolute
-                    log_file = default_config['logging']['log_file']
-                    if not os.path.isabs(log_file):
-                        default_config['logging']['log_file'] = str(script_dir / log_file)
-
-                    processed_file = default_config['monitoring']['processed_orders_file']
-                    if not os.path.isabs(processed_file):
-                        default_config['monitoring']['processed_orders_file'] = str(script_dir / processed_file)
-
                     return default_config
             except Exception as e:
                 print(f"Error loading config: {e}")
