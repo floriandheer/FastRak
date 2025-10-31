@@ -1,16 +1,16 @@
 # Pipeline-Manager
 
-A professional pipeline management system for creative and business workflows, featuring a modern GUI interface and automated folder structure creation.
+A professional pipeline management system for creative and business workflows with GUI.
 
 ## Overview
 
-The Pipeline-Manager is a comprehensive toolkit designed to streamline various creative and business processes. It provides an intuitive interface for managing projects across multiple domains including audio production, visual design, web development, photography, and business operations.
+The Pipeline-Manager is a toolkit designed to streamline various creative and business processes. It provides an intuitive interface for managing projects across multiple domains including audio production, visual design, web development, photography, and business operations.
 
 ### Key Features
 
-- **Professional GUI Interface** - Modern dark-themed interface built with tkinter
+- **Professional GUI Interface** - Dark-themed interface built with tkinter
 - **Multi-Domain Support** - Handles audio, visual, web, photography, and business workflows
-- **Automated Folder Structures** - Create standardized project folders instantly
+- **Automated Folder Structures** - Create standardized project folders for each domain
 - **Backup & Sync Tools** - Automated backup and synchronization utilities
 - **Extensible Architecture** - Modular design for easy additions and customizations
 
@@ -50,24 +50,6 @@ The Pipeline-Manager is a comprehensive toolkit designed to streamline various c
    pip install -r requirements.txt
    ```
 
-3. **Launch the application**
-   ```bash
-   python floriandheer_pipeline.py
-   ```
-
-   **Or on Windows**: Double-click `floriandheer_pipeline_launcher.vbs`
-
-### Advanced Installation Options
-
-The installer supports selective installation:
-
-```bash
-# Install only desktop application dependencies
-python install_dependencies.py --desktop-only
-
-# Skip optional packages
-python install_dependencies.py --skip-optional
-```
 
 ## Usage
 
@@ -105,8 +87,8 @@ To pin a VBS launcher shortcut to your Windows taskbar:
 The Pipeline Manager includes 14+ specialized scripts organized by category:
 
 #### 🎵 Audio Production
-- **Backup MusicBee to OneDrive** - Incremental backup of MusicBee library
 - **New DJ Project** - Create standardized DJ project structure
+- **Backup MusicBee to OneDrive** - Incremental backup of MusicBee library
 - **Sync iTunes Playlists to DJ Library** - Synchronize playlists with WAV conversion
 
 #### 📸 Photography
@@ -126,7 +108,7 @@ The Pipeline Manager includes 14+ specialized scripts organized by category:
 - [**WooCommerce Order Monitor**](README_ORDER_MONITOR.md) - Monitor WooCommerce orders and organize folders with packing slips, labels, invoices and details
 
 #### 📊 Business & Bookkeeping
-- **New Bookkeeping Project** - Financial organization structure
+- **Create Bookkeeping Folder Structure** - Financial organization structure
 - **Invoice Renamer** - Automatically rename and organize invoices
 
 #### 🔧 Global Utilities
@@ -193,21 +175,6 @@ CREATIVE_CATEGORIES = {
 2. Follow the naming convention: `PipelineScript_Category_Name.py`
 3. Add the script reference in `floriandheer_pipeline.py` under the appropriate category
 
-## Development
-
-### Architecture
-
-- **Main Application**: `floriandheer_pipeline.py` - tkinter-based GUI
-- **Pipeline Scripts**: Modular Python scripts in `modules/`
-- **Installer**: Smart dependency management in `install_dependencies.py`
-
-### Code Style
-
-- Python 3.8+ compatible
-- PEP 8 compliant
-- Comprehensive inline documentation
-- Type hints where applicable
-
 ## Troubleshooting
 
 ### Common Issues
@@ -223,40 +190,10 @@ CREATIVE_CATEGORIES = {
 - Solution: Verify script paths in the main configuration match your system
 - Check that base folder paths exist or script can create them
 
-**Issue: GUI appears blank or crashes**
-- Solution: Ensure tkinter is installed (included with most Python installations)
-- On Linux: `sudo apt-get install python3-tk`
-
-## Version History
-
-### Version 0.5.0 (Current)
-- Professional project structure with comprehensive documentation
-- Added README, LICENSE, CHANGELOG, and .gitignore
-- Fixed requirements.txt (added pyexiv2, removed unused dependencies)
-- Organized assets into dedicated folder
-- Created docs/, config/, and tests/ directories
-- Professional dark-themed UI
-- Enhanced error handling and logging
-- Modular script organization
-
-### Version 0.4.0
-- Professional dark-themed UI
-- Category-based script organization
-- Multi-threaded script execution
-- Enhanced error handling
-
-### Version 0.3.0
-- Initial pipeline manager with GUI
-- Basic script launcher functionality
-- Core pipeline scripts for various workflows
 
 ## Contributing
 
 This is a personal pipeline management system, but suggestions and improvements are welcome!
-
-1. Test your changes thoroughly
-2. Follow existing code style
-3. Update documentation as needed
 
 ## License
 
