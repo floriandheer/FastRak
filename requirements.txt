@@ -1,3 +1,0 @@
-# Core dependencies
-pillow>=10.0.0
-pyexiv2>=2.8.0

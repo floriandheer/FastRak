@@ -40,16 +40,9 @@ The Pipeline-Manager is a toolkit designed to streamline various creative and bu
 
 2. **Install dependencies**
 
-   **Option A: Automatic installation (recommended)**
    ```bash
    python install_dependencies.py
    ```
-
-   **Option B: Manual installation**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
 
 ## Usage
 
