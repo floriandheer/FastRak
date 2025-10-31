@@ -114,44 +114,6 @@ The Pipeline Manager includes 14+ specialized scripts organized by category:
 #### 🔧 Global Utilities
 - **Cleanup Tool** - System-wide cleanup and maintenance utilities
 
-## Project Structure
-
-```
-floriandheer/
-├── README.md                              # Main documentation
-├── LICENSE                                # License information
-├── CHANGELOG.md                           # Version history
-├── requirements.txt                       # Python dependencies
-├── .gitignore                            # Git ignore patterns
-│
-├── floriandheer_pipeline.py              # Main application launcher
-├── install_dependencies.py                # Dependency installer
-├── floriandheer_pipeline_launcher.vbs    # Windows silent launcher
-│
-├── assets/                                # Images and icons
-│   ├── Logo_FlorianDheer_LogoWhite.png
-│   └── Favicon_FlorianDheer_WebWhite.ico
-│
-├── modules/                               # Pipeline script modules
-│   ├── PipelineScript_Audio_*.py
-│   ├── PipelineScript_Photo_*.py
-│   ├── PipelineScript_Visual_*.py
-│   ├── PipelineScript_Web_*.py
-│   ├── PipelineScript_Physical_*.py
-│   ├── PipelineScript_Bookkeeping_*.py
-│   └── PipelineScript_Global_*.py
-│
-├── docs/                                  # Documentation
-│   ├── INSTALLATION.md                   # Installation guide
-│   ├── CONFIGURATION.md                  # Configuration guide
-│   └── CONTRIBUTING.md                   # Contribution guidelines
-│
-├── config/                                # Configuration files
-│   └── README.md                         # Config documentation
-│
-└── tests/                                 # Test files
-    └── README.md                         # Testing documentation
-```
 
 ## Configuration
 
@@ -206,7 +168,3 @@ This is proprietary software for personal use.
 **Florian Dheer**
 
 For questions or support, please refer to the inline documentation or contact the author.
-
----
-
-*Last updated: 2025-01-27*
