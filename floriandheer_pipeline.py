@@ -85,15 +85,9 @@ CREATIVE_CATEGORIES = {
                 "name": "DJ Tools",
                 "icon": "🎧",
                 "scripts": {
-                    "folder_structure": {
-                        "name": "New DJ Project",
-                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_AudioDJ_FolderStructure.py"),
-                        "description": "Create standardized folder structure for DJ projects based on template",
-                        "icon": "📁"
-                    },                
                     "sync_playlists": {
                         "name": "Sync iTunes Playlists to DJ Library",
-                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_AudioDJ_TraktorSyncPlaylists.py"),
+                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Audio_TraktorSyncPlaylists.py"),
                         "description": "Synchronize iTunes playlists to Traktor DJ library with WAV conversion",
                         "icon": "🔄"
                     }
@@ -105,8 +99,8 @@ CREATIVE_CATEGORIES = {
                 "scripts": {
                     "folder_structure": {
                         "name": "New Audio Production Project",
-                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_AudioProd_FolderStructure.py"),
-                        "description": "Create standardized folder structure for audio production projects based on template",
+                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Audio_FolderStructure.py"),
+                        "description": "Create folder structure for audio production projects",
                         "icon": "📁"
                     }
                 }
@@ -122,8 +116,14 @@ CREATIVE_CATEGORIES = {
             "folder_structure": {
                 "name": "New Photo Project",
                 "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Photo_FolderStructure.py"),
-                "description": "Create standardized folder structure for photography projects",
+                "description": "Create folder structure for photography projects",
                 "icon": "📁"
+            },
+            "new_collection": {
+                "name": "New Photo Collection",
+                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Photo_NewCollection.py"),
+                "description": "Create a photo collection folder in E:/_photo with date, location, and activity",
+                "icon": "📸"
             }
         },
         "subcategories": {}
@@ -147,9 +147,9 @@ CREATIVE_CATEGORIES = {
                 "icon": "🎬",
                 "scripts": {
                     "folder_structure": {
-                        "name": "New CG Project",
-                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_VisualCG_FolderStructure.py"),
-                        "description": "Create standardized folder structure for visual projects",
+                        "name": "New VFX Project",
+                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Visual_FolderStructure_VFX.py"),
+                        "description": "Create folder structure for VFX/3D projects",
                         "icon": "📁"
                     }
                 }
@@ -160,8 +160,8 @@ CREATIVE_CATEGORIES = {
                 "scripts": {
                     "folder_structure": {
                         "name": "New Graphic Design Project",
-                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_VisualGD_FolderStructure.py"),
-                        "description": "Create standardized folder structure for graphic design projects based on template",
+                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Visual_FolderStructure_GD.py"),
+                        "description": "Create folder structure for graphic design projects",
                         "icon": "📁"
                     }
                 }
@@ -188,7 +188,7 @@ CREATIVE_CATEGORIES = {
             "folder_structure": {
                 "name": "New Webdev Project",
                 "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Web_FolderStructure.py"),
-                "description": "Create standardized folder structure for web projects based on template",
+                "description": "Create folder structure for web projects",
                 "icon": "📁"
             }
         },
@@ -207,8 +207,8 @@ CREATIVE_CATEGORIES = {
                 "scripts": {
                     "folder_structure": {
                         "name": "New 3D Printing Project",
-                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Physical3DPrinting_FolderStructure.py"),
-                        "description": "Create standardized folder structure for 3D printing projects based on template",
+                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Physical_FolderStructure.py"),
+                        "description": "Create folder structure for 3D printing projects",
                         "icon": "📁"
                     },
                     "woocommerce_monitor": {
@@ -241,7 +241,7 @@ BUSINESS_CATEGORIES = {
             "bookkeeping_structure": {
                 "name": "Create Bookkeeping Folder Structure",
                 "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Bookkeeping_FolderStructure.py"),
-                "description": "Create standardized folder structure for bookkeeping and financial records",
+                "description": "Create folder structure for bookkeeping and financial records",
                 "icon": "📋"
             },
             "invoice_renamer": {
@@ -262,7 +262,7 @@ BUSINESS_CATEGORIES = {
             "global_cleanup": {
                 "name": "Global Cleanup",
                 "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Global_Cleanup.py"),
-                "description": "Clean up temporary files and folders based on configurable rules",
+                "description": "Clean up temporary files and folders",
                 "icon": "🧹"
             }
         },

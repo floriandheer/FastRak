@@ -35,8 +35,8 @@ class PlaylistSyncUI:
     def __init__(self, root):
         self.root = root
         self.root.title("iTunes Playlist Sync Tool")
-        self.root.geometry("900x1000")
-        self.root.minsize(900, 700)
+        self.root.geometry("900x1100")
+        self.root.minsize(900, 800)
         
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(1, weight=1)
@@ -94,27 +94,65 @@ class PlaylistSyncUI:
         config_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
         config_frame.columnconfigure(1, weight=1)
         
+        current_row = 0
+        
+        # Target OS Selection
+        ttk.Label(config_frame, text="Target OS:").grid(row=current_row, column=0, sticky="w", padx=10, pady=10)
+        self.target_os_var = tk.StringVar(value="Windows")
+        os_dropdown = ttk.Combobox(config_frame, textvariable=self.target_os_var, 
+                                   values=["Windows", "Mac"], state="readonly", width=20)
+        os_dropdown.grid(row=current_row, column=1, sticky="w", padx=5, pady=10)
+        os_dropdown.bind("<<ComboboxSelected>>", self.on_target_os_changed)
+        
+        # Info label for cross-platform workflow
+        self.os_info_label = ttk.Label(config_frame, text="", foreground="blue", font=("Arial", 9))
+        self.os_info_label.grid(row=current_row, column=2, sticky="w", padx=5, pady=10)
+        
+        current_row += 1
+        
         # iTunes XML path
-        ttk.Label(config_frame, text="iTunes XML:").grid(row=0, column=0, sticky="w", padx=10, pady=10)
+        ttk.Label(config_frame, text="iTunes XML:").grid(row=current_row, column=0, sticky="w", padx=10, pady=10)
         self.itunes_xml_var = tk.StringVar()
-        ttk.Entry(config_frame, textvariable=self.itunes_xml_var, width=50).grid(row=0, column=1, sticky="ew", padx=5, pady=10)
-        ttk.Button(config_frame, text="Browse", command=self.browse_itunes_xml).grid(row=0, column=2, padx=5, pady=10)
+        ttk.Entry(config_frame, textvariable=self.itunes_xml_var, width=50).grid(row=current_row, column=1, sticky="ew", padx=5, pady=10)
+        ttk.Button(config_frame, text="Browse", command=self.browse_itunes_xml).grid(row=current_row, column=2, padx=5, pady=10)
+        
+        current_row += 1
         
         # DJ Library path
-        ttk.Label(config_frame, text="DJ Library Folder:").grid(row=1, column=0, sticky="w", padx=10, pady=10)
+        ttk.Label(config_frame, text="DJ Library Folder:").grid(row=current_row, column=0, sticky="w", padx=10, pady=10)
         self.dj_library_var = tk.StringVar()
-        ttk.Entry(config_frame, textvariable=self.dj_library_var, width=50).grid(row=1, column=1, sticky="ew", padx=5, pady=10)
-        ttk.Button(config_frame, text="Browse", command=self.browse_dj_library).grid(row=1, column=2, padx=5, pady=10)
+        ttk.Entry(config_frame, textvariable=self.dj_library_var, width=50).grid(row=current_row, column=1, sticky="ew", padx=5, pady=10)
+        ttk.Button(config_frame, text="Browse", command=self.browse_dj_library).grid(row=current_row, column=2, padx=5, pady=10)
+        
+        current_row += 1
         
         # Export XML path
-        ttk.Label(config_frame, text="Export XML:").grid(row=2, column=0, sticky="w", padx=10, pady=10)
+        ttk.Label(config_frame, text="Export XML:").grid(row=current_row, column=0, sticky="w", padx=10, pady=10)
         self.export_xml_var = tk.StringVar()
-        ttk.Entry(config_frame, textvariable=self.export_xml_var, width=50).grid(row=2, column=1, sticky="ew", padx=5, pady=10)
-        ttk.Button(config_frame, text="Browse", command=self.browse_export_xml).grid(row=2, column=2, padx=5, pady=10)
+        ttk.Entry(config_frame, textvariable=self.export_xml_var, width=50).grid(row=current_row, column=1, sticky="ew", padx=5, pady=10)
+        ttk.Button(config_frame, text="Browse", command=self.browse_export_xml).grid(row=current_row, column=2, padx=5, pady=10)
+        
+        current_row += 1
+        
+        # Mac-specific paths frame (initially hidden)
+        self.mac_paths_frame = ttk.LabelFrame(config_frame, text="Mac Destination Paths (for XML references)")
+        self.mac_paths_frame.grid(row=current_row, column=0, columnspan=3, sticky="ew", padx=10, pady=10)
+        self.mac_paths_frame.columnconfigure(1, weight=1)
+        self.mac_paths_frame.grid_remove()  # Hidden by default
+        
+        # Mac DJ Library path
+        ttk.Label(self.mac_paths_frame, text="Mac DJ Library:").grid(row=0, column=0, sticky="w", padx=10, pady=10)
+        self.mac_dj_library_var = tk.StringVar(value="/Users/flori/Music/DJ Library")
+        ttk.Entry(self.mac_paths_frame, textvariable=self.mac_dj_library_var, width=50).grid(row=0, column=1, sticky="ew", padx=5, pady=10)
+        
+        ttk.Label(self.mac_paths_frame, text="Example: /Users/flori/Music/DJ Library", 
+                 foreground="gray", font=("Arial", 8)).grid(row=1, column=1, sticky="w", padx=5, pady=0)
+        
+        current_row += 1
         
         # Options section
         options_frame = ttk.LabelFrame(config_frame, text="Options")
-        options_frame.grid(row=3, column=0, columnspan=3, sticky="ew", padx=10, pady=10)
+        options_frame.grid(row=current_row, column=0, columnspan=3, sticky="ew", padx=10, pady=10)
         
         self.debug_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(options_frame, text="Show detailed info for missing tracks", variable=self.debug_var).grid(row=0, column=0, sticky="w", padx=10, pady=5)
@@ -130,9 +168,11 @@ class PlaylistSyncUI:
         self.preserve_album_art_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(options_frame, text="Embed album art (from file or cover.jpg/png in folder)", variable=self.preserve_album_art_var).grid(row=3, column=0, sticky="w", padx=10, pady=5)
         
+        current_row += 1
+        
         # IMPROVED Playlist selection section
         playlist_frame = ttk.LabelFrame(config_frame, text="Playlist Selection")
-        playlist_frame.grid(row=4, column=0, columnspan=3, sticky="nsew", padx=10, pady=10)
+        playlist_frame.grid(row=current_row, column=0, columnspan=3, sticky="nsew", padx=10, pady=10)
         playlist_frame.columnconfigure(0, weight=1)
         playlist_frame.rowconfigure(2, weight=1)
         
@@ -199,7 +239,7 @@ class PlaylistSyncUI:
         
         # Main action buttons
         main_btn_frame = ttk.Frame(config_frame)
-        main_btn_frame.grid(row=5, column=0, columnspan=3, sticky="ew", pady=10)
+        main_btn_frame.grid(row=current_row+1, column=0, columnspan=3, sticky="ew", pady=10)
         main_btn_frame.columnconfigure(1, weight=1)
         
         self.check_ffmpeg_btn = ttk.Button(main_btn_frame, text="Check FFmpeg", command=self.check_ffmpeg_ui, width=15)
@@ -210,6 +250,20 @@ class PlaylistSyncUI:
         
         self.sync_btn = ttk.Button(main_btn_frame, text="Start Sync", command=self.start_sync, width=15)
         self.sync_btn.grid(row=0, column=2, padx=10)
+        
+        # Initialize Mac paths visibility
+        self.on_target_os_changed()
+
+    def on_target_os_changed(self, event=None):
+        """Handle target OS selection change"""
+        target_os = self.target_os_var.get()
+        
+        if target_os == "Mac":
+            self.mac_paths_frame.grid()
+            self.os_info_label.config(text="Export to USB/local, then copy to Mac")
+        else:
+            self.mac_paths_frame.grid_remove()
+            self.os_info_label.config(text="")
 
     def update_selection_mode(self):
         """Update the UI when selection mode changes"""
@@ -1618,6 +1672,20 @@ class PlaylistSyncUI:
         
         return kept_count
     
+    
+    def windows_to_mac_path(self, windows_path):
+        """Convert a Windows path to Mac path format"""
+        # Get the Mac DJ Library base path
+        mac_base = self.mac_dj_library_var.get()
+        
+        # Extract just the filename from the Windows path
+        filename = os.path.basename(windows_path)
+        
+        # Construct Mac path (using forward slashes)
+        mac_path = f"{mac_base}/{filename}"
+        
+        return mac_path
+    
     def create_new_xml(self, original_xml_path, export_xml_path, playlists_data, tracks_metadata, file_mapping, dj_library):
         """
         Create a new iTunes-compatible XML file that only includes the selected playlists
@@ -1645,6 +1713,9 @@ class PlaylistSyncUI:
                 
             # Update application version and date
             current_date = datetime.datetime.now().strftime("%Y-%m-%d")
+            target_os = self.target_os_var.get()
+            use_mac_paths = (target_os == "Mac")
+            
             for i in range(len(new_dict)):
                 if new_dict[i].tag == 'key' and new_dict[i].text == 'Application Version':
                     if i+1 < len(new_dict) and new_dict[i+1].tag == 'string':
@@ -1652,12 +1723,20 @@ class PlaylistSyncUI:
                 elif new_dict[i].tag == 'key' and new_dict[i].text == 'Music Folder':
                     if i+1 < len(new_dict) and new_dict[i+1].tag == 'string':
                         # Update music folder path to DJ library
-                        dj_path = dj_library.replace("\\", "/")
-                        if not dj_path.startswith("/"):
-                            dj_path = "/" + dj_path
-                        if not dj_path.endswith("/"):
-                            dj_path += "/"
-                        new_dict[i+1].text = f"file://localhost{dj_path}"
+                        if use_mac_paths:
+                            # Use Mac path
+                            mac_folder = self.mac_dj_library_var.get()
+                            if not mac_folder.endswith("/"):
+                                mac_folder += "/"
+                            new_dict[i+1].text = f"file://{mac_folder}"
+                        else:
+                            # Use Windows path
+                            dj_path = dj_library.replace("\\", "/")
+                            if not dj_path.startswith("/"):
+                                dj_path = "/" + dj_path
+                            if not dj_path.endswith("/"):
+                                dj_path += "/"
+                            new_dict[i+1].text = f"file://localhost{dj_path}"
             
             # Build a set of track IDs that are in our playlists
             track_ids_to_keep = set()
@@ -1688,13 +1767,27 @@ class PlaylistSyncUI:
             
             # Create a reverse mapping from file paths to their new DJ library paths
             original_to_dj_path = {}
+            target_os = self.target_os_var.get()
+            use_mac_paths = (target_os == "Mac")
+            
+            if use_mac_paths:
+                self.append_to_text_widget(self.xml_text, 
+                    "Using Mac paths in XML for cross-platform transfer\n")
+            
             for orig_path, dj_path in file_mapping.items():
                 # Format the paths as URLs
-                dj_url_path = dj_path.replace("\\", "/")
-                if not dj_url_path.startswith("/"):
-                    dj_url_path = "/" + dj_url_path
-                dj_url = f"file://localhost{dj_url_path}"
-                dj_url = urllib.parse.quote(dj_url, safe='/:')
+                if use_mac_paths:
+                    # Convert Windows path to Mac path
+                    mac_path = self.windows_to_mac_path(dj_path)
+                    dj_url = f"file://{mac_path}"
+                    dj_url = urllib.parse.quote(dj_url, safe='/:')
+                else:
+                    # Use Windows path
+                    dj_url_path = dj_path.replace("\\", "/")
+                    if not dj_url_path.startswith("/"):
+                        dj_url_path = "/" + dj_url_path
+                    dj_url = f"file://localhost{dj_url_path}"
+                    dj_url = urllib.parse.quote(dj_url, safe='/:')
                 
                 original_to_dj_path[orig_path] = dj_url
                 
@@ -1861,11 +1954,25 @@ class PlaylistSyncUI:
                 f.write(xml_pretty)
                 
             total_time = time.time() - start_time
-            self.append_to_text_widget(
-                self.xml_text,
-                f"XML export complete in {total_time:.2f} seconds\n" +
+            
+            summary_msg = (
+                f"XML export complete in {total_time:.2f} seconds\n"
                 f"Created XML with {tracks_kept} tracks in {playlists_kept} playlists\n"
             )
+            
+            if use_mac_paths:
+                summary_msg += (
+                    f"\n{'='*60}\n"
+                    f"CROSS-PLATFORM TRANSFER INSTRUCTIONS:\n"
+                    f"{'='*60}\n"
+                    f"1. Files exported to: {dj_library}\n"
+                    f"2. XML created with Mac paths at: {export_xml_path}\n"
+                    f"3. Copy both the folder and XML to your Mac\n"
+                    f"4. Place files at: {self.mac_dj_library_var.get()}\n"
+                    f"{'='*60}\n"
+                )
+            
+            self.append_to_text_widget(self.xml_text, summary_msg)
             
             return True
             

@@ -49,7 +49,7 @@ class Config:
             "monitoring": {
                 "poll_interval": 300,
                 "check_orders_since_hours": 48,
-                "base_directory": "I:/Physical/Orders",
+                "base_directory": "I:/Physical/Order",
                 "processed_orders_file": str(self.data_dir / "processed_orders.json"),
                 "download_invoices": True,
                 "download_labels": True
