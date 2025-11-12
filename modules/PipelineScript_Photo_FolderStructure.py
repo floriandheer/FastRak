@@ -63,20 +63,17 @@ class PhotoFolderStructureCreator:
         activity_entry.grid(row=3, column=1, columnspan=2, sticky="ew", padx=5, pady=10)
         
         # Directory options frame
-        options_frame = ttk.LabelFrame(form_frame, text="Directory Options")
-        options_frame.grid(row=4, column=0, columnspan=3, sticky="ew", padx=5, pady=10)
-        
-        # Webshop checkbox
-        self.webshop_var = tk.BooleanVar(value=False)
-        webshop_check = ttk.Checkbutton(options_frame, text="WebShop (I:/Photo/_WebShop)", 
-                                       variable=self.webshop_var, command=self.on_webshop_toggle)
-        webshop_check.grid(row=0, column=0, sticky="w", padx=10, pady=5)
-        
+        options_frame = ttk.Frame(form_frame)
+        options_frame.grid(row=4, column=0, columnspan=3, sticky="w", padx=5, pady=(0, 10))
+
+        # Directory label and checkbox
+        ttk.Label(options_frame, text="Directory:").grid(row=0, column=0, sticky="w", padx=10, pady=(0, 10))
+
         # Sandbox checkbox
         self.sandbox_var = tk.BooleanVar(value=False)
-        sandbox_check = ttk.Checkbutton(options_frame, text="Sandbox (I:/Photo/_Sandbox)", 
+        sandbox_check = ttk.Checkbutton(options_frame, text="Sandbox",
                                        variable=self.sandbox_var, command=self.on_sandbox_toggle)
-        sandbox_check.grid(row=1, column=0, sticky="w", padx=10, pady=5)
+        sandbox_check.grid(row=0, column=1, sticky="w", padx=5, pady=(0, 10))
         
         # Create button
         create_btn = ttk.Button(form_frame, text="Create Project Structure", 
@@ -112,20 +109,11 @@ class PhotoFolderStructureCreator:
         self.date_var.trace_add("write", lambda *args: self.update_preview())
         self.location_var.trace_add("write", lambda *args: self.update_preview())
         self.activity_var.trace_add("write", lambda *args: self.update_preview())
-        self.webshop_var.trace_add("write", lambda *args: self.update_preview())
         self.sandbox_var.trace_add("write", lambda *args: self.update_preview())
         self.base_dir_var.trace_add("write", lambda *args: self.update_preview())
     
-    def on_webshop_toggle(self):
-        """Handle webshop checkbox toggle - ensure mutual exclusivity"""
-        if self.webshop_var.get():
-            self.sandbox_var.set(False)
-        self.update_preview()
-    
     def on_sandbox_toggle(self):
-        """Handle sandbox checkbox toggle - ensure mutual exclusivity"""
-        if self.sandbox_var.get():
-            self.webshop_var.set(False)
+        """Handle sandbox checkbox toggle"""
         self.update_preview()
     
     def browse_base_dir(self):
@@ -161,10 +149,8 @@ class PhotoFolderStructureCreator:
     def get_target_directory(self):
         """Determine the target directory based on checkbox selections"""
         base_dir = self.base_dir_var.get()
-        
-        if self.webshop_var.get():
-            return os.path.join(base_dir, "_WebShop")
-        elif self.sandbox_var.get():
+
+        if self.sandbox_var.get():
             return os.path.join(base_dir, "_Sandbox")
         else:
             return base_dir
@@ -196,9 +182,7 @@ class PhotoFolderStructureCreator:
         self.preview_text.insert(tk.END, f"Project will be created at:\n{full_path}\n\n")
         
         # Show directory option status
-        if self.webshop_var.get():
-            self.preview_text.insert(tk.END, "Directory: WebShop\n")
-        elif self.sandbox_var.get():
+        if self.sandbox_var.get():
             self.preview_text.insert(tk.END, "Directory: Sandbox\n")
         else:
             self.preview_text.insert(tk.END, "Directory: Main Photo folder\n")
@@ -252,7 +236,7 @@ class PhotoFolderStructureCreator:
             return
         
         try:
-            # Create target directory if it doesn't exist (for _WebShop or _Sandbox)
+            # Create target directory if it doesn't exist (for _Sandbox)
             os.makedirs(target_dir, exist_ok=True)
             
             # Create project directory
