@@ -121,6 +121,8 @@ class PlaylistSyncUI:
         # DJ Library path
         ttk.Label(config_frame, text="DJ Library Folder:").grid(row=current_row, column=0, sticky="w", padx=10, pady=10)
         self.dj_library_var = tk.StringVar()
+        # Add trace to recalculate new tracks when DJ Library path changes
+        self.dj_library_var.trace('w', lambda *args: self.recalculate_new_tracks_if_loaded())
         ttk.Entry(config_frame, textvariable=self.dj_library_var, width=50).grid(row=current_row, column=1, sticky="ew", padx=5, pady=10)
         ttk.Button(config_frame, text="Browse", command=self.browse_dj_library).grid(row=current_row, column=2, padx=5, pady=10)
         
@@ -161,13 +163,20 @@ class PlaylistSyncUI:
         ttk.Checkbutton(options_frame, text="Skip copying files that already exist", variable=self.skip_existing_var).grid(row=1, column=0, sticky="w", padx=10, pady=5)
         
         self.convert_flac_var = tk.BooleanVar(value=True)
-        # Add a trace to the checkbox to check FFmpeg when enabled
+        # Add traces to the checkbox to check FFmpeg and recalculate new tracks
         self.convert_flac_var.trace('w', self.check_ffmpeg_for_flac_conversion)
+        self.convert_flac_var.trace('w', lambda *args: self.recalculate_new_tracks_if_loaded())
         ttk.Checkbutton(options_frame, text="Convert audio files to FLAC format with album art", variable=self.convert_flac_var).grid(row=2, column=0, sticky="w", padx=10, pady=5)
         
         self.preserve_album_art_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(options_frame, text="Embed album art (from file or cover.jpg/png in folder)", variable=self.preserve_album_art_var).grid(row=3, column=0, sticky="w", padx=10, pady=5)
-        
+
+        self.export_xml_only_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(options_frame, text="Export XML only (don't copy files, preserve original paths)", variable=self.export_xml_only_var).grid(row=4, column=0, sticky="w", padx=10, pady=5)
+
+        self.archive_removed_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(options_frame, text="Archive removed tracks to _Removed folder (tracks no longer in playlists)", variable=self.archive_removed_var).grid(row=5, column=0, sticky="w", padx=10, pady=5)
+
         current_row += 1
         
         # IMPROVED Playlist selection section
@@ -210,16 +219,18 @@ class PlaylistSyncUI:
         list_frame.rowconfigure(0, weight=1)
         
         # Create Treeview for better playlist display
-        self.playlist_tree = ttk.Treeview(list_frame, columns=("tracks", "type"), show="tree headings", height=10)
+        self.playlist_tree = ttk.Treeview(list_frame, columns=("tracks", "new_tracks", "type"), show="tree headings", height=10)
         self.playlist_tree.grid(row=0, column=0, sticky="nsew")
-        
+
         # Configure columns
         self.playlist_tree.heading("#0", text="Playlist Name")
         self.playlist_tree.heading("tracks", text="Tracks")
+        self.playlist_tree.heading("new_tracks", text="New")
         self.playlist_tree.heading("type", text="Type")
-        
+
         self.playlist_tree.column("#0", width=300)
         self.playlist_tree.column("tracks", width=80, anchor="center")
+        self.playlist_tree.column("new_tracks", width=80, anchor="center")
         self.playlist_tree.column("type", width=100, anchor="center")
         
         # Scrollbar for treeview
@@ -230,12 +241,13 @@ class PlaylistSyncUI:
         # Buttons frame
         btn_frame = ttk.Frame(playlist_frame)
         btn_frame.grid(row=3, column=0, sticky="ew", pady=5)
-        btn_frame.columnconfigure(2, weight=1)
-        
+        btn_frame.columnconfigure(4, weight=1)
+
         ttk.Button(btn_frame, text="Select All", command=self.select_all_playlists).grid(row=0, column=0, padx=5)
         ttk.Button(btn_frame, text="Clear All", command=self.clear_all_playlists).grid(row=0, column=1, padx=5)
         ttk.Button(btn_frame, text="Auto Select", command=self.auto_select_playlists).grid(row=0, column=2, padx=5)
-        ttk.Button(btn_frame, text="Preview Selection", command=self.preview_selection).grid(row=0, column=3, padx=5)
+        ttk.Button(btn_frame, text="Calculate New Tracks", command=self.calculate_new_tracks_for_selected).grid(row=0, column=3, padx=5)
+        ttk.Button(btn_frame, text="Preview Selection", command=self.preview_selection).grid(row=0, column=4, padx=5)
         
         # Main action buttons
         main_btn_frame = ttk.Frame(config_frame)
@@ -250,7 +262,7 @@ class PlaylistSyncUI:
         
         self.sync_btn = ttk.Button(main_btn_frame, text="Start Sync", command=self.start_sync, width=15)
         self.sync_btn.grid(row=0, column=2, padx=10)
-        
+
         # Initialize Mac paths visibility
         self.on_target_os_changed()
 
@@ -274,22 +286,43 @@ class PlaylistSyncUI:
         if not self.all_playlists:
             self.selection_summary.set("No playlists loaded")
             return
-            
+
         selected_items = self.playlist_tree.selection()
         total_playlists = len(self.all_playlists)
         selected_count = len(selected_items)
-        
+
+        # Calculate total new tracks (only if XML exists)
+        export_xml = self.export_xml_var.get()
+        has_existing_xml = export_xml and os.path.exists(export_xml)
+
+        playlists_to_process = self.get_selected_playlists()
+        total_new_tracks = 0
+        total_tracks = 0
+        for playlist_name in playlists_to_process:
+            playlist_info = self.playlist_data.get(playlist_name, {})
+            total_new_tracks += playlist_info.get('new_track_count', 0)
+            total_tracks += playlist_info.get('track_count', 0)
+
         if self.selection_mode.get() == "include":
             if selected_count == 0:
                 self.selection_summary.set(f"⚠️ No playlists selected (0/{total_playlists})")
             else:
-                self.selection_summary.set(f"✓ Will sync {selected_count}/{total_playlists} playlists")
+                if has_existing_xml:
+                    self.selection_summary.set(f"✓ Will sync {selected_count}/{total_playlists} playlists ({total_new_tracks} new tracks of {total_tracks} total)")
+                else:
+                    self.selection_summary.set(f"✓ Will sync {selected_count}/{total_playlists} playlists ({total_tracks} total tracks)")
         else:  # exclude mode
             processed_count = total_playlists - selected_count
             if selected_count == 0:
-                self.selection_summary.set(f"✓ Will sync all {total_playlists} playlists")
+                if has_existing_xml:
+                    self.selection_summary.set(f"✓ Will sync all {total_playlists} playlists ({total_new_tracks} new tracks of {total_tracks} total)")
+                else:
+                    self.selection_summary.set(f"✓ Will sync all {total_playlists} playlists ({total_tracks} total tracks)")
             else:
-                self.selection_summary.set(f"✓ Will sync {processed_count}/{total_playlists} playlists (excluding {selected_count})")
+                if has_existing_xml:
+                    self.selection_summary.set(f"✓ Will sync {processed_count}/{total_playlists} playlists (excluding {selected_count}) - {total_new_tracks} new tracks of {total_tracks} total")
+                else:
+                    self.selection_summary.set(f"✓ Will sync {processed_count}/{total_playlists} playlists (excluding {selected_count}) - {total_tracks} total tracks")
         
         # Update button states
         if hasattr(self, 'sync_btn'):
@@ -390,10 +423,18 @@ class PlaylistSyncUI:
             if not filter_text or filter_text in playlist_name.lower():
                 playlist_info = self.playlist_data.get(playlist_name, {})
                 track_count = playlist_info.get('track_count', 0)
+                new_track_count = playlist_info.get('new_track_count', 0)
                 playlist_type = playlist_info.get('type', 'User')
-                
-                item_id = self.playlist_tree.insert("", "end", text=playlist_name, 
-                                                   values=(track_count, playlist_type))
+
+                # Show "-" if new track count wasn't calculated (no existing XML)
+                export_xml = self.export_xml_var.get()
+                if not export_xml or not os.path.exists(export_xml):
+                    new_track_display = "-"
+                else:
+                    new_track_display = new_track_count
+
+                item_id = self.playlist_tree.insert("", "end", text=playlist_name,
+                                                   values=(track_count, new_track_display, playlist_type))
                 
                 # Restore selection if it was selected before
                 if playlist_name in selected_playlists:
@@ -479,13 +520,86 @@ class PlaylistSyncUI:
         self.results_notebook.add(self.xml_frame, text="XML Export")
         self.xml_frame.columnconfigure(0, weight=1)
         self.xml_frame.rowconfigure(0, weight=1)
-        
+
         self.xml_text = tk.Text(self.xml_frame, wrap=tk.WORD)
         self.xml_text.grid(row=0, column=0, sticky="nsew")
-        
+
         xml_scrollbar = ttk.Scrollbar(self.xml_frame, command=self.xml_text.yview)
         xml_scrollbar.grid(row=0, column=1, sticky="ns")
         self.xml_text.config(yscrollcommand=xml_scrollbar.set)
+
+        # New Tracks Details tab
+        self.new_tracks_frame = ttk.Frame(self.results_notebook)
+        self.results_notebook.add(self.new_tracks_frame, text="New Tracks Details")
+        self.new_tracks_frame.columnconfigure(0, weight=1)
+        self.new_tracks_frame.rowconfigure(0, weight=1)
+
+        self.new_tracks_text = tk.Text(self.new_tracks_frame, wrap=tk.WORD)
+        self.new_tracks_text.grid(row=0, column=0, sticky="nsew")
+
+        new_tracks_scrollbar = ttk.Scrollbar(self.new_tracks_frame, command=self.new_tracks_text.yview)
+        new_tracks_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.new_tracks_text.config(yscrollcommand=new_tracks_scrollbar.set)
+
+    def archive_removed_tracks(self, dj_library, file_mapping):
+        """Archive tracks in DJ Library that are not in the file_mapping (removed from playlists)"""
+        archived_count = 0
+
+        if not dj_library or not os.path.exists(dj_library):
+            return archived_count
+
+        # Create archive folder
+        archive_folder = os.path.join(dj_library, "_Removed")
+        if not os.path.exists(archive_folder):
+            os.makedirs(archive_folder)
+            self.append_to_text_widget(self.sync_text, f"Created archive folder: {archive_folder}\n")
+
+        # Get set of all destination filenames that should be in the DJ Library
+        active_files = set()
+        for dest_path in file_mapping.values():
+            active_files.add(os.path.basename(dest_path))
+
+        # Get all files currently in DJ Library
+        try:
+            existing_files = os.listdir(dj_library)
+
+            for existing_file in existing_files:
+                # Skip archive folder and other special folders
+                if existing_file.startswith('_'):
+                    continue
+
+                file_path = os.path.join(dj_library, existing_file)
+
+                # Skip if not a file
+                if not os.path.isfile(file_path):
+                    continue
+
+                # If this file is not in our active files list, archive it
+                if existing_file not in active_files:
+                    archive_path = os.path.join(archive_folder, existing_file)
+
+                    # Handle filename conflicts in archive folder
+                    if os.path.exists(archive_path):
+                        base_name, ext = os.path.splitext(existing_file)
+                        counter = 1
+                        while os.path.exists(archive_path):
+                            archive_path = os.path.join(archive_folder, f"{base_name}_{counter}{ext}")
+                            counter += 1
+
+                    # Move the file to archive
+                    shutil.move(file_path, archive_path)
+                    self.append_to_text_widget(self.sync_text, f"Archived: {existing_file}\n")
+                    archived_count += 1
+
+        except Exception as e:
+            self.append_to_text_widget(self.sync_text, f"Error archiving tracks: {e}\n")
+
+        if archived_count > 0:
+            self.append_to_text_widget(self.sync_text, f"\nArchived {archived_count} removed track(s) to {archive_folder}\n")
+        else:
+            self.append_to_text_widget(self.sync_text, "No orphaned tracks to archive.\n")
+
+        return archived_count
 
     def browse_itunes_xml(self):
         filename = filedialog.askopenfilename(
@@ -500,7 +614,9 @@ class PlaylistSyncUI:
         directory = filedialog.askdirectory(title="Select DJ Library Folder")
         if directory:
             self.dj_library_var.set(directory)
-            self.export_xml_var.set(os.path.join(directory, 'DJ Library.xml'))
+            # Set export XML in the parent directory of the DJ Library folder
+            parent_dir = os.path.dirname(directory)
+            self.export_xml_var.set(os.path.join(parent_dir, 'DJ Library.xml'))
     
     def browse_export_xml(self):
         filename = filedialog.asksaveasfilename(
@@ -510,6 +626,388 @@ class PlaylistSyncUI:
         )
         if filename:
             self.export_xml_var.set(filename)
+
+    def count_new_tracks(self, track_locations, debug=False, return_details=False):
+        """Count how many tracks from the given list don't exist in the DJ Library
+
+        Args:
+            track_locations: List of track file paths to check
+            debug: Enable debug output
+            return_details: If True, return (count, list_of_new_track_info)
+
+        Returns:
+            If return_details=False: int (count of new tracks)
+            If return_details=True: tuple (count, list of dicts with track info)
+        """
+        dj_library = self.dj_library_var.get()
+        if not dj_library or not os.path.exists(dj_library):
+            # If DJ Library doesn't exist, all tracks are new
+            if return_details:
+                return len(track_locations), []
+            return len(track_locations)
+
+        convert_to_flac = self.convert_flac_var.get()
+        new_count = 0
+        new_tracks_details = []
+
+        # Get list of existing files in DJ Library (for faster lookup)
+        try:
+            existing_files = set(os.listdir(dj_library))
+        except:
+            existing_files = set()
+
+        if debug:
+            print(f"\n=== DEBUG: Checking {len(track_locations)} tracks ===")
+            print(f"DJ Library: {dj_library}")
+            print(f"Existing files in DJ Library: {len(existing_files)}")
+            print(f"Convert to FLAC: {convert_to_flac}")
+
+        for track_path in track_locations:
+            try:
+                if not os.path.exists(track_path):
+                    # Track source file doesn't exist, skip it
+                    if debug:
+                        print(f"SKIP (doesn't exist): {track_path}")
+                    continue
+
+                file_ext = os.path.splitext(track_path)[1].lower()
+                original_base_name = os.path.splitext(os.path.basename(track_path))[0]
+
+                # Extract track title from metadata (same logic as in update_dj_library)
+                track_title = self.get_track_title(track_path)
+                base_name = track_title if track_title else original_base_name
+
+                # Determine destination extension
+                dest_ext = ".flac" if convert_to_flac and file_ext != '.flac' else file_ext
+                dest_filename = base_name + dest_ext
+
+                # Check if file doesn't exist in DJ Library
+                is_new = dest_filename not in existing_files
+                if is_new:
+                    new_count += 1
+                    if return_details:
+                        new_tracks_details.append({
+                            'source_path': track_path,
+                            'source_filename': os.path.basename(track_path),
+                            'dest_filename': dest_filename,
+                            'track_title': track_title if track_title else original_base_name
+                        })
+
+                if debug:
+                    status = "NEW" if is_new else "EXISTS"
+                    print(f"{status}: {os.path.basename(track_path)} -> {dest_filename}")
+            except Exception as e:
+                # If we can't determine, count it as new
+                new_count += 1
+                if debug:
+                    print(f"ERROR (counted as new): {track_path} - {e}")
+
+        if debug:
+            print(f"=== Total NEW tracks: {new_count} ===\n")
+
+        if return_details:
+            return new_count, new_tracks_details
+        return new_count
+
+    def calculate_new_track_counts(self, library_dict):
+        """Calculate and update new track counts for all playlists"""
+        # Only calculate if there's an existing export XML file
+        export_xml = self.export_xml_var.get()
+        if not export_xml or not os.path.exists(export_xml):
+            # No existing XML - all tracks are new, so just return
+            # (keep the default new_track_count of 0 to indicate not calculated)
+            return
+
+        self.status_var.set("Step 1/3: Extracting track locations from iTunes library...")
+        self.root.update_idletasks()
+
+        # First, extract track ID to location mapping from the library
+        track_id_to_location = {}
+
+        # Find the Tracks dictionary
+        tracks_element = None
+        for i in range(len(library_dict)):
+            if library_dict[i].tag == 'key' and library_dict[i].text == 'Tracks':
+                if i + 1 < len(library_dict) and library_dict[i + 1].tag == 'dict':
+                    tracks_element = library_dict[i + 1]
+                break
+
+        if tracks_element is None:
+            return
+
+        # Extract track locations with progress
+        total_track_elements = len(tracks_element) // 2
+        for i in range(0, len(tracks_element), 2):
+            if i+1 >= len(tracks_element):
+                break
+
+            # Update progress every 100 tracks
+            if i % 200 == 0:
+                progress = (i // 2) + 1
+                self.status_var.set(f"Step 1/3: Extracting track locations ({progress}/{total_track_elements})...")
+                self.root.update_idletasks()
+
+            if tracks_element[i].tag == 'key' and tracks_element[i+1].tag == 'dict':
+                track_id = tracks_element[i].text
+                track_dict = tracks_element[i+1]
+
+                # Find the Location key
+                for j in range(0, len(track_dict), 2):
+                    if j+1 >= len(track_dict):
+                        break
+
+                    if track_dict[j].tag == 'key' and track_dict[j].text == 'Location':
+                        location = track_dict[j+1].text
+                        if location:
+                            # Decode the file:// URL
+                            try:
+                                from urllib.parse import unquote, urlparse
+                                parsed = urlparse(location)
+                                file_path = unquote(parsed.path)
+                                # Fix Windows paths
+                                if file_path.startswith('/') and ':' in file_path:
+                                    file_path = file_path[1:]
+                                if os.path.exists(file_path):
+                                    track_id_to_location[track_id] = file_path
+                            except:
+                                pass
+                        break
+
+        self.status_var.set(f"Step 2/3: Mapping playlist tracks...")
+        self.root.update_idletasks()
+
+        # Now calculate new track counts for each playlist
+        total_playlists = len(self.all_playlists)
+        for idx, playlist_name in enumerate(self.all_playlists, 1):
+            # Update progress for each playlist
+            self.status_var.set(f"Step 3/3: Checking new tracks ({idx}/{total_playlists}): {playlist_name[:30]}...")
+            self.root.update_idletasks()
+
+            playlist_info = self.playlist_data.get(playlist_name, {})
+            track_ids = playlist_info.get('track_ids', [])
+
+            # Get locations for these track IDs
+            track_locations = [track_id_to_location[tid] for tid in track_ids if tid in track_id_to_location]
+
+            # Count how many are new
+            new_count = self.count_new_tracks(track_locations)
+            self.playlist_data[playlist_name]['new_track_count'] = new_count
+
+        # Refresh the display
+        self.filter_playlists()
+        self.status_var.set(f"Loaded {len(self.all_playlists)} playlists - new track counts calculated")
+
+    def recalculate_new_tracks_if_loaded(self):
+        """Recalculate new track counts if playlists are already loaded"""
+        if hasattr(self, 'itunes_root') and self.itunes_root is not None and self.all_playlists:
+            library_dict = next((child for child in self.itunes_root if child.tag == 'dict'), None)
+            if library_dict:
+                self.calculate_new_track_counts(library_dict)
+
+    def calculate_new_tracks_for_selected(self):
+        """Calculate new track counts only for selected playlists (button handler)"""
+        # Check if playlists are loaded
+        if not self.all_playlists:
+            messagebox.showwarning("Warning", "Please load playlists first!")
+            return
+
+        # Check if there's an existing export XML file
+        export_xml = self.export_xml_var.get()
+        if not export_xml or not os.path.exists(export_xml):
+            messagebox.showinfo("Info", "No existing DJ Library XML found. All tracks will be new when you sync.")
+            return
+
+        # Get selected playlists
+        selected_playlists = self.get_selected_playlists()
+        if not selected_playlists:
+            messagebox.showwarning("Warning", "No playlists selected!")
+            return
+
+        # Get the library dict
+        if not hasattr(self, 'itunes_root') or self.itunes_root is None:
+            messagebox.showerror("Error", "iTunes library data not loaded!")
+            return
+
+        library_dict = next((child for child in self.itunes_root if child.tag == 'dict'), None)
+        if library_dict is None:
+            messagebox.showerror("Error", "Invalid iTunes XML structure!")
+            return
+
+        self.status_var.set("Step 1/3: Extracting track locations from iTunes library...")
+        self.root.update_idletasks()
+
+        # First, extract track ID to location mapping from the library
+        track_id_to_location = {}
+
+        # Find the Tracks dictionary
+        tracks_element = None
+        for i in range(len(library_dict)):
+            if library_dict[i].tag == 'key' and library_dict[i].text == 'Tracks':
+                if i + 1 < len(library_dict) and library_dict[i + 1].tag == 'dict':
+                    tracks_element = library_dict[i + 1]
+                break
+
+        if tracks_element is None:
+            messagebox.showerror("Error", "No tracks found in iTunes XML!")
+            return
+
+        # Extract track locations with progress
+        total_track_elements = len(tracks_element) // 2
+        for i in range(0, len(tracks_element), 2):
+            if i+1 >= len(tracks_element):
+                break
+
+            # Update progress every 100 tracks
+            if i % 200 == 0:
+                progress = (i // 2) + 1
+                self.status_var.set(f"Step 1/3: Extracting track locations ({progress}/{total_track_elements})...")
+                self.root.update_idletasks()
+
+            if tracks_element[i].tag == 'key' and tracks_element[i+1].tag == 'dict':
+                track_id = tracks_element[i].text
+                track_dict = tracks_element[i+1]
+
+                # Find the Location key
+                for j in range(0, len(track_dict), 2):
+                    if j+1 >= len(track_dict):
+                        break
+
+                    if track_dict[j].tag == 'key' and track_dict[j].text == 'Location':
+                        location = track_dict[j+1].text
+                        if location:
+                            # Decode the file:// URL
+                            try:
+                                from urllib.parse import unquote, urlparse
+                                parsed = urlparse(location)
+                                file_path = unquote(parsed.path)
+                                # Fix Windows paths
+                                if file_path.startswith('/') and ':' in file_path:
+                                    file_path = file_path[1:]
+                                if os.path.exists(file_path):
+                                    track_id_to_location[track_id] = file_path
+                            except:
+                                pass
+                        break
+
+        self.status_var.set(f"Step 2/3: Mapping playlist tracks...")
+        self.root.update_idletasks()
+
+        # Calculate new track counts ONLY for selected playlists
+        total_selected = len(selected_playlists)
+        total_new_found = 0
+
+        # Clear the New Tracks Details tab
+        self.new_tracks_text.delete(1.0, tk.END)
+        self.new_tracks_text.insert(tk.END, "=" * 80 + "\n")
+        self.new_tracks_text.insert(tk.END, "NEW TRACKS ANALYSIS\n")
+        self.new_tracks_text.insert(tk.END, "=" * 80 + "\n\n")
+
+        # Collect all track locations from selected playlists for later comparison
+        all_selected_track_locations = set()
+
+        for idx, playlist_name in enumerate(selected_playlists, 1):
+            # Update progress for each playlist
+            self.status_var.set(f"Step 3/3: Checking new tracks ({idx}/{total_selected}): {playlist_name[:30]}...")
+            self.root.update_idletasks()
+
+            playlist_info = self.playlist_data.get(playlist_name, {})
+            track_ids = playlist_info.get('track_ids', [])
+
+            # Get locations for these track IDs
+            track_locations = [track_id_to_location[tid] for tid in track_ids if tid in track_id_to_location]
+
+            # Add to the set of all selected tracks
+            all_selected_track_locations.update(track_locations)
+
+            # Count how many are new and get details (enable debug for first playlist only)
+            debug_enabled = (idx == 1)
+            new_count, new_tracks_details = self.count_new_tracks(track_locations, debug=debug_enabled, return_details=True)
+            self.playlist_data[playlist_name]['new_track_count'] = new_count
+            total_new_found += new_count
+
+            # Add details to the New Tracks Details tab
+            if new_count > 0:
+                self.new_tracks_text.insert(tk.END, f"\n{playlist_name}\n")
+                self.new_tracks_text.insert(tk.END, "-" * len(playlist_name) + "\n")
+                self.new_tracks_text.insert(tk.END, f"New tracks: {new_count}\n\n")
+
+                for track in new_tracks_details:
+                    self.new_tracks_text.insert(tk.END, f"  • {track['track_title']}\n")
+                    self.new_tracks_text.insert(tk.END, f"    Source: {track['source_filename']}\n")
+                    self.new_tracks_text.insert(tk.END, f"    Will be saved as: {track['dest_filename']}\n\n")
+
+        # Now check for removed tracks (orphaned files in DJ Library)
+        self.new_tracks_text.insert(tk.END, "\n" + "=" * 80 + "\n")
+        self.new_tracks_text.insert(tk.END, "REMOVED TRACKS (No longer in selected playlists)\n")
+        self.new_tracks_text.insert(tk.END, "=" * 80 + "\n\n")
+
+        dj_library = self.dj_library_var.get()
+        removed_tracks = []
+
+        if dj_library and os.path.exists(dj_library):
+            self.status_var.set("Checking for removed tracks...")
+            self.root.update_idletasks()
+
+            # Get all files currently in DJ Library
+            try:
+                existing_files = os.listdir(dj_library)
+                convert_to_flac = self.convert_flac_var.get()
+
+                # For each file in DJ Library, check if it corresponds to any selected track
+                for existing_file in existing_files:
+                    if existing_file.startswith('_'):  # Skip archive folders
+                        continue
+
+                    file_path = os.path.join(dj_library, existing_file)
+                    if not os.path.isfile(file_path):
+                        continue
+
+                    # Check if this file corresponds to any track in our selected playlists
+                    is_orphaned = True
+                    for track_location in all_selected_track_locations:
+                        # Calculate what this track would be named
+                        file_ext = os.path.splitext(track_location)[1].lower()
+                        original_base_name = os.path.splitext(os.path.basename(track_location))[0]
+                        track_title = self.get_track_title(track_location)
+                        base_name = track_title if track_title else original_base_name
+                        dest_ext = ".flac" if convert_to_flac and file_ext != '.flac' else file_ext
+                        expected_filename = base_name + dest_ext
+
+                        if existing_file == expected_filename:
+                            is_orphaned = False
+                            break
+
+                    if is_orphaned:
+                        removed_tracks.append(existing_file)
+
+            except Exception as e:
+                self.new_tracks_text.insert(tk.END, f"Error checking for removed tracks: {e}\n\n")
+
+        if removed_tracks:
+            self.new_tracks_text.insert(tk.END, f"Found {len(removed_tracks)} orphaned file(s) in DJ Library:\n\n")
+            for track_file in sorted(removed_tracks):
+                self.new_tracks_text.insert(tk.END, f"  • {track_file}\n")
+            self.new_tracks_text.insert(tk.END, f"\nThese files will be archived when you run the sync.\n")
+        else:
+            self.new_tracks_text.insert(tk.END, "No orphaned tracks found. DJ Library is in sync with selected playlists.\n")
+
+        # Add summary at the end
+        self.new_tracks_text.insert(tk.END, "\n" + "=" * 80 + "\n")
+        self.new_tracks_text.insert(tk.END, f"SUMMARY:\n")
+        self.new_tracks_text.insert(tk.END, f"  New tracks: {total_new_found}\n")
+        self.new_tracks_text.insert(tk.END, f"  Removed tracks: {len(removed_tracks)}\n")
+        self.new_tracks_text.insert(tk.END, "=" * 80 + "\n")
+
+        # Refresh the display
+        self.filter_playlists()
+        self.status_var.set(f"Calculated new tracks for {total_selected} playlist(s) - Found {total_new_found} new tracks total")
+
+        # Show a message box with the results and switch to the New Tracks Details tab
+        messagebox.showinfo("Calculation Complete",
+                          f"Checked {total_selected} playlist(s)\nFound {total_new_found} new tracks total\n\nSee 'New Tracks Details' tab for full list")
+
+        # Switch to the New Tracks Details tab
+        self.results_notebook.select(self.new_tracks_frame)
 
     def load_playlists(self):
         """Load playlists from iTunes XML into the treeview"""
@@ -553,21 +1051,29 @@ class PlaylistSyncUI:
                         playlist_name = None
                         playlist_id = None
                         track_count = 0
+                        track_ids = []
                         is_smart = False
                         is_master = False
-                        
+
                         # Extract playlist information
                         for i in range(0, len(playlist_dict), 2):
                             if i+1 < len(playlist_dict) and playlist_dict[i].tag == 'key':
                                 key = playlist_dict[i].text
                                 value_element = playlist_dict[i+1]
-                                
+
                                 if key == 'Name':
                                     playlist_name = value_element.text
                                 elif key == 'Playlist ID':
                                     playlist_id = value_element.text
                                 elif key == 'Playlist Items' and value_element.tag == 'array':
                                     track_count = len(value_element)
+                                    # Extract track IDs from playlist items
+                                    for item in value_element:
+                                        if item.tag == 'dict':
+                                            for j in range(0, len(item), 2):
+                                                if j+1 < len(item) and item[j].tag == 'key' and item[j].text == 'Track ID':
+                                                    if item[j+1].text:
+                                                        track_ids.append(item[j+1].text)
                                 elif key == 'Smart Info':
                                     is_smart = True
                                 elif key == 'Master':
@@ -588,16 +1094,19 @@ class PlaylistSyncUI:
                             self.playlist_data[playlist_name] = {
                                 'id': playlist_id,
                                 'track_count': track_count,
+                                'track_ids': track_ids,
                                 'type': playlist_type,
                                 'is_smart': is_smart,
-                                'is_master': is_master
+                                'is_master': is_master,
+                                'new_track_count': 0  # Will be calculated later
                             }
-                            
-                            # Add to treeview
-                            item_id = self.playlist_tree.insert("", "end", text=playlist_name, 
-                                                               values=(track_count, playlist_type))
+
+                            # Add to treeview (new_track_count will be shown as 0 initially)
+                            item_id = self.playlist_tree.insert("", "end", text=playlist_name,
+                                                               values=(track_count, 0, playlist_type))
                 
                 self.status_var.set(f"Loaded {len(self.all_playlists)} playlists")
+
                 self.auto_select_playlists()  # Auto-select user playlists
                 self.filter_playlists()  # Apply initial filtering
             else:
@@ -719,11 +1228,12 @@ class PlaylistSyncUI:
             itunes_xml = self.itunes_xml_var.get()
             dj_library = self.dj_library_var.get()
             export_xml = self.export_xml_var.get()
-            
+
             debug_missing = self.debug_var.get()
             skip_existing = self.skip_existing_var.get()
             convert_to_flac = self.convert_flac_var.get()
             preserve_album_art = self.preserve_album_art_var.get()
+            export_xml_only = self.export_xml_only_var.get()
             
             # Check for FFmpeg at the beginning if FLAC conversion is enabled
             if convert_to_flac:
@@ -753,31 +1263,55 @@ class PlaylistSyncUI:
             
             step1_time = time.time() - start_time
             self.append_to_text_widget(self.analysis_text, f"Step 1 completed in {step1_time:.2f} seconds\n\n")
-            
+
             if tracks_to_copy:
-                self.status_var.set("Step 2: Updating DJ Library...")
-                self.append_to_text_widget(self.sync_text, "===== STEP 2: UPDATING DJ LIBRARY =====\n")
-                self.results_notebook.select(1)
-                
-                step2_start = time.time()
-                synced_tracks, file_mapping = self.update_dj_library(
-                    tracks_to_copy, dj_library, skip_existing, convert_to_flac, preserve_album_art)
-                
-                step2_time = time.time() - step2_start
-                self.append_to_text_widget(self.sync_text, f"Step 2 completed in {step2_time:.2f} seconds\n\n")
-                
+                if export_xml_only:
+                    # Skip file copying, but create path mapping to destination paths
+                    self.append_to_text_widget(self.sync_text, "===== STEP 2: CREATING PATH MAPPING (Export XML Only Mode) =====\n")
+                    self.append_to_text_widget(self.sync_text, "File copying skipped - creating path mappings to destination library\n\n")
+                    self.results_notebook.select(1)
+
+                    # Create path mapping (original path -> destination DJ library path)
+                    file_mapping = self.create_path_mapping(tracks_to_copy, dj_library, convert_to_flac)
+                    synced_tracks = True  # Set to True to proceed with XML creation
+
+                    self.append_to_text_widget(self.sync_text,
+                        f"Created path mappings for {len(file_mapping)} tracks pointing to destination library\n\n")
+                else:
+                    self.status_var.set("Step 2: Updating DJ Library...")
+                    self.append_to_text_widget(self.sync_text, "===== STEP 2: UPDATING DJ LIBRARY =====\n")
+                    self.results_notebook.select(1)
+
+                    step2_start = time.time()
+                    synced_tracks, file_mapping = self.update_dj_library(
+                        tracks_to_copy, dj_library, skip_existing, convert_to_flac, preserve_album_art)
+
+                    step2_time = time.time() - step2_start
+                    self.append_to_text_widget(self.sync_text, f"Step 2 completed in {step2_time:.2f} seconds\n\n")
+
                 if synced_tracks:
                     self.status_var.set("Step 3: Creating updated XML...")
                     self.append_to_text_widget(self.xml_text, "===== STEP 3: CREATING UPDATED XML =====\n")
                     self.results_notebook.select(2)
-                    
+
                     step3_start = time.time()
                     self.create_new_xml(
-                        itunes_xml, export_xml, selected_playlist_data, tracks_metadata, file_mapping, dj_library)
-                    
+                        itunes_xml, export_xml, selected_playlist_data, tracks_metadata, file_mapping, dj_library, export_xml_only)
+
                     step3_time = time.time() - step3_start
                     self.append_to_text_widget(self.xml_text, f"Step 3 completed in {step3_time:.2f} seconds\n\n")
-            
+
+            # Archive removed tracks if option is enabled
+            if self.archive_removed_var.get() and not export_xml_only:
+                archive_start = time.time()
+                self.append_to_text_widget(self.sync_text, "\nStep 4: Archiving removed tracks...\n")
+                self.status_var.set("Archiving removed tracks...")
+
+                archived_count = self.archive_removed_tracks(dj_library, file_mapping)
+
+                archive_time = time.time() - archive_start
+                self.append_to_text_widget(self.sync_text, f"Step 4 completed in {archive_time:.2f} seconds - Archived {archived_count} file(s)\n\n")
+
             total_time = time.time() - start_time
             self.append_to_text_widget(self.xml_text, f"\nTotal sync process completed in {total_time:.2f} seconds\n")
             self.status_var.set("Sync complete!")
@@ -884,15 +1418,15 @@ class PlaylistSyncUI:
         
         # Remove leading/trailing spaces and dots
         sanitized = sanitized.strip('. ')
-        
+
         # Limit length to avoid filesystem issues
         if len(sanitized) > 200:
             sanitized = sanitized[:200].strip()
-        
+
         # If sanitization results in empty string, return None
         if not sanitized:
             return None
-            
+
         return sanitized
 
     def find_album_art(self, track_path):
@@ -1253,6 +1787,45 @@ class PlaylistSyncUI:
         
         return selected_playlist_data, tracks_to_copy, tracks_metadata
     
+    def create_path_mapping(self, tracks, dj_library, convert_to_flac=True):
+        """
+        Create a mapping from original file paths to destination DJ library paths
+        without actually copying files. Used in export-xml-only mode.
+        """
+        file_mapping = {}
+
+        for track_path in tracks:
+            try:
+                file_ext = os.path.splitext(track_path)[1].lower()
+                original_base_name = os.path.splitext(os.path.basename(track_path))[0]
+
+                # Extract track title from metadata
+                track_title = self.get_track_title(track_path)
+                base_name = track_title if track_title else original_base_name
+
+                # Determine destination extension
+                dest_ext = ".flac" if convert_to_flac and file_ext != '.flac' else file_ext
+                dest_path = os.path.join(dj_library, base_name + dest_ext)
+
+                # Handle potential filename conflicts by adding suffix
+                counter = 1
+                original_dest_path = dest_path
+                # Check if this destination is already used in our mapping
+                while dest_path in file_mapping.values():
+                    name_without_ext = os.path.splitext(original_dest_path)[0]
+                    dest_path = f"{name_without_ext} ({counter}){dest_ext}"
+                    counter += 1
+
+                file_mapping[track_path] = dest_path
+
+            except Exception as e:
+                self.append_to_text_widget(self.sync_text,
+                    f"Warning: Could not create mapping for {os.path.basename(track_path)}: {e}\n")
+                # Fall back to simple path mapping
+                file_mapping[track_path] = os.path.join(dj_library, os.path.basename(track_path))
+
+        return file_mapping
+
     def update_dj_library(self, tracks, dj_library, skip_existing=True, convert_to_flac=True, preserve_album_art=True):
         """Update the DJ Library by copying tracks and optionally converting to FLAC with album art"""
         self.append_to_text_widget(self.sync_text, f"Updating {dj_library} with {len(tracks)} tracks...\n")
@@ -1672,7 +2245,6 @@ class PlaylistSyncUI:
         
         return kept_count
     
-    
     def windows_to_mac_path(self, windows_path):
         """Convert a Windows path to Mac path format"""
         # Get the Mac DJ Library base path
@@ -1686,10 +2258,11 @@ class PlaylistSyncUI:
         
         return mac_path
     
-    def create_new_xml(self, original_xml_path, export_xml_path, playlists_data, tracks_metadata, file_mapping, dj_library):
+    def create_new_xml(self, original_xml_path, export_xml_path, playlists_data, tracks_metadata, file_mapping, dj_library, export_xml_only=False):
         """
         Create a new iTunes-compatible XML file that only includes the selected playlists
-        and points to the correct locations in the DJ Library.
+        and points to the correct locations in the DJ Library (or Mac destination paths).
+        The file_mapping provides the path translations regardless of export_xml_only mode.
         """
         self.append_to_text_widget(self.xml_text, f"Creating new iTunes XML at {export_xml_path}...\n")
         start_time = time.time()
@@ -1713,13 +2286,20 @@ class PlaylistSyncUI:
                 
             # Update application version and date
             current_date = datetime.datetime.now().strftime("%Y-%m-%d")
+            # Create iTunes-format timestamp (ISO 8601 format with timezone)
+            current_timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             target_os = self.target_os_var.get()
             use_mac_paths = (target_os == "Mac")
-            
+
             for i in range(len(new_dict)):
                 if new_dict[i].tag == 'key' and new_dict[i].text == 'Application Version':
                     if i+1 < len(new_dict) and new_dict[i+1].tag == 'string':
                         new_dict[i+1].text = f"DJ Export {current_date}"
+                elif new_dict[i].tag == 'key' and new_dict[i].text == 'Date':
+                    # Update the Date field so Traktor recognizes this as a new/updated library
+                    if i+1 < len(new_dict) and new_dict[i+1].tag == 'date':
+                        new_dict[i+1].text = current_timestamp
+                        self.append_to_text_widget(self.xml_text, f"Updated library Date to: {current_timestamp}\n")
                 elif new_dict[i].tag == 'key' and new_dict[i].text == 'Music Folder':
                     if i+1 < len(new_dict) and new_dict[i+1].tag == 'string':
                         # Update music folder path to DJ library
@@ -1769,11 +2349,11 @@ class PlaylistSyncUI:
             original_to_dj_path = {}
             target_os = self.target_os_var.get()
             use_mac_paths = (target_os == "Mac")
-            
+
             if use_mac_paths:
-                self.append_to_text_widget(self.xml_text, 
+                self.append_to_text_widget(self.xml_text,
                     "Using Mac paths in XML for cross-platform transfer\n")
-            
+
             for orig_path, dj_path in file_mapping.items():
                 # Format the paths as URLs
                 if use_mac_paths:
@@ -1788,7 +2368,7 @@ class PlaylistSyncUI:
                         dj_url_path = "/" + dj_url_path
                     dj_url = f"file://localhost{dj_url_path}"
                     dj_url = urllib.parse.quote(dj_url, safe='/:')
-                
+
                 original_to_dj_path[orig_path] = dj_url
                 
             # Process all tracks
@@ -1829,7 +2409,7 @@ class PlaylistSyncUI:
                         
                         # Create a copy of this track's dict
                         new_track_dict = copy.deepcopy(track_dict)
-                        
+
                         # If we have location info, update it
                         if original_path and original_path in original_to_dj_path:
                             # Find and update the Location element
@@ -1995,6 +2575,7 @@ def main():
         parser.add_argument("--auto-run", action="store_true")
         parser.add_argument("--include-playlists", help="Comma-separated list of playlists to include")
         parser.add_argument("--exclude-playlists", help="Comma-separated list of playlists to exclude")
+        parser.add_argument("--export-xml-only", action="store_true", help="Only export XML without copying files (preserves original file paths)")
         
         args = parser.parse_args()
         
