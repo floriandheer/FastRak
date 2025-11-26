@@ -815,6 +815,16 @@ class ProfessionalPipelineGUI:
     def open_folder(self, folder_path):
         """Open a folder in Windows File Explorer."""
         try:
+            # Special handling for Business category - open current quarter folder
+            if folder_path == "I:\\_LIBRARY":
+                # Get current year and quarter
+                now = datetime.datetime.now()
+                current_year = now.year
+                current_quarter = (now.month - 1) // 3 + 1
+
+                # Construct the quarterly folder path
+                folder_path = f"I:\\_LIBRARY\\Boekhouding\\{current_year}\\Q{current_quarter}"
+
             if os.path.exists(folder_path):
                 os.startfile(folder_path)
                 self.update_status(f"Opened folder: {folder_path}", "info")
