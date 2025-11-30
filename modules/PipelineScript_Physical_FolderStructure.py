@@ -50,10 +50,10 @@ class FolderStructureCreator:
         self.client_name_var = tk.StringVar()
         ttk.Entry(form_frame, textvariable=self.client_name_var, width=40).grid(row=1, column=1, columnspan=2, sticky="ew", padx=5, pady=(10, 2))
         
-        # Project type checkboxes (Personal, alles3d)
+        # Project type checkboxes (Personal, Product, Project)
         project_type_frame = ttk.Frame(form_frame)
         project_type_frame.grid(row=2, column=0, columnspan=3, sticky="w", padx=5, pady=(0, 10))
-        
+
         # Personal checkbox
         ttk.Label(project_type_frame, text="Project Type:").grid(row=0, column=0, sticky="w", padx=10, pady=(0, 10))
 
@@ -67,6 +67,12 @@ class FolderStructureCreator:
         product_check = ttk.Checkbutton(project_type_frame, text="Product", variable=self.product_var,
                                       command=lambda: self.toggle_project_type('product'))
         product_check.grid(row=0, column=2, sticky="w", padx=20, pady=(0, 10))
+
+        # Project checkbox
+        self.project_var = tk.BooleanVar(value=False)
+        project_check = ttk.Checkbutton(project_type_frame, text="Project", variable=self.project_var,
+                                       command=lambda: self.toggle_project_type('project'))
+        project_check.grid(row=0, column=3, sticky="w", padx=20, pady=(0, 10))
         
         # Name Project (formerly Project Name)
         ttk.Label(form_frame, text="Name Project:").grid(row=3, column=0, sticky="w", padx=10, pady=10)
@@ -226,6 +232,7 @@ class FolderStructureCreator:
         self.date_var.trace_add("write", lambda *args: self.update_preview())
         self.personal_var.trace_add("write", lambda *args: self.update_preview())
         self.product_var.trace_add("write", lambda *args: self.update_preview())
+        self.project_var.trace_add("write", lambda *args: self.update_preview())
         self.base_dir_var.trace_add("write", lambda *args: self.update_preview())
         self.houdini_var.trace_add("write", lambda *args: self.update_preview())
         self.blender_var.trace_add("write", lambda *args: self.update_preview())
@@ -243,15 +250,21 @@ class FolderStructureCreator:
     def toggle_project_type(self, clicked_type):
         """Toggle project type checkboxes and update related fields"""
         # Ensure only one project type is selected at a time
-        if self.personal_var.get() and self.product_var.get():
-            # Uncheck the one that wasn't just clicked
-            if clicked_type == 'personal':
+        if clicked_type == 'personal':
+            if self.personal_var.get():
                 self.product_var.set(False)
-            else:  # clicked_type == 'product'
+                self.project_var.set(False)
+        elif clicked_type == 'product':
+            if self.product_var.get():
                 self.personal_var.set(False)
+                self.project_var.set(False)
+        elif clicked_type == 'project':
+            if self.project_var.get():
+                self.personal_var.set(False)
+                self.product_var.set(False)
 
         # Save current values if switching to a special project type
-        if (self.personal_var.get() or self.product_var.get()) and not hasattr(self, 'client_name_backup'):
+        if (self.personal_var.get() or self.product_var.get() or self.project_var.get()) and not hasattr(self, 'client_name_backup'):
             self.client_name_backup = self.client_name_var.get()
             self.base_dir_backup = self.base_dir_var.get()
 
@@ -262,6 +275,12 @@ class FolderStructureCreator:
         elif self.product_var.get():
             self.client_name_var.set("alles3d")
             self.base_dir_var.set("I:/Physical/Product")
+        elif self.project_var.get():
+            # Only set base directory, let user enter client name
+            self.base_dir_var.set("I:/Physical/Project")
+            # Restore client name if previously saved
+            if hasattr(self, 'client_name_backup'):
+                self.client_name_var.set(self.client_name_backup)
         else:
             # Restore previous values if they exist
             if hasattr(self, 'client_name_backup'):
@@ -534,20 +553,20 @@ class FolderStructureCreator:
         if not base_dir or not os.path.isdir(base_dir):
             messagebox.showerror("Error", "Please select a valid base directory.")
             return
-            
+
         if not client_name:
             if self.personal_var.get():
                 client_name = "Personal"
             elif self.product_var.get():
                 client_name = "alles3d"
-            else:
+            elif not self.project_var.get():
                 messagebox.showerror("Error", "Please enter a name client.")
                 return
-            
+
         if not project_name:
             messagebox.showerror("Error", "Please enter a name project.")
             return
-            
+
         if not date:
             date = datetime.now().strftime('%Y-%m-%d')
 
