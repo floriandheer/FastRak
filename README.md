@@ -29,6 +29,23 @@ The Pipeline-Manager is a toolkit designed to streamline various creative and bu
 - `pyexiv2>=2.8.0` - EXIF metadata handling for images
 - `tkinter` - GUI framework (included with Python)
 
+### External Software Dependencies
+
+Some pipeline scripts require additional external software:
+
+#### Audio Production Scripts
+- **FFmpeg** - Required for audio conversion and format handling
+  - Windows: Download from [ffmpeg.org](https://ffmpeg.org/download.html)
+  - macOS: `brew install ffmpeg`
+  - Linux: `apt-get install ffmpeg` or equivalent
+
+- **FLAC Tools (flac-1.5.0-win or later)** - Required for FLAC metadata operations
+  - Used by: Sync iTunes Playlists to DJ Library (for writing playlist metadata to FLAC comment fields)
+  - Windows: Download from [xiph.org FLAC downloads](https://xiph.org/flac/download.html)
+  - macOS: `brew install flac`
+  - Linux: `apt-get install flac` or equivalent
+  - Note: The `metaflac` command-line tool must be in your system PATH
+
 ## Installation
 
 ### Quick Start
