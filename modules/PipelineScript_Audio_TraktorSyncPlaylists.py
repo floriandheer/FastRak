@@ -96,11 +96,11 @@ class PlaylistSyncUI:
         
         current_row = 0
         
-        # Target OS Selection
-        ttk.Label(config_frame, text="Target OS:").grid(row=current_row, column=0, sticky="w", padx=10, pady=10)
-        self.target_os_var = tk.StringVar(value="Windows")
-        os_dropdown = ttk.Combobox(config_frame, textvariable=self.target_os_var, 
-                                   values=["Windows", "Mac"], state="readonly", width=20)
+        # Destination Selection
+        ttk.Label(config_frame, text="Destination:").grid(row=current_row, column=0, sticky="w", padx=10, pady=10)
+        self.target_os_var = tk.StringVar(value="Local")
+        os_dropdown = ttk.Combobox(config_frame, textvariable=self.target_os_var,
+                                   values=["Local", "External"], state="readonly", width=20)
         os_dropdown.grid(row=current_row, column=1, sticky="w", padx=5, pady=10)
         os_dropdown.bind("<<ComboboxSelected>>", self.on_target_os_changed)
         
@@ -136,14 +136,14 @@ class PlaylistSyncUI:
         
         current_row += 1
         
-        # Mac-specific paths frame (initially hidden)
-        self.mac_paths_frame = ttk.LabelFrame(config_frame, text="Mac Destination Paths (for XML references)")
+        # External-specific paths frame (initially hidden)
+        self.mac_paths_frame = ttk.LabelFrame(config_frame, text="External Destination Paths (for XML references)")
         self.mac_paths_frame.grid(row=current_row, column=0, columnspan=3, sticky="ew", padx=10, pady=10)
         self.mac_paths_frame.columnconfigure(1, weight=1)
         self.mac_paths_frame.grid_remove()  # Hidden by default
         
-        # Mac DJ Library path
-        ttk.Label(self.mac_paths_frame, text="Mac DJ Library:").grid(row=0, column=0, sticky="w", padx=10, pady=10)
+        # External DJ Library path
+        ttk.Label(self.mac_paths_frame, text="External DJ Library:").grid(row=0, column=0, sticky="w", padx=10, pady=10)
         self.mac_dj_library_var = tk.StringVar(value="/Users/flori/Music/DJ Library")
         ttk.Entry(self.mac_paths_frame, textvariable=self.mac_dj_library_var, width=50).grid(row=0, column=1, sticky="ew", padx=5, pady=10)
         
@@ -270,9 +270,9 @@ class PlaylistSyncUI:
         """Handle target OS selection change"""
         target_os = self.target_os_var.get()
         
-        if target_os == "Mac":
+        if target_os == "External":
             self.mac_paths_frame.grid()
-            self.os_info_label.config(text="Export to USB/local, then copy to Mac")
+            self.os_info_label.config(text="Export to USB/local, then copy to external device")
         else:
             self.mac_paths_frame.grid_remove()
             self.os_info_label.config(text="")
@@ -541,11 +541,15 @@ class PlaylistSyncUI:
         new_tracks_scrollbar.grid(row=0, column=1, sticky="ns")
         self.new_tracks_text.config(yscrollcommand=new_tracks_scrollbar.set)
 
-    def archive_removed_tracks(self, dj_library, file_mapping):
-        """Archive tracks in DJ Library that are not in the file_mapping (removed from playlists)"""
+    def archive_removed_tracks(self, dj_library, export_xml_path):
+        """Archive tracks in DJ Library that are not referenced in the exported XML"""
         archived_count = 0
 
         if not dj_library or not os.path.exists(dj_library):
+            return archived_count
+
+        if not export_xml_path or not os.path.exists(export_xml_path):
+            self.append_to_text_widget(self.sync_text, "Warning: Export XML not found, skipping archive step.\n")
             return archived_count
 
         # Create archive folder
@@ -554,10 +558,55 @@ class PlaylistSyncUI:
             os.makedirs(archive_folder)
             self.append_to_text_widget(self.sync_text, f"Created archive folder: {archive_folder}\n")
 
-        # Get set of all destination filenames that should be in the DJ Library
+        # Parse the exported XML to get all tracks that are actually referenced
         active_files = set()
-        for dest_path in file_mapping.values():
-            active_files.add(os.path.basename(dest_path))
+        try:
+            with open(export_xml_path, 'r', encoding='utf-8') as f:
+                export_root = ET.fromstring(f.read())
+
+            # Get the main dictionary element
+            export_dict = next((child for child in export_root if child.tag == 'dict'), None)
+            if export_dict is None:
+                self.append_to_text_widget(self.sync_text, "Warning: Invalid export XML structure, skipping archive step.\n")
+                return archived_count
+
+            # Find the Tracks dictionary in the exported XML
+            tracks_element = None
+            for i in range(len(export_dict)):
+                if export_dict[i].tag == 'key' and export_dict[i].text == 'Tracks':
+                    if i + 1 < len(export_dict) and export_dict[i + 1].tag == 'dict':
+                        tracks_element = export_dict[i + 1]
+                    break
+
+            if tracks_element is not None:
+                # Extract all track locations from the exported XML
+                for i in range(0, len(tracks_element), 2):
+                    if i+1 >= len(tracks_element):
+                        break
+
+                    if tracks_element[i].tag == 'key' and tracks_element[i+1].tag == 'dict':
+                        track_dict = tracks_element[i+1]
+
+                        # Look for the Location field
+                        for j in range(0, len(track_dict), 2):
+                            if j+1 >= len(track_dict):
+                                break
+
+                            if track_dict[j].tag == 'key' and track_dict[j].text == 'Location':
+                                location = track_dict[j+1].text
+                                if location:
+                                    # Extract filename from the location URL
+                                    # Locations in export XML point to DJ Library files
+                                    filename = os.path.basename(urllib.parse.unquote(location))
+                                    active_files.add(filename)
+                                break
+
+            self.append_to_text_widget(self.sync_text, f"Found {len(active_files)} active track(s) in exported XML\n")
+
+        except Exception as e:
+            self.append_to_text_widget(self.sync_text, f"Error reading export XML: {e}\n")
+            self.append_to_text_widget(self.sync_text, "Skipping archive step to avoid data loss.\n")
+            return archived_count
 
         # Get all files currently in DJ Library
         try:
@@ -1257,10 +1306,10 @@ class PlaylistSyncUI:
             self.append_to_text_widget(self.analysis_text, "===== STEP 1: ANALYZING ITUNES LIBRARY =====\n")
             self.results_notebook.select(0)
             
-            # Modified to return more detailed information
-            selected_playlist_data, tracks_to_copy, tracks_metadata = self.analyze_library(
+            # Modified to return more detailed information including ALL playlist memberships
+            selected_playlist_data, tracks_to_copy, tracks_metadata, source_path_to_playlists = self.analyze_library(
                 itunes_xml, debug_missing)
-            
+
             step1_time = time.time() - start_time
             self.append_to_text_widget(self.analysis_text, f"Step 1 completed in {step1_time:.2f} seconds\n\n")
 
@@ -1284,7 +1333,7 @@ class PlaylistSyncUI:
 
                     step2_start = time.time()
                     synced_tracks, file_mapping = self.update_dj_library(
-                        tracks_to_copy, dj_library, skip_existing, convert_to_flac, preserve_album_art)
+                        tracks_to_copy, dj_library, skip_existing, convert_to_flac, preserve_album_art, source_path_to_playlists)
 
                     step2_time = time.time() - step2_start
                     self.append_to_text_widget(self.sync_text, f"Step 2 completed in {step2_time:.2f} seconds\n\n")
@@ -1307,7 +1356,7 @@ class PlaylistSyncUI:
                 self.append_to_text_widget(self.sync_text, "\nStep 4: Archiving removed tracks...\n")
                 self.status_var.set("Archiving removed tracks...")
 
-                archived_count = self.archive_removed_tracks(dj_library, file_mapping)
+                archived_count = self.archive_removed_tracks(dj_library, export_xml)
 
                 archive_time = time.time() - archive_start
                 self.append_to_text_widget(self.sync_text, f"Step 4 completed in {archive_time:.2f} seconds - Archived {archived_count} file(s)\n\n")
@@ -1446,6 +1495,36 @@ class PlaylistSyncUI:
         
         return album_art_path
 
+    def write_flac_comment_metadata(self, flac_path, playlist_names, temp_dir):
+        """Write playlist names to the FLAC COMMENT metadata field using metaflac"""
+        if not playlist_names or not flac_path.lower().endswith('.flac'):
+            return False
+
+        try:
+            # Join playlist names with comma separator
+            comment_value = ", ".join(playlist_names)
+
+            process_args = self.get_subprocess_args()
+
+            # Use metaflac to directly write to COMMENT field (avoids FFmpeg field mapping issues)
+            # First remove any existing COMMENT and DESCRIPTION tags
+            result = subprocess.run([
+                "metaflac",
+                "--remove-tag=COMMENT",
+                "--remove-tag=DESCRIPTION",
+                f"--set-tag=COMMENT={comment_value}",
+                flac_path
+            ], **process_args)
+
+            if result.returncode == 0:
+                return True
+            else:
+                return False
+
+        except Exception as e:
+            self.append_to_text_widget(self.sync_text, f"Warning: Could not write comment metadata to {os.path.basename(flac_path)}: {e}\n")
+            return False
+
     def extract_embedded_art(self, source_path, temp_dir):
         """Extract embedded album art from audio file using FFmpeg"""
         try:
@@ -1487,13 +1566,13 @@ class PlaylistSyncUI:
                     self.itunes_root = ET.fromstring(f.read())
         except Exception as e:
             self.append_to_text_widget(self.analysis_text, f"Error parsing XML: {e}\n")
-            return [], [], {}
+            return [], [], {}, {}
 
         # Get the main dictionary element
         library_dict = next((child for child in self.itunes_root if child.tag == 'dict'), None)
         if library_dict is None:
             self.append_to_text_widget(self.analysis_text, "Invalid iTunes XML structure: missing main dict\n")
-            return [], [], {}
+            return [], [], {}, {}
 
         # First, extract all tracks from the library
         tracks_metadata = {}
@@ -1510,7 +1589,7 @@ class PlaylistSyncUI:
                 
         if tracks_element is None:
             self.append_to_text_widget(self.analysis_text, "No tracks found in iTunes XML\n")
-            return [], [], {}
+            return [], [], {}, {}
             
         # Process all tracks
         self.append_to_text_widget(self.analysis_text, "Processing tracks from iTunes library...\n")
@@ -1622,13 +1701,16 @@ class PlaylistSyncUI:
                 
         if playlists_element is None:
             self.append_to_text_widget(self.analysis_text, "No playlists found in iTunes XML\n")
-            return [], [], {}
+            return [], [], {}, {}
         
         # Process playlists
-        self.append_to_text_widget(self.analysis_text, "Processing selected playlists...\n")
+        self.append_to_text_widget(self.analysis_text, "Processing playlists...\n")
         missing_tracks = {}
         playlist_count = 0
-        
+
+        # Build mapping of track_id -> ALL playlist names (for comment metadata)
+        track_id_to_all_playlists = {}
+
         for playlist_dict in playlists_element:
             if playlist_dict.tag != 'dict':
                 continue
@@ -1671,8 +1753,18 @@ class PlaylistSyncUI:
             
             playlist_name = playlist_data.get('Name', 'Unknown')
             playlist_id = playlist_data.get('ID', 'Unknown')
-            
-            # FIXED: Check if this playlist should be included based on our selection
+
+            # Add all tracks to the track_id -> playlists mapping (for ALL playlists, not just selected)
+            # Skip system playlists like Library, Music, etc.
+            system_playlists = ["Library", "Music", "Downloaded", "Podcasts", "Audiobooks", "Movies", "TV Shows"]
+            if playlist_name not in system_playlists and playlist_items:
+                for track_id in playlist_items:
+                    if track_id not in track_id_to_all_playlists:
+                        track_id_to_all_playlists[track_id] = []
+                    if playlist_name not in track_id_to_all_playlists[track_id]:
+                        track_id_to_all_playlists[track_id].append(playlist_name)
+
+            # Check if this playlist should be included based on our selection
             if playlist_name in selected_playlists:
                 playlist_count += 1
                 valid_tracks_in_playlist = 0
@@ -1782,10 +1874,21 @@ class PlaylistSyncUI:
                             self.append_to_text_widget(self.analysis_text, 
                                 f"'{track_name}' by {artist} - unsupported format: {track_info.get('extension', 'Unknown')} (Playlists: {playlists})\n")
                         else:
-                            self.append_to_text_widget(self.analysis_text, 
+                            self.append_to_text_widget(self.analysis_text,
                                 f"'{track_name}' by {artist} - unknown error (Playlists: {playlists})\n")
-        
-        return selected_playlist_data, tracks_to_copy, tracks_metadata
+
+        # Convert track_id -> playlists mapping to source_path -> playlists mapping
+        source_path_to_playlists = {}
+        for track_id, playlist_names in track_id_to_all_playlists.items():
+            if track_id in tracks_metadata:
+                file_path = tracks_metadata[track_id].get('file_path')
+                if file_path:
+                    source_path_to_playlists[file_path] = playlist_names
+
+        self.append_to_text_widget(self.analysis_text,
+            f"Built playlist membership info for {len(source_path_to_playlists)} tracks\n")
+
+        return selected_playlist_data, tracks_to_copy, tracks_metadata, source_path_to_playlists
     
     def create_path_mapping(self, tracks, dj_library, convert_to_flac=True):
         """
@@ -1826,8 +1929,11 @@ class PlaylistSyncUI:
 
         return file_mapping
 
-    def update_dj_library(self, tracks, dj_library, skip_existing=True, convert_to_flac=True, preserve_album_art=True):
-        """Update the DJ Library by copying tracks and optionally converting to FLAC with album art"""
+    def update_dj_library(self, tracks, dj_library, skip_existing=True, convert_to_flac=True, preserve_album_art=True, source_path_to_playlists=None):
+        """Update the DJ Library by copying tracks and optionally converting to FLAC with album art.
+        If source_path_to_playlists is provided, writes playlist names to FLAC comment metadata."""
+        if source_path_to_playlists is None:
+            source_path_to_playlists = {}
         self.append_to_text_widget(self.sync_text, f"Updating {dj_library} with {len(tracks)} tracks...\n")
         if not tracks:
             self.append_to_text_widget(self.sync_text, "No tracks to copy!\n")
@@ -1843,6 +1949,7 @@ class PlaylistSyncUI:
         skipped_flac_count = 0
         error_count = 0
         album_art_embedded_count = 0
+        comment_metadata_count = 0
         synced_tracks = []
         
         # Create a mapping from original file path to DJ library path
@@ -1929,6 +2036,16 @@ class PlaylistSyncUI:
                         copied_count += 1
                         if is_flac:
                             skipped_flac_count += 1
+
+                        # Write playlist names to FLAC comment metadata if destination is FLAC
+                        if dest_path.lower().endswith('.flac') and track_path in source_path_to_playlists:
+                            playlist_names = source_path_to_playlists[track_path]
+                            if self.write_flac_comment_metadata(dest_path, playlist_names, temp_dir):
+                                comment_metadata_count += 1
+                                self.append_to_text_widget(
+                                    self.sync_text,
+                                    f"  → Added playlist info to comment: {', '.join(playlist_names)}\n"
+                                )
                     elif convert_to_flac:
                         self.append_to_text_widget(
                             self.sync_text, 
@@ -1944,6 +2061,15 @@ class PlaylistSyncUI:
                                 self.sync_text,
                                 f"✓ Conversion to FLAC complete for: {os.path.basename(track_path)}\n"
                             )
+                            # Write playlist names to FLAC comment metadata
+                            if track_path in source_path_to_playlists:
+                                playlist_names = source_path_to_playlists[track_path]
+                                if self.write_flac_comment_metadata(dest_path, playlist_names, temp_dir):
+                                    comment_metadata_count += 1
+                                    self.append_to_text_widget(
+                                        self.sync_text,
+                                        f"  → Added playlist info to comment: {', '.join(playlist_names)}\n"
+                                    )
                         else:
                             self.append_to_text_widget(
                                 self.sync_text,
@@ -1973,6 +2099,7 @@ class PlaylistSyncUI:
         self.append_to_text_widget(self.sync_text, f"Files copied: {copied_count}\n")
         self.append_to_text_widget(self.sync_text, f"Files converted to FLAC: {converted_count}\n")
         self.append_to_text_widget(self.sync_text, f"Files with album art embedded: {album_art_embedded_count}\n")
+        self.append_to_text_widget(self.sync_text, f"Files with playlist info in comment: {comment_metadata_count}\n")
         self.append_to_text_widget(self.sync_text, f"Files skipped (already exist): {skipped_count}\n")
         self.append_to_text_widget(self.sync_text, f"FLAC files copied directly: {skipped_flac_count}\n")
         self.append_to_text_widget(self.sync_text, f"Errors encountered: {error_count}\n")
@@ -2289,7 +2416,7 @@ class PlaylistSyncUI:
             # Create iTunes-format timestamp (ISO 8601 format with timezone)
             current_timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             target_os = self.target_os_var.get()
-            use_mac_paths = (target_os == "Mac")
+            use_mac_paths = (target_os == "External")
 
             for i in range(len(new_dict)):
                 if new_dict[i].tag == 'key' and new_dict[i].text == 'Application Version':
@@ -2348,11 +2475,11 @@ class PlaylistSyncUI:
             # Create a reverse mapping from file paths to their new DJ library paths
             original_to_dj_path = {}
             target_os = self.target_os_var.get()
-            use_mac_paths = (target_os == "Mac")
+            use_mac_paths = (target_os == "External")
 
             if use_mac_paths:
                 self.append_to_text_widget(self.xml_text,
-                    "Using Mac paths in XML for cross-platform transfer\n")
+                    "Using external device paths in XML for cross-platform transfer\n")
 
             for orig_path, dj_path in file_mapping.items():
                 # Format the paths as URLs
@@ -2546,8 +2673,8 @@ class PlaylistSyncUI:
                     f"CROSS-PLATFORM TRANSFER INSTRUCTIONS:\n"
                     f"{'='*60}\n"
                     f"1. Files exported to: {dj_library}\n"
-                    f"2. XML created with Mac paths at: {export_xml_path}\n"
-                    f"3. Copy both the folder and XML to your Mac\n"
+                    f"2. XML created with external device paths at: {export_xml_path}\n"
+                    f"3. Copy both the folder and XML to your external device\n"
                     f"4. Place files at: {self.mac_dj_library_var.get()}\n"
                     f"{'='*60}\n"
                 )
