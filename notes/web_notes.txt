@@ -1,0 +1,6 @@
+# Notes for WEB
+
+Alles3D
+- Verbeteren UI Front End 3D-link, uitvouwbare slider-sets, variabele prijzen, extra uitlegvak voor de parameters
+- Formules kunnen die berekening maken met data van de parameters
+  bvb: innerlength=(outerlength-(wallthickness*2))

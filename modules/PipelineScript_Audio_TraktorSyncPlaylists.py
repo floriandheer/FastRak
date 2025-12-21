@@ -161,21 +161,15 @@ class PlaylistSyncUI:
         
         self.skip_existing_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(options_frame, text="Skip copying files that already exist", variable=self.skip_existing_var).grid(row=1, column=0, sticky="w", padx=10, pady=5)
-        
-        self.convert_flac_var = tk.BooleanVar(value=True)
-        # Add traces to the checkbox to check FFmpeg and recalculate new tracks
-        self.convert_flac_var.trace('w', self.check_ffmpeg_for_flac_conversion)
-        self.convert_flac_var.trace('w', lambda *args: self.recalculate_new_tracks_if_loaded())
-        ttk.Checkbutton(options_frame, text="Convert audio files to FLAC format with album art", variable=self.convert_flac_var).grid(row=2, column=0, sticky="w", padx=10, pady=5)
-        
-        self.preserve_album_art_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(options_frame, text="Embed album art (from file or cover.jpg/png in folder)", variable=self.preserve_album_art_var).grid(row=3, column=0, sticky="w", padx=10, pady=5)
 
-        self.export_xml_only_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(options_frame, text="Export XML only (don't copy files, preserve original paths)", variable=self.export_xml_only_var).grid(row=4, column=0, sticky="w", padx=10, pady=5)
+        # Convert to FLAC is now always enabled (no checkbox)
+        self.convert_flac_var = tk.BooleanVar(value=True)
+
+        # Embed album art is now always enabled (no checkbox)
+        self.preserve_album_art_var = tk.BooleanVar(value=True)
 
         self.archive_removed_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(options_frame, text="Archive removed tracks to _Removed folder (tracks no longer in playlists)", variable=self.archive_removed_var).grid(row=5, column=0, sticky="w", padx=10, pady=5)
+        ttk.Checkbutton(options_frame, text="Archive removed tracks to _Removed folder (tracks no longer in playlists)", variable=self.archive_removed_var).grid(row=2, column=0, sticky="w", padx=10, pady=5)
 
         current_row += 1
         
@@ -256,12 +250,18 @@ class PlaylistSyncUI:
         
         self.check_ffmpeg_btn = ttk.Button(main_btn_frame, text="Check FFmpeg", command=self.check_ffmpeg_ui, width=15)
         self.check_ffmpeg_btn.grid(row=0, column=0, padx=10)
-        
+
+        self.check_flac_btn = ttk.Button(main_btn_frame, text="Check FLAC", command=self.check_flac_ui, width=15)
+        self.check_flac_btn.grid(row=1, column=0, padx=10)
+
         self.load_playlists_btn = ttk.Button(main_btn_frame, text="Load Playlists", command=self.load_playlists, width=15)
         self.load_playlists_btn.grid(row=0, column=1, padx=10)
-        
+
         self.sync_btn = ttk.Button(main_btn_frame, text="Start Sync", command=self.start_sync, width=15)
         self.sync_btn.grid(row=0, column=2, padx=10)
+
+        self.export_xml_only_btn = ttk.Button(main_btn_frame, text="Export XML Only", command=self.export_xml_only, width=15)
+        self.export_xml_only_btn.grid(row=0, column=3, padx=10)
 
         # Initialize Mac paths visibility
         self.on_target_os_changed()
@@ -328,8 +328,10 @@ class PlaylistSyncUI:
         if hasattr(self, 'sync_btn'):
             if self.selection_mode.get() == "include" and selected_count == 0:
                 self.sync_btn.config(state=tk.DISABLED)
+                self.export_xml_only_btn.config(state=tk.DISABLED)
             else:
                 self.sync_btn.config(state=tk.NORMAL)
+                self.export_xml_only_btn.config(state=tk.NORMAL)
 
     def select_all_playlists(self):
         """Select all visible playlists"""
@@ -527,19 +529,6 @@ class PlaylistSyncUI:
         xml_scrollbar = ttk.Scrollbar(self.xml_frame, command=self.xml_text.yview)
         xml_scrollbar.grid(row=0, column=1, sticky="ns")
         self.xml_text.config(yscrollcommand=xml_scrollbar.set)
-
-        # New Tracks Details tab
-        self.new_tracks_frame = ttk.Frame(self.results_notebook)
-        self.results_notebook.add(self.new_tracks_frame, text="New Tracks Details")
-        self.new_tracks_frame.columnconfigure(0, weight=1)
-        self.new_tracks_frame.rowconfigure(0, weight=1)
-
-        self.new_tracks_text = tk.Text(self.new_tracks_frame, wrap=tk.WORD)
-        self.new_tracks_text.grid(row=0, column=0, sticky="nsew")
-
-        new_tracks_scrollbar = ttk.Scrollbar(self.new_tracks_frame, command=self.new_tracks_text.yview)
-        new_tracks_scrollbar.grid(row=0, column=1, sticky="ns")
-        self.new_tracks_text.config(yscrollcommand=new_tracks_scrollbar.set)
 
     def archive_removed_tracks(self, dj_library, export_xml_path):
         """Archive tracks in DJ Library that are not referenced in the exported XML"""
@@ -945,11 +934,11 @@ class PlaylistSyncUI:
         total_selected = len(selected_playlists)
         total_new_found = 0
 
-        # Clear the New Tracks Details tab
-        self.new_tracks_text.delete(1.0, tk.END)
-        self.new_tracks_text.insert(tk.END, "=" * 80 + "\n")
-        self.new_tracks_text.insert(tk.END, "NEW TRACKS ANALYSIS\n")
-        self.new_tracks_text.insert(tk.END, "=" * 80 + "\n\n")
+        # Clear the analysis tab for new tracks details
+        self.analysis_text.delete(1.0, tk.END)
+        self.analysis_text.insert(tk.END, "=" * 80 + "\n")
+        self.analysis_text.insert(tk.END, "NEW TRACKS ANALYSIS\n")
+        self.analysis_text.insert(tk.END, "=" * 80 + "\n\n")
 
         # Collect all track locations from selected playlists for later comparison
         all_selected_track_locations = set()
@@ -974,21 +963,21 @@ class PlaylistSyncUI:
             self.playlist_data[playlist_name]['new_track_count'] = new_count
             total_new_found += new_count
 
-            # Add details to the New Tracks Details tab
+            # Add details to the analysis tab
             if new_count > 0:
-                self.new_tracks_text.insert(tk.END, f"\n{playlist_name}\n")
-                self.new_tracks_text.insert(tk.END, "-" * len(playlist_name) + "\n")
-                self.new_tracks_text.insert(tk.END, f"New tracks: {new_count}\n\n")
+                self.analysis_text.insert(tk.END, f"\n{playlist_name}\n")
+                self.analysis_text.insert(tk.END, "-" * len(playlist_name) + "\n")
+                self.analysis_text.insert(tk.END, f"New tracks: {new_count}\n\n")
 
                 for track in new_tracks_details:
-                    self.new_tracks_text.insert(tk.END, f"  • {track['track_title']}\n")
-                    self.new_tracks_text.insert(tk.END, f"    Source: {track['source_filename']}\n")
-                    self.new_tracks_text.insert(tk.END, f"    Will be saved as: {track['dest_filename']}\n\n")
+                    self.analysis_text.insert(tk.END, f"  • {track['track_title']}\n")
+                    self.analysis_text.insert(tk.END, f"    Source: {track['source_filename']}\n")
+                    self.analysis_text.insert(tk.END, f"    Will be saved as: {track['dest_filename']}\n\n")
 
         # Now check for removed tracks (orphaned files in DJ Library)
-        self.new_tracks_text.insert(tk.END, "\n" + "=" * 80 + "\n")
-        self.new_tracks_text.insert(tk.END, "REMOVED TRACKS (No longer in selected playlists)\n")
-        self.new_tracks_text.insert(tk.END, "=" * 80 + "\n\n")
+        self.analysis_text.insert(tk.END, "\n" + "=" * 80 + "\n")
+        self.analysis_text.insert(tk.END, "REMOVED TRACKS (No longer in selected playlists)\n")
+        self.analysis_text.insert(tk.END, "=" * 80 + "\n\n")
 
         dj_library = self.dj_library_var.get()
         removed_tracks = []
@@ -1030,33 +1019,33 @@ class PlaylistSyncUI:
                         removed_tracks.append(existing_file)
 
             except Exception as e:
-                self.new_tracks_text.insert(tk.END, f"Error checking for removed tracks: {e}\n\n")
+                self.analysis_text.insert(tk.END, f"Error checking for removed tracks: {e}\n\n")
 
         if removed_tracks:
-            self.new_tracks_text.insert(tk.END, f"Found {len(removed_tracks)} orphaned file(s) in DJ Library:\n\n")
+            self.analysis_text.insert(tk.END, f"Found {len(removed_tracks)} orphaned file(s) in DJ Library:\n\n")
             for track_file in sorted(removed_tracks):
-                self.new_tracks_text.insert(tk.END, f"  • {track_file}\n")
-            self.new_tracks_text.insert(tk.END, f"\nThese files will be archived when you run the sync.\n")
+                self.analysis_text.insert(tk.END, f"  • {track_file}\n")
+            self.analysis_text.insert(tk.END, f"\nThese files will be archived when you run the sync.\n")
         else:
-            self.new_tracks_text.insert(tk.END, "No orphaned tracks found. DJ Library is in sync with selected playlists.\n")
+            self.analysis_text.insert(tk.END, "No orphaned tracks found. DJ Library is in sync with selected playlists.\n")
 
         # Add summary at the end
-        self.new_tracks_text.insert(tk.END, "\n" + "=" * 80 + "\n")
-        self.new_tracks_text.insert(tk.END, f"SUMMARY:\n")
-        self.new_tracks_text.insert(tk.END, f"  New tracks: {total_new_found}\n")
-        self.new_tracks_text.insert(tk.END, f"  Removed tracks: {len(removed_tracks)}\n")
-        self.new_tracks_text.insert(tk.END, "=" * 80 + "\n")
+        self.analysis_text.insert(tk.END, "\n" + "=" * 80 + "\n")
+        self.analysis_text.insert(tk.END, f"SUMMARY:\n")
+        self.analysis_text.insert(tk.END, f"  New tracks: {total_new_found}\n")
+        self.analysis_text.insert(tk.END, f"  Removed tracks: {len(removed_tracks)}\n")
+        self.analysis_text.insert(tk.END, "=" * 80 + "\n")
 
         # Refresh the display
         self.filter_playlists()
         self.status_var.set(f"Calculated new tracks for {total_selected} playlist(s) - Found {total_new_found} new tracks total")
 
-        # Show a message box with the results and switch to the New Tracks Details tab
+        # Show a message box with the results and switch to the Library Analysis tab
         messagebox.showinfo("Calculation Complete",
-                          f"Checked {total_selected} playlist(s)\nFound {total_new_found} new tracks total\n\nSee 'New Tracks Details' tab for full list")
+                          f"Checked {total_selected} playlist(s)\nFound {total_new_found} new tracks total\n\nSee 'Library Analysis' tab for full details")
 
-        # Switch to the New Tracks Details tab
-        self.results_notebook.select(self.new_tracks_frame)
+        # Switch to the Library Analysis tab
+        self.results_notebook.select(0)
 
     def load_playlists(self):
         """Load playlists from iTunes XML into the treeview"""
@@ -1209,41 +1198,83 @@ class PlaylistSyncUI:
             self.analysis_text.insert(tk.END, f"Error checking for FFmpeg: {e}\n")
             self.status_var.set("Error checking for FFmpeg")
 
+    def check_flac_ui(self):
+        self.status_var.set("Checking for FLAC...")
+
+        self.analysis_text.delete(1.0, tk.END)
+        self.analysis_text.insert(tk.END, "Checking for FLAC encoder/decoder...\n\n")
+        self.root.update_idletasks()
+
+        try:
+            process_args = self.get_subprocess_args()
+            result = subprocess.run(["flac", "--version"], **process_args)
+            version_output = result.stdout.decode()
+            version_info = version_output.strip() if version_output else "Unknown version"
+
+            self.analysis_text.insert(tk.END, f"✓ FLAC is installed and available\n\n")
+            self.analysis_text.insert(tk.END, f"Version information:\n{version_info}\n\n")
+            self.analysis_text.insert(tk.END, "FLAC encoder/decoder is available for audio processing.")
+
+            self.status_var.set("FLAC check complete - Available")
+        except FileNotFoundError:
+            self.analysis_text.insert(tk.END, "✗ FLAC is NOT installed or not in your PATH.\n\n")
+            self.analysis_text.insert(tk.END, "Note: This application uses FFmpeg for FLAC conversion, so a standalone FLAC encoder is optional.\n\n")
+            self.analysis_text.insert(tk.END, "To install FLAC encoder/decoder:\n")
+            self.analysis_text.insert(tk.END, "- Windows: Download from https://xiph.org/flac/download.html\n")
+            self.analysis_text.insert(tk.END, "- macOS: brew install flac\n")
+            self.analysis_text.insert(tk.END, "- Linux: apt-get install flac or equivalent\n")
+
+            self.status_var.set("FLAC check complete - Not available")
+        except Exception as e:
+            self.analysis_text.insert(tk.END, f"Error checking for FLAC: {e}\n")
+            self.status_var.set("Error checking for FLAC")
+
+    def export_xml_only(self):
+        """Export XML only without copying files"""
+        # Set export_xml_only mode to True
+        self.export_xml_only_var = tk.BooleanVar(value=True)
+        # Call the regular sync process
+        self.start_sync()
+
     def start_sync(self):
+        # Initialize export_xml_only_var if it doesn't exist (for normal sync)
+        if not hasattr(self, 'export_xml_only_var'):
+            self.export_xml_only_var = tk.BooleanVar(value=False)
+
         itunes_xml = self.itunes_xml_var.get()
         dj_library = self.dj_library_var.get()
         export_xml = self.export_xml_var.get()
-        
+
         if not itunes_xml or not os.path.exists(itunes_xml):
             messagebox.showerror("Error", "iTunes XML file not found!")
             return
-        
+
         if not dj_library:
             messagebox.showerror("Error", "Please specify a DJ Library folder!")
             return
-        
+
         if not export_xml:
             messagebox.showerror("Error", "Please specify an export XML path!")
             return
-        
+
         # Check playlist selection
         selected_playlists = self.get_selected_playlists()
         if not selected_playlists:
             messagebox.showerror("Error", "No playlists selected for sync!")
             return
-        
+
         # Make sure the export_xml path is a file, not a directory
         if os.path.isdir(export_xml):
             export_xml = os.path.join(export_xml, "DJ Library.xml")
             self.export_xml_var.set(export_xml)
-            messagebox.showinfo("XML Path Updated", 
+            messagebox.showinfo("XML Path Updated",
                                f"Export path was a directory. Updated to: {export_xml}")
-        
+
         # Check if we have write permissions for the XML file's directory
         export_dir = os.path.dirname(export_xml)
         if export_dir and not os.access(export_dir, os.W_OK):
             alt_path = os.path.join(os.path.expanduser("~"), "Documents", "DJ Library.xml")
-            response = messagebox.askquestion("Permission Issue", 
+            response = messagebox.askquestion("Permission Issue",
                                             f"No write permission for {export_dir}. Would you like to save to {alt_path} instead?")
             if response == 'yes':
                 self.export_xml_var.set(alt_path)
@@ -1251,7 +1282,7 @@ class PlaylistSyncUI:
             else:
                 messagebox.showinfo("Sync Cancelled", "Please select a writable location for the XML export.")
                 return
-        
+
         if not os.path.exists(dj_library):
             try:
                 os.makedirs(dj_library)
@@ -1259,16 +1290,18 @@ class PlaylistSyncUI:
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to create DJ Library folder: {e}")
                 return
-        
+
         self.sync_btn.config(state=tk.DISABLED)
+        self.export_xml_only_btn.config(state=tk.DISABLED)
         self.check_ffmpeg_btn.config(state=tk.DISABLED)
+        self.check_flac_btn.config(state=tk.DISABLED)
         self.load_playlists_btn.config(state=tk.DISABLED)
         self.syncing = True
-        
+
         self.analysis_text.delete(1.0, tk.END)
         self.sync_text.delete(1.0, tk.END)
         self.xml_text.delete(1.0, tk.END)
-        
+
         thread = threading.Thread(target=self.sync_process, daemon=True)
         thread.start()
 
@@ -1381,7 +1414,9 @@ class PlaylistSyncUI:
     
     def enable_buttons(self):
         self.sync_btn.config(state=tk.NORMAL)
+        self.export_xml_only_btn.config(state=tk.NORMAL)
         self.check_ffmpeg_btn.config(state=tk.NORMAL)
+        self.check_flac_btn.config(state=tk.NORMAL)
         self.load_playlists_btn.config(state=tk.NORMAL)
     
     def append_to_text_widget(self, text_widget, message):
@@ -1395,6 +1430,14 @@ class PlaylistSyncUI:
         try:
             process_args = self.get_subprocess_args()
             subprocess.run(["ffmpeg", "-version"], **process_args)
+            return True
+        except:
+            return False
+
+    def check_flac(self):
+        try:
+            process_args = self.get_subprocess_args()
+            subprocess.run(["flac", "--version"], **process_args)
             return True
         except:
             return False
