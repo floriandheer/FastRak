@@ -832,6 +832,30 @@ class ProfessionalPipelineGUI:
                 self.update_status(f"Folder not found: {folder_path}", "warning")
         except Exception as e:
             self.update_status(f"Error opening folder: {e}", "error")
+
+    def open_note(self, category_key):
+        """Open or create a note file for a category."""
+        try:
+            # Create notes directory if it doesn't exist
+            notes_dir = os.path.join(SCRIPT_FILE_DIR, "notes")
+            os.makedirs(notes_dir, exist_ok=True)
+
+            # Create note filename based on category key
+            note_filename = f"{category_key.lower()}_notes.txt"
+            note_path = os.path.join(notes_dir, note_filename)
+
+            # Create the file if it doesn't exist
+            if not os.path.exists(note_path):
+                with open(note_path, 'w', encoding='utf-8') as f:
+                    f.write(f"# Notes for {category_key}\n\n")
+                self.update_status(f"Created new note file: {note_filename}", "info")
+
+            # Open the note file with default text editor
+            os.startfile(note_path)
+            self.update_status(f"Opened notes: {note_filename}", "info")
+
+        except Exception as e:
+            self.update_status(f"Error opening note: {e}", "error")
     
     def create_category_card(self, parent, category_key, category_data):
         """Create a professional category card."""
@@ -843,43 +867,56 @@ class ProfessionalPipelineGUI:
         header_color = CATEGORY_COLORS.get(category_key, COLORS["accent"])
         header_frame = tk.Frame(card_frame, bg=header_color)
         header_frame.pack(fill=tk.X)
-        
+
         # Make header clickable if folder_path exists (excluding Global Tools)
         folder_path = category_data.get('folder_path')
         if folder_path:
             header_frame.configure(cursor="hand2")
-            
-            # Hover effects for clickable header
+
+            # Hover effects for clickable header (will be updated later to include notepad icon)
             def on_header_enter(e):
                 # Slightly lighten the header color on hover
                 lighter_color = self._lighten_color(header_color)
                 header_frame.configure(bg=lighter_color)
+                header_container.configure(bg=lighter_color)
                 header_content.configure(bg=lighter_color)
                 text_container.configure(bg=lighter_color)
                 icon_label.configure(bg=lighter_color)
                 name_label.configure(bg=lighter_color)
                 desc_label.configure(bg=lighter_color)
-            
+
             def on_header_leave(e):
                 # Return to original color
                 header_frame.configure(bg=header_color)
+                header_container.configure(bg=header_color)
                 header_content.configure(bg=header_color)
                 text_container.configure(bg=header_color)
                 icon_label.configure(bg=header_color)
                 name_label.configure(bg=header_color)
                 desc_label.configure(bg=header_color)
-            
+
             def on_header_click(e):
                 self.open_folder(folder_path)
-            
+
             header_frame.bind("<Enter>", on_header_enter)
             header_frame.bind("<Leave>", on_header_leave)
             header_frame.bind("<Button-1>", on_header_click)
-        
+
+        # Container frame to hold both header content and notepad icon
+        header_container = tk.Frame(header_frame, bg=header_color)
+        header_container.pack(fill=tk.X, padx=15, pady=15)
+
+        # If clickable, bind events to header_container too
+        if folder_path:
+            header_container.configure(cursor="hand2")
+            header_container.bind("<Enter>", lambda e: on_header_enter(e))
+            header_container.bind("<Leave>", lambda e: on_header_leave(e))
+            header_container.bind("<Button-1>", lambda e: on_header_click(e))
+
         # Category icon and name/description side by side, aligned to the left
-        header_content = tk.Frame(header_frame, bg=header_color)
-        header_content.pack(anchor="w", padx=15, pady=15)  # Align to left
-        
+        header_content = tk.Frame(header_container, bg=header_color)
+        header_content.pack(side=tk.LEFT, anchor="w")  # Align to left
+
         # If clickable, bind events to header_content too
         if folder_path:
             header_content.configure(cursor="hand2")
@@ -949,7 +986,106 @@ class ProfessionalPipelineGUI:
             desc_label.bind("<Enter>", lambda e: on_header_enter(e))
             desc_label.bind("<Leave>", lambda e: on_header_leave(e))
             desc_label.bind("<Button-1>", lambda e: on_header_click(e))
-        
+
+        # Notepad icon on the right side with background box
+        notepad_container = tk.Frame(header_container, bg=header_color)
+        notepad_container.pack(side=tk.RIGHT, anchor="e", padx=(10, 0))
+
+        # Inner frame for the icon with darkened background
+        notepad_bg_color = self._darken_color(header_color, 0.3)  # Darken header color by 30%
+        notepad_hover_color = self._lighten_color(header_color, 0.15)  # Lighten slightly on hover
+
+        notepad_frame = tk.Frame(notepad_container,
+                                bg=notepad_bg_color,
+                                cursor="hand2",
+                                relief=tk.FLAT,
+                                borderwidth=0)
+        notepad_frame.pack(padx=2, pady=2)
+
+        notepad_icon_font = font.Font(family="Segoe UI Emoji", size=18)
+        notepad_icon = tk.Label(notepad_frame,
+                               text="📝",
+                               font=notepad_icon_font,
+                               fg="#ffffff",
+                               bg=notepad_bg_color,
+                               cursor="hand2",
+                               padx=6,
+                               pady=4)
+        notepad_icon.pack()
+
+        # Notepad icon hover effects - change background only, no size change
+        def on_notepad_enter(e):
+            notepad_frame.configure(bg=notepad_hover_color)
+            notepad_icon.configure(bg=notepad_hover_color)
+
+        def on_notepad_leave(e):
+            notepad_frame.configure(bg=notepad_bg_color)
+            notepad_icon.configure(bg=notepad_bg_color)
+
+        def on_notepad_click(e):
+            # Stop event propagation to prevent header click
+            self.open_note(category_key)
+            return "break"
+
+        notepad_frame.bind("<Enter>", on_notepad_enter)
+        notepad_frame.bind("<Leave>", on_notepad_leave)
+        notepad_frame.bind("<Button-1>", on_notepad_click)
+
+        notepad_icon.bind("<Enter>", on_notepad_enter)
+        notepad_icon.bind("<Leave>", on_notepad_leave)
+        notepad_icon.bind("<Button-1>", on_notepad_click)
+
+        # Update header hover effects to include notepad container background
+        if folder_path:
+            original_on_header_enter = on_header_enter
+            original_on_header_leave = on_header_leave
+
+            def on_header_enter(e):
+                original_on_header_enter(e)
+                lighter_color = self._lighten_color(header_color)
+                notepad_container.configure(bg=lighter_color)
+
+            def on_header_leave(e):
+                original_on_header_leave(e)
+                notepad_container.configure(bg=header_color)
+
+            # Rebind the updated functions
+            header_frame.unbind("<Enter>")
+            header_frame.unbind("<Leave>")
+            header_frame.bind("<Enter>", on_header_enter)
+            header_frame.bind("<Leave>", on_header_leave)
+
+            # Also update bindings for child widgets
+            header_container.unbind("<Enter>")
+            header_container.unbind("<Leave>")
+            header_container.bind("<Enter>", lambda e: on_header_enter(e))
+            header_container.bind("<Leave>", lambda e: on_header_leave(e))
+
+            header_content.unbind("<Enter>")
+            header_content.unbind("<Leave>")
+            header_content.bind("<Enter>", lambda e: on_header_enter(e))
+            header_content.bind("<Leave>", lambda e: on_header_leave(e))
+
+            icon_label.unbind("<Enter>")
+            icon_label.unbind("<Leave>")
+            icon_label.bind("<Enter>", lambda e: on_header_enter(e))
+            icon_label.bind("<Leave>", lambda e: on_header_leave(e))
+
+            text_container.unbind("<Enter>")
+            text_container.unbind("<Leave>")
+            text_container.bind("<Enter>", lambda e: on_header_enter(e))
+            text_container.bind("<Leave>", lambda e: on_header_leave(e))
+
+            name_label.unbind("<Enter>")
+            name_label.unbind("<Leave>")
+            name_label.bind("<Enter>", lambda e: on_header_enter(e))
+            name_label.bind("<Leave>", lambda e: on_header_leave(e))
+
+            desc_label.unbind("<Enter>")
+            desc_label.unbind("<Leave>")
+            desc_label.bind("<Enter>", lambda e: on_header_enter(e))
+            desc_label.bind("<Leave>", lambda e: on_header_leave(e))
+
         # Card body with scrollable content
         body_frame = tk.Frame(card_frame, bg=COLORS["bg_card"])
         body_frame.pack(fill=tk.BOTH, expand=True)
@@ -1022,19 +1158,37 @@ class ProfessionalPipelineGUI:
         try:
             # Remove the # if present
             hex_color = hex_color.lstrip('#')
-            
+
             # Convert to RGB
             rgb = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
-            
+
             # Lighten each component
             rgb_lightened = tuple(min(255, int(c + (255 - c) * factor)) for c in rgb)
-            
+
             # Convert back to hex
             return '#{:02x}{:02x}{:02x}'.format(*rgb_lightened)
         except:
             # Return original color if conversion fails
             return hex_color
-    
+
+    def _darken_color(self, hex_color, factor=0.2):
+        """Darken a hex color by a given factor (0.0 to 1.0)."""
+        try:
+            # Remove the # if present
+            hex_color = hex_color.lstrip('#')
+
+            # Convert to RGB
+            rgb = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+
+            # Darken each component
+            rgb_darkened = tuple(max(0, int(c * (1 - factor))) for c in rgb)
+
+            # Convert back to hex
+            return '#{:02x}{:02x}{:02x}'.format(*rgb_darkened)
+        except:
+            # Return original color if conversion fails
+            return hex_color
+
     def _get_script_priority(self, script_key, script_name):
         """Get priority for script ordering (1=highest priority)."""
         # Check both script key and name for folder structure
