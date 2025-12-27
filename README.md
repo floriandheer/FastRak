@@ -175,14 +175,10 @@ CREATIVE_CATEGORIES = {
 
 This is a personal pipeline management system, but suggestions and improvements are welcome!
 
-## License
-
-Copyright © 2025 Florian Dheer. All rights reserved.
-
-This is proprietary software for personal use.
 
 ## Author
 
 **Florian Dheer**
 
 For questions or support, please refer to the inline documentation or contact the author.
+email: info@floriandheer.com
