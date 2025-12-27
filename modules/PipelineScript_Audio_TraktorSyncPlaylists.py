@@ -158,9 +158,47 @@ class PlaylistSyncUI:
         
         self.debug_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(options_frame, text="Show detailed info for missing tracks", variable=self.debug_var).grid(row=0, column=0, sticky="w", padx=10, pady=5)
-        
+
+        # File handling mode - using mutually exclusive checkboxes
+        file_mode_label = ttk.Label(options_frame, text="For files that already exist:", font=('', 9, 'bold'))
+        file_mode_label.grid(row=1, column=0, columnspan=3, sticky="w", padx=10, pady=(10, 2))
+
+        # Frame to hold checkboxes side by side
+        file_mode_frame = ttk.Frame(options_frame)
+        file_mode_frame.grid(row=2, column=0, columnspan=3, sticky="w", padx=30, pady=2)
+
         self.skip_existing_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(options_frame, text="Skip copying files that already exist", variable=self.skip_existing_var).grid(row=1, column=0, sticky="w", padx=10, pady=5)
+        self.overwrite_all_var = tk.BooleanVar(value=False)
+
+        def on_skip_toggle():
+            if self.skip_existing_var.get():
+                self.overwrite_all_var.set(False)
+            elif not self.overwrite_all_var.get():
+                # If trying to uncheck skip while overwrite is also unchecked, keep skip checked
+                self.skip_existing_var.set(True)
+
+        def on_overwrite_toggle():
+            if self.overwrite_all_var.get():
+                self.skip_existing_var.set(False)
+            elif not self.skip_existing_var.get():
+                # If trying to uncheck overwrite while skip is also unchecked, keep overwrite checked
+                self.overwrite_all_var.set(True)
+
+        skip_checkbox = ttk.Checkbutton(
+            file_mode_frame,
+            text="⏭  Skip copying",
+            variable=self.skip_existing_var,
+            command=on_skip_toggle
+        )
+        skip_checkbox.grid(row=0, column=0, sticky="w", padx=(0, 20))
+
+        overwrite_checkbox = ttk.Checkbutton(
+            file_mode_frame,
+            text="♻  Overwrite files",
+            variable=self.overwrite_all_var,
+            command=on_overwrite_toggle
+        )
+        overwrite_checkbox.grid(row=0, column=1, sticky="w")
 
         # Convert to FLAC is now always enabled (no checkbox)
         self.convert_flac_var = tk.BooleanVar(value=True)
@@ -169,7 +207,7 @@ class PlaylistSyncUI:
         self.preserve_album_art_var = tk.BooleanVar(value=True)
 
         self.archive_removed_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(options_frame, text="Archive removed tracks to _Removed folder (tracks no longer in playlists)", variable=self.archive_removed_var).grid(row=2, column=0, sticky="w", padx=10, pady=5)
+        ttk.Checkbutton(options_frame, text="Archive removed tracks (tracks no longer in any playlists)", variable=self.archive_removed_var).grid(row=3, column=0, columnspan=3, sticky="w", padx=10, pady=5)
 
         current_row += 1
         
@@ -257,11 +295,11 @@ class PlaylistSyncUI:
         self.load_playlists_btn = ttk.Button(main_btn_frame, text="Load Playlists", command=self.load_playlists, width=15)
         self.load_playlists_btn.grid(row=0, column=1, padx=10)
 
-        self.sync_btn = ttk.Button(main_btn_frame, text="Start Sync", command=self.start_sync, width=15)
-        self.sync_btn.grid(row=0, column=2, padx=10)
+        self.export_xml_btn = tk.Button(main_btn_frame, text="Export XML", command=self.export_xml_only, width=15, bg="yellow", fg="black", font=('', 9, 'bold'))
+        self.export_xml_btn.grid(row=0, column=2, padx=10)
 
-        self.export_xml_only_btn = ttk.Button(main_btn_frame, text="Export XML Only", command=self.export_xml_only, width=15)
-        self.export_xml_only_btn.grid(row=0, column=3, padx=10)
+        self.sync_btn = tk.Button(main_btn_frame, text="Start Sync", command=self.start_sync, width=15, bg="green", fg="white", font=('', 9, 'bold'))
+        self.sync_btn.grid(row=0, column=3, padx=10)
 
         # Initialize Mac paths visibility
         self.on_target_os_changed()
@@ -328,10 +366,10 @@ class PlaylistSyncUI:
         if hasattr(self, 'sync_btn'):
             if self.selection_mode.get() == "include" and selected_count == 0:
                 self.sync_btn.config(state=tk.DISABLED)
-                self.export_xml_only_btn.config(state=tk.DISABLED)
+                self.export_xml_btn.config(state=tk.DISABLED)
             else:
                 self.sync_btn.config(state=tk.NORMAL)
-                self.export_xml_only_btn.config(state=tk.NORMAL)
+                self.export_xml_btn.config(state=tk.NORMAL)
 
     def select_all_playlists(self):
         """Select all visible playlists"""
@@ -541,11 +579,8 @@ class PlaylistSyncUI:
             self.append_to_text_widget(self.sync_text, "Warning: Export XML not found, skipping archive step.\n")
             return archived_count
 
-        # Create archive folder
+        # Define archive folder path (will be created only if needed)
         archive_folder = os.path.join(dj_library, "_Removed")
-        if not os.path.exists(archive_folder):
-            os.makedirs(archive_folder)
-            self.append_to_text_widget(self.sync_text, f"Created archive folder: {archive_folder}\n")
 
         # Parse the exported XML to get all tracks that are actually referenced
         active_files = set()
@@ -614,6 +649,11 @@ class PlaylistSyncUI:
 
                 # If this file is not in our active files list, archive it
                 if existing_file not in active_files:
+                    # Create archive folder only when we have the first file to archive
+                    if not os.path.exists(archive_folder):
+                        os.makedirs(archive_folder)
+                        self.append_to_text_widget(self.sync_text, f"Created archive folder: {archive_folder}\n")
+
                     archive_path = os.path.join(archive_folder, existing_file)
 
                     # Handle filename conflicts in archive folder
@@ -1230,7 +1270,7 @@ class PlaylistSyncUI:
             self.status_var.set("Error checking for FLAC")
 
     def export_xml_only(self):
-        """Export XML only without copying files"""
+        """Export XML without copying files"""
         # Set export_xml_only mode to True
         self.export_xml_only_var = tk.BooleanVar(value=True)
         # Call the regular sync process
@@ -1292,7 +1332,7 @@ class PlaylistSyncUI:
                 return
 
         self.sync_btn.config(state=tk.DISABLED)
-        self.export_xml_only_btn.config(state=tk.DISABLED)
+        self.export_xml_btn.config(state=tk.DISABLED)
         self.check_ffmpeg_btn.config(state=tk.DISABLED)
         self.check_flac_btn.config(state=tk.DISABLED)
         self.load_playlists_btn.config(state=tk.DISABLED)
@@ -1312,7 +1352,7 @@ class PlaylistSyncUI:
             export_xml = self.export_xml_var.get()
 
             debug_missing = self.debug_var.get()
-            skip_existing = self.skip_existing_var.get()
+            skip_existing = self.skip_existing_var.get()  # True = skip existing files, False = overwrite all
             convert_to_flac = self.convert_flac_var.get()
             preserve_album_art = self.preserve_album_art_var.get()
             export_xml_only = self.export_xml_only_var.get()
@@ -1414,7 +1454,7 @@ class PlaylistSyncUI:
     
     def enable_buttons(self):
         self.sync_btn.config(state=tk.NORMAL)
-        self.export_xml_only_btn.config(state=tk.NORMAL)
+        self.export_xml_btn.config(state=tk.NORMAL)
         self.check_ffmpeg_btn.config(state=tk.NORMAL)
         self.check_flac_btn.config(state=tk.NORMAL)
         self.load_playlists_btn.config(state=tk.NORMAL)
@@ -1538,6 +1578,82 @@ class PlaylistSyncUI:
         
         return album_art_path
 
+    def read_flac_comment_metadata(self, flac_path):
+        """Read the COMMENT metadata field from a FLAC file using metaflac"""
+        if not flac_path.lower().endswith('.flac'):
+            return None
+
+        try:
+            process_args = self.get_subprocess_args()
+
+            # Use metaflac to read COMMENT field
+            result = subprocess.run([
+                "metaflac",
+                "--show-tag=COMMENT",
+                flac_path
+            ], **process_args)
+
+            if result.returncode == 0 and result.stdout:
+                output = result.stdout.decode('utf-8').strip()
+                # Output format is "COMMENT=value", extract the value
+                if output.startswith("COMMENT="):
+                    return output[8:]  # Remove "COMMENT=" prefix
+
+            return None
+
+        except Exception as e:
+            return None
+
+    def read_flac_genre_metadata(self, flac_path):
+        """Read the GENRE metadata field from a FLAC file using metaflac"""
+        if not flac_path.lower().endswith('.flac'):
+            return None
+
+        try:
+            process_args = self.get_subprocess_args()
+
+            # Use metaflac to read GENRE field
+            result = subprocess.run([
+                "metaflac",
+                "--show-tag=GENRE",
+                flac_path
+            ], **process_args)
+
+            if result.returncode == 0 and result.stdout:
+                output = result.stdout.decode('utf-8').strip()
+                # Output format is "GENRE=value", extract the value
+                if output.startswith("GENRE="):
+                    return output[6:]  # Remove "GENRE=" prefix
+
+            return None
+
+        except Exception as e:
+            return None
+
+    def write_flac_genre_metadata(self, flac_path, genre):
+        """Write genre to the FLAC GENRE metadata field using metaflac"""
+        if not genre or not flac_path.lower().endswith('.flac'):
+            return False
+
+        try:
+            process_args = self.get_subprocess_args()
+
+            # Use metaflac to write GENRE field
+            result = subprocess.run([
+                "metaflac",
+                "--remove-tag=GENRE",
+                f"--set-tag=GENRE={genre}",
+                flac_path
+            ], **process_args)
+
+            if result.returncode == 0:
+                return True
+            else:
+                return False
+
+        except Exception as e:
+            return False
+
     def write_flac_comment_metadata(self, flac_path, playlist_names, temp_dir):
         """Write playlist names to the FLAC COMMENT metadata field using metaflac"""
         if not playlist_names or not flac_path.lower().endswith('.flac'):
@@ -1567,6 +1683,131 @@ class PlaylistSyncUI:
         except Exception as e:
             self.append_to_text_widget(self.sync_text, f"Warning: Could not write comment metadata to {os.path.basename(flac_path)}: {e}\n")
             return False
+
+    def update_existing_metadata(self, tracks, dj_library, convert_to_flac, source_path_to_playlists, tracks_metadata):
+        """Update FLAC metadata for existing files in the DJ Library with current playlist and genre information from iTunes XML"""
+        self.append_to_text_widget(self.sync_text, f"Updating metadata for existing FLAC files in {dj_library}...\n")
+
+        if not tracks:
+            return 0
+
+        updated_count = 0
+        skipped_count = 0
+        unchanged_count = 0
+        error_count = 0
+        total_tracks = len(tracks)
+
+        # Create a temporary directory for metadata operations in the DJ Library location
+        # This ensures it's on the same drive with sufficient space
+        temp_dir = tempfile.mkdtemp(dir=dj_library)
+
+        try:
+            for i, track_path in enumerate(tracks):
+                # Show progress periodically
+                if (i + 1) % 100 == 0:
+                    progress_pct = (i + 1) * 100 / total_tracks
+                    self.status_var.set(f"Checking metadata: {i+1}/{total_tracks} ({progress_pct:.1f}%)")
+
+                try:
+                    # Get the destination path (same logic as in create_path_mapping/update_dj_library)
+                    file_ext = os.path.splitext(track_path)[1].lower()
+                    original_base_name = os.path.splitext(os.path.basename(track_path))[0]
+
+                    # Extract track title from metadata
+                    track_title = self.get_track_title(track_path)
+                    base_name = track_title if track_title else original_base_name
+
+                    # Determine destination extension
+                    dest_ext = ".flac" if convert_to_flac and file_ext != '.flac' else file_ext
+                    dest_path = os.path.join(dj_library, base_name + dest_ext)
+
+                    # Handle filename conflicts - check for numbered variants
+                    # If the base file doesn't exist, look for -01, -02, etc.
+                    actual_dest_path = None
+                    if os.path.exists(dest_path):
+                        actual_dest_path = dest_path
+                    else:
+                        # Check for conflict-renamed versions
+                        for counter in range(1, 100):  # Check up to 99
+                            numbered_path = os.path.join(dj_library, f"{base_name} -{counter:02d}{dest_ext}")
+                            if os.path.exists(numbered_path):
+                                actual_dest_path = numbered_path
+                                break
+
+                    # Check if file exists and is FLAC
+                    if actual_dest_path and actual_dest_path.lower().endswith('.flac'):
+                        # Get playlist names and genre for this track from iTunes XML
+                        playlist_names = source_path_to_playlists.get(track_path, [])
+
+                        # Find the track metadata by matching the file path
+                        itunes_genre = None
+                        for track_id, metadata in tracks_metadata.items():
+                            if metadata.get('file_path') == track_path:
+                                itunes_genre = metadata.get('Genre')
+                                break
+
+                        # Read current metadata from FLAC file
+                        current_comment = self.read_flac_comment_metadata(actual_dest_path)
+                        current_genre = self.read_flac_genre_metadata(actual_dest_path)
+
+                        # Prepare new metadata values
+                        new_comment = ", ".join(playlist_names) if playlist_names else None
+                        new_genre = itunes_genre
+
+                        # Check if either comment or genre needs updating
+                        comment_needs_update = (new_comment and current_comment != new_comment)
+                        genre_needs_update = (new_genre and current_genre != new_genre)
+
+                        if comment_needs_update or genre_needs_update:
+                            # Update metadata that has changed
+                            if comment_needs_update:
+                                if not self.write_flac_comment_metadata(actual_dest_path, playlist_names, temp_dir):
+                                    error_count += 1
+
+                            if genre_needs_update:
+                                if not self.write_flac_genre_metadata(actual_dest_path, new_genre):
+                                    error_count += 1
+
+                            updated_count += 1
+                            if updated_count % 50 == 0:
+                                progress_pct = (i + 1) * 100 / total_tracks
+                                self.status_var.set(f"Updating metadata: {i+1}/{total_tracks} ({progress_pct:.1f}%)")
+                                self.append_to_text_widget(
+                                    self.sync_text,
+                                    f"Progress: {updated_count} updated, {unchanged_count} unchanged, {skipped_count} skipped\n"
+                                )
+                        else:
+                            # Metadata is already correct
+                            unchanged_count += 1
+                    else:
+                        # File doesn't exist or is not FLAC
+                        skipped_count += 1
+
+                except Exception as e:
+                    error_count += 1
+                    self.append_to_text_widget(
+                        self.sync_text,
+                        f"Error updating metadata for {os.path.basename(track_path)}: {e}\n"
+                    )
+
+            # Final summary
+            self.append_to_text_widget(
+                self.sync_text,
+                f"\nMetadata update summary:\n"
+                f"  - Updated: {updated_count} files (playlist info changed)\n"
+                f"  - Unchanged: {unchanged_count} files (already up to date)\n"
+                f"  - Skipped: {skipped_count} files (not FLAC or not found)\n"
+                f"  - Errors: {error_count} files\n"
+            )
+
+        finally:
+            # Clean up temp directory
+            try:
+                shutil.rmtree(temp_dir)
+            except:
+                pass
+
+        return updated_count
 
     def extract_embedded_art(self, source_path, temp_dir):
         """Extract embedded album art from audio file using FFmpeg"""
@@ -1689,7 +1930,7 @@ class PlaylistSyncUI:
                                 file_path = urllib.parse.unquote(location)
                                 if file_path.startswith("file://"):
                                     file_path = file_path.replace("file://", "")
-                            
+
                             # Convert to Windows path format
                             file_path = file_path.replace("/", "\\")
                 
@@ -1817,8 +2058,16 @@ class PlaylistSyncUI:
                 for track_id in playlist_items:
                     if track_id in track_ids_to_paths:
                         # This is a valid track - add it to our copy list
-                        tracks_to_copy.append(track_ids_to_paths[track_id])
+                        track_path = track_ids_to_paths[track_id]
+                        tracks_to_copy.append(track_path)
                         valid_tracks_in_playlist += 1
+                        # Debug: log each track being added
+                        if playlist_name == "Bew" or len(playlist_items) <= 10:  # Log for test playlists
+                            track_name = tracks_metadata.get(track_id, {}).get('Name', 'Unknown')
+                            self.append_to_text_widget(
+                                self.analysis_text,
+                                f"  + Adding track ID {track_id}: {track_name} -> {os.path.basename(track_path)}\n"
+                            )
                     else:
                         # This track is missing or invalid - track for debugging
                         missing_tracks_in_playlist += 1
@@ -1855,7 +2104,16 @@ class PlaylistSyncUI:
                 self.append_to_text_widget(self.analysis_text, f"- Skipping playlist: {playlist_name}\n")
         
         # Remove duplicates from tracks_to_copy
+        tracks_before_dedup = len(tracks_to_copy)
         tracks_to_copy = list(set(tracks_to_copy))
+        tracks_after_dedup = len(tracks_to_copy)
+
+        if tracks_before_dedup != tracks_after_dedup:
+            self.append_to_text_widget(
+                self.analysis_text,
+                f"\nRemoved {tracks_before_dedup - tracks_after_dedup} duplicate track references " +
+                f"({tracks_before_dedup} → {tracks_after_dedup} unique tracks)\n"
+            )
         
         self.append_to_text_widget(
             self.analysis_text, 
@@ -1956,8 +2214,8 @@ class PlaylistSyncUI:
                 # Handle potential filename conflicts by adding suffix
                 counter = 1
                 original_dest_path = dest_path
-                # Check if this destination is already used in our mapping
-                while dest_path in file_mapping.values():
+                # Check if this destination is already used in our mapping OR exists on disk
+                while dest_path in file_mapping.values() or os.path.exists(dest_path):
                     name_without_ext = os.path.splitext(original_dest_path)[0]
                     dest_path = f"{name_without_ext} ({counter}){dest_ext}"
                     counter += 1
@@ -2000,9 +2258,10 @@ class PlaylistSyncUI:
         
         total_tracks = len(tracks)
         track_list = list(tracks)
-        
-        # Create a temporary directory for album art operations
-        temp_dir = tempfile.mkdtemp()
+
+        # Create a temporary directory for album art operations in the DJ Library location
+        # This ensures it's on the same drive with sufficient space
+        temp_dir = tempfile.mkdtemp(dir=dj_library)
         
         try:
             for i, track_path in enumerate(track_list):
@@ -2016,30 +2275,79 @@ class PlaylistSyncUI:
                     
                     dest_ext = ".flac" if convert_to_flac and file_ext != '.flac' else file_ext
                     dest_path = os.path.join(dj_library, base_name + dest_ext)
-                    
-                    # Check if file already exists and we should skip it
+
+                    # Handle filename conflicts with OTHER tracks in current session
+                    # When duplicates exist, ALL instances get numbered starting from -01
+                    original_dest_path = dest_path
+
+                    # Check if this filename is already used by another track in this session
+                    if dest_path in file_mapping.values() and dest_path != file_mapping.get(track_path):
+                        # Find the first track that's using this base name (without number)
+                        first_track_path = None
+                        for src_path, dst_path in file_mapping.items():
+                            if dst_path == original_dest_path:
+                                first_track_path = src_path
+                                break
+
+                        # Rename the first occurrence to add -01
+                        if first_track_path:
+                            name_without_ext = os.path.splitext(original_dest_path)[0]
+                            new_first_dest = f"{name_without_ext} -01{dest_ext}"
+                            old_first_dest = file_mapping[first_track_path]
+
+                            # Update the mapping
+                            file_mapping[first_track_path] = new_first_dest
+
+                            # If the file was already copied, rename it on disk
+                            if os.path.exists(old_first_dest) and not os.path.exists(new_first_dest):
+                                try:
+                                    os.rename(old_first_dest, new_first_dest)
+                                    self.append_to_text_widget(
+                                        self.sync_text,
+                                        f"→ Renumbered first occurrence: {os.path.basename(new_first_dest)}\n"
+                                    )
+                                except Exception as e:
+                                    self.append_to_text_widget(
+                                        self.sync_text,
+                                        f"⚠ Could not rename {os.path.basename(old_first_dest)}: {e}\n"
+                                    )
+
+                        # Now find the next available number for this track
+                        counter = 2  # Start from -02 since first one is now -01
+                        name_without_ext = os.path.splitext(original_dest_path)[0]
+                        dest_path = f"{name_without_ext} -{counter:02d}{dest_ext}"
+
+                        # Keep incrementing until we find an unused number
+                        while dest_path in file_mapping.values() and dest_path != file_mapping.get(track_path):
+                            counter += 1
+                            dest_path = f"{name_without_ext} -{counter:02d}{dest_ext}"
+
+                        self.append_to_text_widget(
+                            self.sync_text,
+                            f"→ Numbered duplicate: {os.path.basename(dest_path)}\n"
+                        )
+
+                    # NOW check if file already exists and we should skip it (from previous run)
                     if os.path.exists(dest_path) and skip_existing:
                         # File exists and we want to skip - use the existing file
                         file_mapping[track_path] = dest_path
                         synced_tracks.append(dest_path)
                         skipped_count += 1
-                        
+
+                        # Log the skip
+                        self.append_to_text_widget(
+                            self.sync_text,
+                            f"⊳ Skipping track {i+1}/{total_tracks}: {base_name} (file already exists)\n"
+                        )
+
                         if i % 20 == 0 or i+1 == total_tracks:
                             progress_pct = (i + 1) * 100 / total_tracks
                             self.status_var.set(f"Processing track {i+1}/{total_tracks} ({progress_pct:.1f}%)")
                             self.append_to_text_widget(
-                                self.sync_text, 
+                                self.sync_text,
                                 f"Progress: {i+1}/{total_tracks} tracks processed ({skipped_count} skipped, {copied_count} copied)\n"
                             )
                         continue  # Skip to next track
-                    
-                    # Handle filename conflicts by adding a suffix (only when not skipping or file doesn't exist)
-                    counter = 1
-                    original_dest_path = dest_path
-                    while os.path.exists(dest_path) and dest_path != file_mapping.get(track_path):
-                        name_without_ext = os.path.splitext(original_dest_path)[0]
-                        dest_path = f"{name_without_ext} ({counter}){dest_ext}"
-                        counter += 1
                     
                     # Add this mapping regardless of whether we copy the file
                     file_mapping[track_path] = dest_path
