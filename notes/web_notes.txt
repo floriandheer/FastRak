@@ -1,6 +1,19 @@
 # Notes for WEB
 
 Alles3D
-- Verbeteren UI Front End 3D-link, uitvouwbare slider-sets, variabele prijzen, extra uitlegvak voor de parameters
+- Verbeteren UI Front End 3D-link , extra uitlegvak voor de parameters
+- Nestbare parameters/uitvouwbare sliders
+- Variabele prijzen
 - Formules kunnen die berekening maken met data van de parameters
   bvb: innerlength=(outerlength-(wallthickness*2))
+- Winkelkar moet je in 1 keer kunnen legen
+- Een laadsymbool binnen de 3D viewer component
+- Bewaar ingegeven parameters van klanten, zo kan je je product nog steeds nakijken en aanpassen vanuit het winkelmandje. Neem een snapshot van de iframe bij het toevoegen aan de winkelmand met de parameters --> Genereer mooie overzichtsafbeelding met "bewerk" knop
+
+--BUGS--
+- Naam in order cards reflecteerd enkel huidig product/scene
+
+--POLICY--
+- Klant is verantwoordelijk voor de maten
+  Afbeeldingen
+- In een echte winkel displayen (Miliro, ...)

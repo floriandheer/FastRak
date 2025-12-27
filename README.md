@@ -46,6 +46,14 @@ Some pipeline scripts require additional external software:
   - Linux: `apt-get install flac` or equivalent
   - Note: The `metaflac` command-line tool must be in your system PATH
 
+#### Cloud Sync Tools
+- **rclone** - Required for cloud storage synchronization (OneDrive, Google Drive, etc.)
+  - Used by: Backup MusicBee to OneDrive
+  - Download from [rclone.org](https://rclone.org/downloads/)
+  - After downloading, extract `rclone.exe` to the `tools/rclone/` folder in this repository
+  - Configure your remote: `rclone config` (follow the interactive setup for your cloud provider)
+  - Note: The `tools/` folder is gitignored - you must download rclone separately
+
 ## Installation
 
 ### Quick Start
