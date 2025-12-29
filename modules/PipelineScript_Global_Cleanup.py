@@ -16,14 +16,11 @@ import logging
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-# Setup logging
-def setup_logging():
-    log_format = "%(asctime)s [%(levelname)s] %(message)s"
-    logging.basicConfig(level=logging.INFO, format=log_format)
-    return logging.getLogger("UnifiedCleanerScript")
+# Setup logging using shared utility
+from shared_logging import get_logger, setup_logging as setup_shared_logging
 
-# Get logger
-logger = setup_logging()
+# Get logger reference (configured in main())
+logger = get_logger("global_cleanup")
 
 class UnifiedCleaner:
     def __init__(self, root):
@@ -795,6 +792,9 @@ class UnifiedCleaner:
         threading.Thread(target=clean_thread, daemon=True).start()
 
 def main():
+    # Setup logging when the app actually runs (not at import time)
+    setup_shared_logging("global_cleanup")
+
     # Check if we should run in command-line mode
     if len(sys.argv) > 1:
         # Parse command line arguments

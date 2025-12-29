@@ -13,7 +13,12 @@ import sys
 import tkinter as tk
 from tkinter import ttk, messagebox
 import datetime
-import logging
+
+# Setup logging using shared utility
+from shared_logging import get_logger, setup_logging as setup_shared_logging
+
+# Get logger reference (configured in main())
+logger = get_logger("bookkeeping_folders")
 
 # ====================================
 # CONSTANTS AND CONFIGURATION
@@ -443,6 +448,9 @@ class BookkeepingFolderGUI:
 
 def main():
     """Main application entry point."""
+    # Setup logging when the app actually runs (not at import time)
+    setup_shared_logging("bookkeeping_folders")
+
     # Create Tkinter root
     root = tk.Tk()
     

@@ -225,9 +225,34 @@ CREATIVE_CATEGORIES = {
         "name": "Real Time",
         "description": "Real-time processing and performance tools",
         "icon": "⚡",
-        "folder_path": "I:\\Real Time",
+        "folder_path": "I:\\RealTime",
         "scripts": {},
-        "subcategories": {}
+        "subcategories": {
+            "TD": {
+                "name": "TouchDesigner",
+                "icon": "🟠",
+                "scripts": {
+                    "folder_structure": {
+                        "name": "New TouchDesigner Project",
+                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_RealTime_FolderStructure_TouchDesigner.py"),
+                        "description": "Create folder structure for TouchDesigner real-time projects",
+                        "icon": "📁"
+                    }
+                }
+            },
+            "GODOT": {
+                "name": "Godot Engine",
+                "icon": "🔵",
+                "scripts": {
+                    "folder_structure": {
+                        "name": "New Godot Project",
+                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_RealTime_FolderStructure_Godot.py"),
+                        "description": "Create folder structure for Godot game development projects",
+                        "icon": "📁"
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -280,25 +305,12 @@ DEFAULT_CONFIG_PATH = os.path.join(os.path.expanduser("~"), "AppData", "Local", 
 # LOGGING AND CONFIG (Simplified)
 # ====================================
 
-def setup_logging():
-    """Configure and set up logging for the application."""
-    log_dir = os.path.join(os.path.expanduser("~"), "AppData", "Local", "PipelineManager", "logs")
-    os.makedirs(log_dir, exist_ok=True)
-    
-    log_file = os.path.join(log_dir, f"pipeline_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
-    
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[
-            logging.FileHandler(log_file),
-            logging.StreamHandler(sys.stdout)
-        ]
-    )
-    
-    return logging.getLogger("PipelineManager")
+# Import shared logging utility
+sys.path.insert(0, SCRIPTS_DIR)
+from shared_logging import get_logger, setup_logging
 
-logger = setup_logging()
+# Get logger reference (configured in main())
+logger = get_logger("pipeline")
 
 class ConfigManager:
     """Manages configuration settings for the pipeline manager."""
@@ -832,6 +844,17 @@ class ProfessionalPipelineGUI:
                 self.update_status(f"Folder not found: {folder_path}", "warning")
         except Exception as e:
             self.update_status(f"Error opening folder: {e}", "error")
+
+    def open_logs_folder(self):
+        """Open the centralized logs folder in Windows File Explorer."""
+        logs_folder = os.path.join(os.path.expanduser("~"), "AppData", "Local", "PipelineManager", "logs")
+        try:
+            # Create the folder if it doesn't exist
+            os.makedirs(logs_folder, exist_ok=True)
+            os.startfile(logs_folder)
+            self.update_status(f"Opened logs folder: {logs_folder}", "info")
+        except Exception as e:
+            self.update_status(f"Error opening logs folder: {e}", "error")
 
     def open_note(self, category_key):
         """Open or create a note file for a category."""
@@ -1428,6 +1451,9 @@ class ProfessionalPipelineGUI:
 
 def main():
     """Main application entry point."""
+    # Setup logging when the app actually runs (not at import time)
+    setup_logging("pipeline")
+
     root = tk.Tk()
     
     # Create main application
@@ -1439,9 +1465,10 @@ def main():
     root.config(menu=menu_bar)
     
     # File menu
-    file_menu = tk.Menu(menu_bar, tearoff=0, bg=COLORS["bg_secondary"], 
+    file_menu = tk.Menu(menu_bar, tearoff=0, bg=COLORS["bg_secondary"],
                        fg=COLORS["text_primary"],
                        activebackground=COLORS["accent"], activeforeground="#ffffff")
+    file_menu.add_command(label="Open Logs Folder", command=app.open_logs_folder)
     file_menu.add_separator()
     file_menu.add_command(label="Exit", command=root.quit, accelerator="Alt+F4")
     menu_bar.add_cascade(label="File", menu=file_menu)

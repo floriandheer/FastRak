@@ -18,9 +18,14 @@ import time
 import threading
 from datetime import datetime
 from pathlib import Path
-import logging
 from typing import Dict, List, Optional
 import base64
+
+# Setup logging using shared utility
+from shared_logging import get_logger, setup_logging as setup_shared_logging
+
+# Get logger reference (configured in main())
+logger = get_logger("woocommerce_monitor")
 
 # ====================================
 # CONFIGURATION
@@ -71,7 +76,7 @@ class Config:
             },
             "logging": {
                 "enabled": True,
-                "log_file": str(self.data_dir / "monitor.log"),
+                "log_file": str(Path.home() / "AppData" / "Local" / "PipelineManager" / "logs" / "woocommerce_monitor.log"),
                 "log_level": "INFO"
             }
         }
@@ -140,7 +145,7 @@ class ProcessedOrdersTracker:
             with open(self.tracker_file, 'w') as f:
                 json.dump(self.processed_orders, f, indent=4)
         except Exception as e:
-            logging.error(f"Failed to save tracker: {e}")
+            logger.error(f"Failed to save tracker: {e}")
 
     def is_processed(self, order_id: str) -> bool:
         """Check if order has been processed"""
@@ -212,7 +217,7 @@ class WooCommerceClient:
 
             return response.json()
         except Exception as e:
-            logging.error(f"Failed to get orders: {e}")
+            logger.error(f"Failed to get orders: {e}")
             return []
 
     def get_order_details(self, order_id: int) -> Optional[Dict]:
@@ -222,7 +227,7 @@ class WooCommerceClient:
             response.raise_for_status()
             return response.json()
         except Exception as e:
-            logging.error(f"Failed to get order {order_id}: {e}")
+            logger.error(f"Failed to get order {order_id}: {e}")
             return None
 
     def matches_filters(self, order: Dict) -> bool:
@@ -287,7 +292,7 @@ class WooCommerceClient:
             secret_key = wc_config.get('monitor_secret_key', '')
 
             if not secret_key:
-                logging.debug("No monitor_secret_key configured, skipping database query")
+                logger.debug("No monitor_secret_key configured, skipping database query")
                 return None
 
             endpoint = f"{base_url}/wp-admin/admin-ajax.php"
@@ -306,13 +311,13 @@ class WooCommerceClient:
                     if data.get('success') and data.get('data'):
                         label_url = data['data'].get('labelurl')
                         if label_url:
-                            logging.info(f"Found label URL in wp_Bpost table for order {order_id}")
+                            logger.info(f"Found label URL in wp_Bpost table for order {order_id}")
                             return label_url
                 except Exception as e:
-                    logging.debug(f"Error parsing response: {e}")
+                    logger.debug(f"Error parsing response: {e}")
 
         except Exception as e:
-            logging.debug(f"Could not query wp_Bpost table: {e}")
+            logger.debug(f"Could not query wp_Bpost table: {e}")
 
         return None
 
@@ -414,7 +419,7 @@ class DocumentManager:
                     invoice_url = f"{base_url}/?action=generate_wpo_wcpdf&template_type=invoice&order_ids={order['id']}&my-account"
 
             if not invoice_url:
-                logging.debug(f"No invoice URL found for order {order['id']}")
+                logger.debug(f"No invoice URL found for order {order['id']}")
                 return None
 
             # Download invoice
@@ -436,16 +441,16 @@ class DocumentManager:
             # Verify it's a PDF
             content_type = response.headers.get('content-type', '').lower()
             if 'pdf' not in content_type and not invoice_url.endswith('.pdf'):
-                logging.warning(f"Downloaded file might not be a PDF: {content_type}")
+                logger.warning(f"Downloaded file might not be a PDF: {content_type}")
 
             with open(invoice_path, 'wb') as f:
                 f.write(response.content)
 
-            logging.info(f"Downloaded invoice: {invoice_path}")
+            logger.info(f"Downloaded invoice: {invoice_path}")
             return str(invoice_path)
 
         except Exception as e:
-            logging.error(f"Failed to download invoice for order {order['id']}: {e}")
+            logger.error(f"Failed to download invoice for order {order['id']}: {e}")
             return None
 
     def download_shipping_label(self, order: Dict, order_folder: Path) -> Optional[str]:
@@ -479,11 +484,11 @@ class DocumentManager:
             with open(label_path, 'wb') as f:
                 f.write(response.content)
 
-            logging.info(f"Downloaded shipping label: {label_path}")
+            logger.info(f"Downloaded shipping label: {label_path}")
             return str(label_path)
 
         except Exception as e:
-            logging.error(f"Failed to download label for order {order['id']}: {e}")
+            logger.error(f"Failed to download label for order {order['id']}: {e}")
             return None
 
     def create_order_details_file(self, order: Dict, order_folder: Path) -> Optional[str]:
@@ -579,11 +584,11 @@ class DocumentManager:
                 f.write("End of Order Details\n")
                 f.write("=" * 60 + "\n")
 
-            logging.info(f"Created order details file: {details_path}")
+            logger.info(f"Created order details file: {details_path}")
             return str(details_path)
 
         except Exception as e:
-            logging.error(f"Failed to create order details for order {order['id']}: {e}")
+            logger.error(f"Failed to create order details for order {order['id']}: {e}")
             return None
 
 
@@ -612,11 +617,11 @@ class OrderMonitor:
             self.callback(message, level)
 
         if level == "error":
-            logging.error(message)
+            logger.error(message)
         elif level == "warning":
-            logging.warning(message)
+            logger.warning(message)
         else:
-            logging.info(message)
+            logger.info(message)
 
     def process_order(self, order: Dict) -> bool:
         """Process a single order"""
@@ -758,16 +763,9 @@ class OrderMonitorGUI:
 
     def setup_logging(self):
         """Setup logging configuration"""
-        log_config = self.config.config['logging']
-        if log_config['enabled']:
-            logging.basicConfig(
-                level=getattr(logging, log_config['log_level']),
-                format='%(asctime)s - %(levelname)s - %(message)s',
-                handlers=[
-                    logging.FileHandler(log_config['log_file']),
-                    logging.StreamHandler()
-                ]
-            )
+        # Logging is now handled by shared_logging module in main()
+        # This method is kept for backward compatibility but does nothing
+        pass
 
     def create_gui(self):
         """Create the main GUI"""
@@ -1066,6 +1064,9 @@ class SettingsDialog:
 
 def main():
     """Main entry point"""
+    # Setup logging when the app actually runs (not at import time)
+    setup_shared_logging("woocommerce_monitor")
+
     root = tk.Tk()
     app = OrderMonitorGUI(root)
     root.mainloop()

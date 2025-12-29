@@ -17,14 +17,11 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import subprocess
 
-# Setup logging
-def setup_logging():
-    log_format = "%(asctime)s [%(levelname)s] %(message)s"
-    logging.basicConfig(level=logging.INFO, format=log_format)
-    return logging.getLogger("LaragonBackupScript")
+# Setup logging using shared utility
+from shared_logging import get_logger, setup_logging as setup_shared_logging
 
-# Get logger
-logger = setup_logging()
+# Get logger reference (configured in main())
+logger = get_logger("laragon_backup")
 
 class LaragonBackupUI:
     def __init__(self, root):
@@ -81,14 +78,10 @@ class LaragonBackupUI:
         default_dest = "I:\\Web\\01_Work\\laragon"
         self.destination_dir_var.set(default_dest)
         
-        # Default log file path
-        default_log = "P:\\_Script\\_LOGS\\backup_log.txt"
-        log_dir = os.path.dirname(default_log)
-        if not os.path.exists(log_dir):
-            try:
-                os.makedirs(log_dir, exist_ok=True)
-            except:
-                pass
+        # Default log file path - use centralized PipelineManager logs folder
+        log_dir = os.path.join(os.path.expanduser("~"), "AppData", "Local", "PipelineManager", "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        default_log = os.path.join(log_dir, "laragon_backup.log")
         self.log_file_var.set(default_log)
         
     def create_config_panel(self, parent):
@@ -531,6 +524,9 @@ class LaragonBackupUI:
         self.root.after(0, update_text)
 
 def main():
+    # Setup logging when the app actually runs (not at import time)
+    setup_shared_logging("laragon_backup")
+
     # Check if we should run in command-line mode
     if len(sys.argv) > 1:
         # Parse command line arguments

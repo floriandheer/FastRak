@@ -22,13 +22,11 @@ import subprocess
 import tempfile
 import copy
 
-# Setup logging
-def setup_logging():
-    log_format = "%(asctime)s [%(levelname)s] %(message)s"
-    logging.basicConfig(level=logging.INFO, format=log_format)
-    return logging.getLogger("PlaylistSyncScript")
+# Setup logging using shared utility
+from shared_logging import get_logger, setup_logging as setup_shared_logging
 
-logger = setup_logging()
+# Get logger reference (configured in main())
+logger = get_logger("traktor_sync")
 VALID_EXTENSIONS = {'.mp3', '.flac', '.wav', '.aiff', '.m4a', '.ogg', '.opus'}
 
 class PlaylistSyncUI:
@@ -3041,6 +3039,9 @@ class PlaylistSyncUI:
             return False
 
 def main():
+    # Setup logging when the app actually runs (not at import time)
+    setup_shared_logging("traktor_sync")
+
     if len(sys.argv) > 1:
         parser = argparse.ArgumentParser(description="iTunes Playlist Sync Tool")
         parser.add_argument("--itunes-xml", required=True, help="Path to iTunes XML library file")
