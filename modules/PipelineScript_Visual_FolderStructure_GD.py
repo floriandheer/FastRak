@@ -1,9 +1,21 @@
 import os
+import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from datetime import datetime
 import shutil
 import re
+from pathlib import Path
+
+# Add modules to path
+MODULES_DIR = Path(__file__).parent
+sys.path.insert(0, str(MODULES_DIR))
+
+from shared_logging import get_logger
+from shared_project_db import ProjectDatabase
+from shared_autocomplete_widget import AutocompleteEntry
+
+logger = get_logger(__name__)
 
 class FolderStructureCreator:
     def __init__(self, root):
@@ -11,6 +23,13 @@ class FolderStructureCreator:
         self.root.title("Graphic Design Folder Structure")
         self.root.geometry("750x650")
         self.root.minsize(700, 550)
+
+        # Initialize project database
+        try:
+            self.project_db = ProjectDatabase()
+        except Exception as e:
+            logger.error(f"Failed to initialize database: {e}")
+            self.project_db = None
         
         # Configure main window
         self.root.columnconfigure(0, weight=1)
@@ -45,10 +64,20 @@ class FolderStructureCreator:
         base_dir_entry.grid(row=0, column=1, sticky="ew", padx=5, pady=10)
         ttk.Button(form_frame, text="Browse", command=self.browse_base_dir).grid(row=0, column=2, padx=5, pady=10)
         
-        # Name Client (formerly Client Name)
+        # Name Client (formerly Client Name) - with autocomplete
         ttk.Label(form_frame, text="Name Client:").grid(row=1, column=0, sticky="w", padx=10, pady=(10, 2))
         self.client_name_var = tk.StringVar()
-        ttk.Entry(form_frame, textvariable=self.client_name_var, width=40).grid(row=1, column=1, columnspan=2, sticky="ew", padx=5, pady=(10, 2))
+        if self.project_db:
+            self.client_entry = AutocompleteEntry(
+                form_frame,
+                db=self.project_db,
+                textvariable=self.client_name_var,
+                width=40
+            )
+            self.client_entry.grid(row=1, column=1, columnspan=2, sticky="ew", padx=5, pady=(10, 2))
+        else:
+            # Fallback to regular entry if database failed
+            ttk.Entry(form_frame, textvariable=self.client_name_var, width=40).grid(row=1, column=1, columnspan=2, sticky="ew", padx=5, pady=(10, 2))
         
         # Personal checkbox (just as a standalone checkbox, no field)
         ttk.Label(form_frame, text="Personal:").grid(row=2, column=0, sticky="w", padx=10, pady=(0, 10))
@@ -322,9 +351,37 @@ class FolderStructureCreator:
             os.makedirs(docs_dir, exist_ok=True)
             
             # Create specifications text file
-            self.create_specs_file(project_dir, client_name, project_name, date, 
+            self.create_specs_file(project_dir, client_name, project_name, date,
                                    houdini_version, blender_version, fusion_version)
-            
+
+            # Auto-register project in database
+            if self.project_db:
+                try:
+                    project_data = {
+                        'client_name': client_name,
+                        'project_name': project_name,
+                        'project_type': 'GD',
+                        'date_created': date,
+                        'path': project_dir,
+                        'base_directory': base_dir,
+                        'status': 'active',
+                        'notes': self.notes_text.get(1.0, tk.END).strip(),
+                        'metadata': {
+                            'software_specs': {
+                                'houdini': houdini_version,
+                                'blender': blender_version,
+                                'fusion': fusion_version
+                            }
+                        }
+                    }
+
+                    project_id = self.project_db.register_project(project_data)
+                    logger.info(f"Auto-registered project: {project_id}")
+
+                except Exception as e:
+                    logger.error(f"Failed to register project in database: {e}")
+                    # Don't fail the whole operation if registration fails
+
             self.status_var.set(f"Created project structure for {client_name}_{project_name}")
             
             # Show success message
