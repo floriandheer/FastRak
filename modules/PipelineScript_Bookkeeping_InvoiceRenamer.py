@@ -15,10 +15,15 @@ import sys
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import datetime
-import logging
 import re
 import shutil
 from pathlib import Path
+
+# Setup logging using shared utility
+from shared_logging import get_logger, setup_logging as setup_shared_logging
+
+# Get logger reference (configured in main())
+logger = get_logger("invoice_renamer")
 
 # PDF processing imports
 try:
@@ -425,11 +430,8 @@ class InvoiceRenamerGUI:
     
     def setup_logging(self):
         """Setup logging for the application."""
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s'
-        )
-        self.logger = logging.getLogger(__name__)
+        # Use shared logger (configured in main())
+        self.logger = logger
     
     def create_header(self):
         """Create header section."""
@@ -914,14 +916,15 @@ class InvoiceRenamerGUI:
 
 def main():
     """Main application entry point."""
+    # Setup logging when the app actually runs (not at import time)
+    setup_shared_logging("invoice_renamer")
+
     # Check for PDF processing libraries
     if PDF_LIBRARY is None:
-        print("WARNING: No PDF processing library found!")
-        print("Please install one of the following:")
-        print("  pip install pdfplumber")
-        print("  pip install PyPDF2")
-        print("\nThe application will start but PDF processing will not work.")
-    
+        logger.warning("No PDF processing library found!")
+        logger.warning("Please install: pip install pdfplumber or pip install PyPDF2")
+        logger.warning("The application will start but PDF processing will not work.")
+
     # Create Tkinter root
     root = tk.Tk()
     

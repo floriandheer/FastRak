@@ -70,26 +70,10 @@ RCLONE_DEFAULT_OPTIONS = [
 # LOGGING SETUP
 # ============================================================================
 
-def setup_logging() -> logging.Logger:
-    """Configure and return a logger instance."""
-    os.makedirs(LOG_DIR, exist_ok=True)
+from shared_logging import get_logger, setup_logging as setup_shared_logging
 
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file = os.path.join(LOG_DIR, f"musicbee_backup_rclone_{timestamp}.log")
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[
-            logging.FileHandler(log_file, encoding='utf-8'),
-            logging.StreamHandler(sys.stdout)
-        ]
-    )
-
-    return logging.getLogger("MusicBeeBackupRclone")
-
-
-logger = setup_logging()
+# Get logger reference (configured in main())
+logger = get_logger("musicbee_backup")
 
 
 # ============================================================================
@@ -375,6 +359,8 @@ class RcloneManager:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                encoding='utf-8',
+                errors='replace',  # Replace undecodable characters instead of failing
                 bufsize=1,
                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
             )
@@ -457,6 +443,7 @@ class RcloneManager:
         self,
         source: str,
         dest: str,
+        skip_existing: bool = False,
         settings: Optional[BackupSettings] = None,
         progress_callback: Optional[callable] = None,
         output_callback: Optional[callable] = None
@@ -475,14 +462,13 @@ class RcloneManager:
         self.cancelled = False
         stats = BackupStats()
 
-        # Build command with optimizations for initial copy
+        # Build command with optimizations for copy
         cmd = [self.rclone_path, "copy", source, dest]
 
-        # Base options (similar to sync but optimized for bulk copy)
+        # Base options
         cmd.extend([
             "--verbose",
             "--stats=2s",
-            "--no-check-dest",  # Skip checking destination (it's empty)
             "--onedrive-chunk-size=10M",
             "--ignore-case",
             "--exclude", ".DS_Store",
@@ -493,6 +479,11 @@ class RcloneManager:
             "--exclude", "$RECYCLE.BIN/**",
             "--exclude", "System Volume Information/**",
         ])
+
+        # Handle existing files
+        if skip_existing:
+            cmd.append("--ignore-existing")  # Skip files that already exist on destination
+        # Otherwise files will be overwritten if source is newer or different
 
         # Use higher parallelism for initial copy (can be more aggressive)
         transfers = settings.transfers if settings and settings.transfers else 8
@@ -513,6 +504,8 @@ class RcloneManager:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                encoding='utf-8',
+                errors='replace',  # Replace undecodable characters instead of failing
                 bufsize=1,
                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
             )
@@ -783,6 +776,19 @@ class MusicBeeBackupApp:
         )
         self.preview_btn.grid(row=0, column=0, padx=5)
 
+        self.copy_btn = tk.Button(
+            btn_frame,
+            text="Copy",
+            command=self._run_copy,
+            bg="#9b59b6",
+            fg="white",
+            font=("Arial", 10, "bold"),
+            padx=15,
+            pady=5,
+            cursor="hand2"
+        )
+        self.copy_btn.grid(row=0, column=1, padx=5)
+
         self.backup_btn = tk.Button(
             btn_frame,
             text="Start Backup",
@@ -966,6 +972,7 @@ class MusicBeeBackupApp:
         """Enable/disable buttons based on running state."""
         state = tk.DISABLED if running else tk.NORMAL
         self.preview_btn.configure(state=state)
+        self.copy_btn.configure(state=state)
         self.backup_btn.configure(state=state)
         self.save_btn.configure(state=state)
         self.cancel_btn.configure(state=tk.NORMAL if running else tk.DISABLED)
@@ -987,6 +994,7 @@ class MusicBeeBackupApp:
 
             # Disable action buttons
             self.preview_btn.configure(state=tk.DISABLED)
+            self.copy_btn.configure(state=tk.DISABLED)
             self.backup_btn.configure(state=tk.DISABLED)
 
     def _test_remote(self) -> None:
@@ -1279,6 +1287,184 @@ class MusicBeeBackupApp:
 
         threading.Thread(target=backup_thread, daemon=True).start()
 
+    def _run_copy(self) -> None:
+        """Run copy operation with user choice for existing files."""
+        if not self._validate_inputs():
+            return
+
+        settings = self._get_current_settings()
+
+        # Ask user how to handle existing files
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Copy Mode - Handle Existing Files")
+        dialog.geometry("450x200")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # Center the dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f"+{x}+{y}")
+
+        user_choice = {"skip": None}
+
+        frame = ttk.Frame(dialog, padding=20)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(
+            frame,
+            text="How should existing files be handled?",
+            font=("Arial", 11, "bold")
+        ).pack(pady=(0, 10))
+
+        ttk.Label(
+            frame,
+            text="This will copy all files from source to destination.\n"
+                 "Choose how to handle files that already exist:",
+            wraplength=400
+        ).pack(pady=(0, 20))
+
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack(pady=10)
+
+        def on_skip():
+            user_choice["skip"] = True
+            dialog.destroy()
+
+        def on_overwrite():
+            user_choice["skip"] = False
+            dialog.destroy()
+
+        def on_cancel():
+            dialog.destroy()
+
+        tk.Button(
+            btn_frame,
+            text="Skip Existing Files",
+            command=on_skip,
+            bg="#3498db",
+            fg="white",
+            font=("Arial", 10, "bold"),
+            padx=10,
+            pady=5,
+            cursor="hand2",
+            width=18
+        ).grid(row=0, column=0, padx=5)
+
+        tk.Button(
+            btn_frame,
+            text="Overwrite Existing",
+            command=on_overwrite,
+            bg="#e67e22",
+            fg="white",
+            font=("Arial", 10, "bold"),
+            padx=10,
+            pady=5,
+            cursor="hand2",
+            width=18
+        ).grid(row=0, column=1, padx=5)
+
+        ttk.Button(
+            frame,
+            text="Cancel",
+            command=on_cancel
+        ).pack(pady=(10, 0))
+
+        # Wait for dialog to close
+        self.root.wait_window(dialog)
+
+        # Check if user made a choice
+        if user_choice["skip"] is None:
+            self._update_status("Copy cancelled")
+            return
+
+        skip_existing = user_choice["skip"]
+
+        # Show confirmation
+        mode_text = "skip existing files" if skip_existing else "overwrite existing files"
+        confirm_msg = (
+            f"COPY MODE\n\n"
+            f"From: {settings.source_path}\n"
+            f"To: {settings.dest_remote}\n\n"
+            f"Mode: Will {mode_text}\n\n"
+            f"Do you want to proceed with the copy?"
+        )
+
+        if not messagebox.askyesno("Confirm Copy", confirm_msg):
+            self._update_status("Ready")
+            return
+
+        self._clear_log()
+        self._reset_progress()
+        self._set_buttons_state(True)
+        self.status = BackupStatus.BACKING_UP
+
+        mode_desc = "Skipping existing files" if skip_existing else "Overwriting existing files"
+        self._log("=" * 50, "highlight")
+        self._log(f"COPY MODE - {mode_desc}", "highlight")
+        self._log("=" * 50, "highlight")
+        self._log(f"Source: {settings.source_path}", "info")
+        self._log(f"Destination: {settings.dest_remote}", "info")
+        self._log(f"Mode: {mode_desc}", "info")
+        self._log("", "info")
+
+        def copy_thread():
+            try:
+                start_time = datetime.datetime.now()
+
+                success, stats = self.rclone.run_copy(
+                    settings.source_path,
+                    settings.dest_remote,
+                    skip_existing=skip_existing,
+                    settings=settings,
+                    progress_callback=lambda s: self.root.after(0, lambda: self._update_progress(s)),
+                    output_callback=lambda msg: self.root.after(0, lambda m=msg: self._log(m, "info"))
+                )
+
+                elapsed = (datetime.datetime.now() - start_time).total_seconds()
+
+                if success:
+                    self.root.after(0, lambda: self._log("\n" + "="*50, "success"))
+                    self.root.after(0, lambda: self._log("COPY COMPLETED SUCCESSFULLY!", "success"))
+                    self.root.after(0, lambda: self._log("="*50, "success"))
+                    self.root.after(0, lambda: self._log(
+                        f"Files copied: {stats.files_transferred}", "success"))
+                    self.root.after(0, lambda: self._log(
+                        f"Data transferred: {self._format_size(stats.bytes_transferred)}", "success"))
+                    self.root.after(0, lambda: self._log(
+                        f"Time elapsed: {self._format_time(elapsed)}", "success"))
+
+                    if stats.errors > 0:
+                        self.root.after(0, lambda: self._log(
+                            f"Errors encountered: {stats.errors}", "warning"))
+
+                    self.root.after(0, lambda: messagebox.showinfo(
+                        "Copy Complete",
+                        f"Copy completed successfully!\n\n"
+                        f"Files copied: {stats.files_transferred}\n"
+                        f"Data transferred: {self._format_size(stats.bytes_transferred)}\n"
+                        f"Time elapsed: {self._format_time(elapsed)}"
+                    ))
+                else:
+                    self.root.after(0, lambda: self._log("\nCopy completed with errors.", "error"))
+                    self.root.after(0, lambda: messagebox.showwarning(
+                        "Copy Completed with Errors",
+                        f"Copy completed but encountered {stats.errors} error(s).\n"
+                        "Check the log for details."
+                    ))
+
+            except Exception as e:
+                self.root.after(0, lambda: self._log(f"\nCopy failed: {e}", "error"))
+                self.root.after(0, lambda: messagebox.showerror("Copy Failed", str(e)))
+            finally:
+                self.root.after(0, lambda: self._set_buttons_state(False))
+                self.root.after(0, lambda: self._update_status("Copy completed"))
+                self.status = BackupStatus.IDLE
+                self.root.after(0, lambda: self.progress_var.set(100))
+
+        threading.Thread(target=copy_thread, daemon=True).start()
+
     def _cancel_operation(self) -> None:
         """Cancel the current operation."""
         if self.status in [BackupStatus.DRY_RUN, BackupStatus.BACKING_UP]:
@@ -1334,6 +1520,9 @@ class MusicBeeBackupApp:
 
 def main():
     """Main application entry point."""
+    # Setup logging when the app actually runs (not at import time)
+    setup_shared_logging("musicbee_backup")
+
     root = tk.Tk()
     app = MusicBeeBackupApp(root)
     root.mainloop()

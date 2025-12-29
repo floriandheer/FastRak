@@ -18,9 +18,10 @@ processed_orders.json
     Tracks which orders have been processed (auto-generated).
     Prevents downloading the same order multiple times.
 
-monitor.log
+woocommerce_monitor.log (in %LOCALAPPDATA%\PipelineManager\logs\)
     Activity log file (auto-generated).
     Contains details of all monitor operations.
+    Located in the centralized Pipeline Manager logs folder.
 
 Setup:
 ------
