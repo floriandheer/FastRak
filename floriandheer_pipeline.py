@@ -274,6 +274,12 @@ BUSINESS_CATEGORIES = {
                 "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Bookkeeping_InvoiceRenamer.py"),
                 "description": "Automatically rename invoices to standardized format: FAC_YY-MM-DD_CompanyName",
                 "icon": "📄"
+            },
+            "project_tracker": {
+                "name": "Project Tracker",
+                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Business_ProjectTracker.py"),
+                "description": "Track active projects, clients, and archive completed work",
+                "icon": "📊"
             }
         },
         "subcategories": {}

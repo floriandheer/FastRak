@@ -18,10 +18,27 @@ import datetime
 
 
 # Default log directory
-LOG_DIR = os.path.join(
-    os.path.expanduser("~"),
-    "AppData", "Local", "PipelineManager", "logs"
-)
+def _get_log_dir():
+    """Get the appropriate log directory for the platform."""
+    if sys.platform == "win32":
+        return os.path.join(
+            os.path.expanduser("~"),
+            "AppData", "Local", "PipelineManager", "logs"
+        )
+    else:
+        # WSL/Linux: use Windows user profile via /mnt/c
+        # Fall back to ~/.local/share if /mnt/c doesn't exist
+        windows_appdata = "/mnt/c/Users"
+        if os.path.exists(windows_appdata):
+            # Try to find the Windows username (usually same as WSL user)
+            username = os.environ.get("USER", "")
+            user_path = os.path.join(windows_appdata, username)
+            if os.path.exists(user_path):
+                return os.path.join(user_path, "AppData", "Local", "PipelineManager", "logs")
+        # Fallback to Linux standard location
+        return os.path.join(os.path.expanduser("~"), ".local", "share", "PipelineManager", "logs")
+
+LOG_DIR = _get_log_dir()
 
 # Standard log format
 LOG_FORMAT = "%(asctime)s [%(levelname)s] %(message)s"

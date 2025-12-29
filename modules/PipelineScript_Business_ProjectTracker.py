@@ -1,0 +1,1758 @@
+"""
+Project Tracker
+
+Standalone GUI for managing active projects, clients, and archives.
+Provides overview of all projects, search/filter, archive/unarchive, and import functionality.
+"""
+
+import tkinter as tk
+from tkinter import ttk, messagebox, scrolledtext
+import os
+import sys
+from pathlib import Path
+import re
+import shutil
+from datetime import datetime
+from typing import List, Dict, Optional
+
+# Add modules to path
+MODULES_DIR = Path(__file__).parent
+sys.path.insert(0, str(MODULES_DIR))
+
+from shared_logging import get_logger, setup_logging
+from shared_project_db import ProjectDatabase
+
+# Module name for logging (must match setup_logging call)
+MODULE_NAME = "project_tracker"
+
+# Get logger reference (configured in main())
+logger = get_logger(MODULE_NAME)
+
+def _get_platform_path(windows_path: str) -> Path:
+    """
+    Convert Windows path to appropriate platform path.
+    On WSL/Linux, converts 'D:\\folder' to '/mnt/d/folder'.
+    On Windows, returns the path unchanged.
+    """
+    if sys.platform == "win32":
+        return Path(windows_path)
+
+    # WSL/Linux: convert Windows path to /mnt/ path
+    # Handle both D:\folder and D:/folder formats
+    path_str = windows_path.replace("\\", "/")
+
+    # Check for drive letter pattern (e.g., "D:/", "I:/")
+    if len(path_str) >= 2 and path_str[1] == ":":
+        drive_letter = path_str[0].lower()
+        rest_of_path = path_str[2:]  # Skip "D:"
+        if rest_of_path.startswith("/"):
+            rest_of_path = rest_of_path[1:]
+        return Path(f"/mnt/{drive_letter}/{rest_of_path}")
+
+    return Path(windows_path)
+
+
+# Archive base directory
+ARCHIVE_BASE = _get_platform_path(r"D:\_work\Archive")
+
+# Category colors matching pipeline manager
+CATEGORY_COLORS = {
+    "Audio": "#9333ea",      # Purple
+    "Photo": "#10b981",      # Emerald
+    "Visual": "#f97316",     # Orange
+    "Web": "#eab308",        # Yellow
+    "Physical": "#ec4899",   # Pink
+    "RealTime": "#06b6d4",   # Cyan
+}
+
+# Project type icons and display names
+PROJECT_TYPES = {
+    "GD": {"icon": "🎨", "name": "Graphic Design", "color": "#f97316"},
+    "VFX": {"icon": "🎬", "name": "VFX/CG", "color": "#f97316"},
+    "Audio": {"icon": "🎵", "name": "Audio", "color": "#9333ea"},
+    "Physical": {"icon": "🔧", "name": "3D Print", "color": "#ec4899"},
+    "Godot": {"icon": "⚡", "name": "Godot", "color": "#06b6d4"},
+    "TD": {"icon": "⚡", "name": "TouchDesigner", "color": "#06b6d4"},
+    "RealTime": {"icon": "⚡", "name": "RealTime", "color": "#06b6d4"},
+    "Photo": {"icon": "📷", "name": "Photo", "color": "#10b981"},
+    "Web": {"icon": "🌐", "name": "Web", "color": "#eab308"},
+}
+
+# Archive category mapping
+ARCHIVE_CATEGORIES = {
+    "GD": "Visual",
+    "VFX": "Visual",
+    "Audio": "Audio",
+    "Physical": "Physical",
+    "Godot": "RealTime",
+    "TD": "RealTime",
+    "RealTime": "RealTime",
+    "Photo": "Photo",
+    "Web": "Web",
+}
+
+
+class ArchiveManager:
+    """Handles archiving and unarchiving of project folders."""
+
+    @staticmethod
+    def archive_project(project: Dict, db: ProjectDatabase) -> bool:
+        """
+        Archive a project by moving it to the archive directory.
+
+        Args:
+            project: Project dictionary
+            db: ProjectDatabase instance
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            source_path = Path(project["path"])
+
+            if not source_path.exists():
+                messagebox.showerror(
+                    "Folder Not Found",
+                    f"Project folder does not exist:\n{source_path}"
+                )
+                return False
+
+            # Determine archive category
+            project_type = project.get("project_type", "")
+            archive_category = ARCHIVE_CATEGORIES.get(project_type, "Other")
+
+            # Check if this is a personal project
+            metadata = project.get("metadata", {})
+            is_personal = metadata.get("is_personal", False)
+
+            # Build archive path (add _Personal subfolder if needed)
+            if is_personal:
+                archive_dir = ARCHIVE_BASE / archive_category / "_Personal"
+            else:
+                archive_dir = ARCHIVE_BASE / archive_category
+            archive_dir.mkdir(parents=True, exist_ok=True)
+
+            archive_path = archive_dir / source_path.name
+
+            # Check if archive path already exists
+            if archive_path.exists():
+                response = messagebox.askyesno(
+                    "Archive Conflict",
+                    f"Archive location already exists:\n{archive_path}\n\n"
+                    "Do you want to overwrite it?"
+                )
+                if not response:
+                    return False
+
+                # Remove existing archive folder
+                shutil.rmtree(archive_path)
+
+            # Move folder to archive
+            logger.info(f"Archiving: {source_path} -> {archive_path}")
+            shutil.move(str(source_path), str(archive_path))
+
+            # Update database
+            db.archive_project(project["id"], str(archive_path))
+
+            messagebox.showinfo(
+                "Success",
+                f"Project archived successfully to:\n{archive_path}"
+            )
+
+            logger.info(f"Successfully archived project: {project['id']}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to archive project: {e}")
+            messagebox.showerror(
+                "Archive Failed",
+                f"Failed to archive project:\n{str(e)}"
+            )
+
+            # Rollback: try to move folder back if it was moved
+            try:
+                if archive_path.exists() and not source_path.exists():
+                    shutil.move(str(archive_path), str(source_path))
+                    logger.info("Rolled back archive operation")
+            except Exception as rollback_error:
+                logger.error(f"Rollback failed: {rollback_error}")
+
+            return False
+
+    @staticmethod
+    def unarchive_project(project: Dict, db: ProjectDatabase) -> bool:
+        """
+        Unarchive a project by moving it back to the original location.
+
+        Args:
+            project: Project dictionary
+            db: ProjectDatabase instance
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            source_path = Path(project["path"])
+
+            if not source_path.exists():
+                messagebox.showerror(
+                    "Folder Not Found",
+                    f"Archived folder does not exist:\n{source_path}"
+                )
+                return False
+
+            # Get original path
+            original_path = Path(project.get("archived_from", ""))
+
+            if not original_path:
+                messagebox.showerror(
+                    "Error",
+                    "Original path not found in database.\n"
+                    "Cannot determine where to restore the project."
+                )
+                return False
+
+            # Check if original path is available
+            if original_path.exists():
+                response = messagebox.askyesnocancel(
+                    "Path Conflict",
+                    f"Original location is occupied:\n{original_path}\n\n"
+                    "Yes: Rename and restore\n"
+                    "No: Cancel"
+                )
+
+                if response is None or not response:
+                    return False
+
+                # Find available name with counter
+                counter = 1
+                base_name = original_path.name
+                parent = original_path.parent
+
+                while original_path.exists():
+                    new_name = f"{base_name}_restored_{counter}"
+                    original_path = parent / new_name
+                    counter += 1
+
+                logger.info(f"Using alternate path: {original_path}")
+
+            # Ensure parent directory exists
+            original_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Move folder back
+            logger.info(f"Unarchiving: {source_path} -> {original_path}")
+            shutil.move(str(source_path), str(original_path))
+
+            # Update database
+            db.unarchive_project(project["id"], str(original_path))
+
+            messagebox.showinfo(
+                "Success",
+                f"Project restored successfully to:\n{original_path}"
+            )
+
+            logger.info(f"Successfully unarchived project: {project['id']}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to unarchive project: {e}")
+            messagebox.showerror(
+                "Unarchive Failed",
+                f"Failed to unarchive project:\n{str(e)}"
+            )
+
+            # Rollback: try to move folder back if it was moved
+            try:
+                if original_path.exists() and not source_path.exists():
+                    shutil.move(str(original_path), str(source_path))
+                    logger.info("Rolled back unarchive operation")
+            except Exception as rollback_error:
+                logger.error(f"Rollback failed: {rollback_error}")
+
+            return False
+
+
+class ProjectImporter:
+    """Handles importing existing projects from filesystem."""
+
+    # Regex patterns for parsing folder names
+    PATTERNS = {
+        "GD": r'^(\d{4}-\d{2}-\d{2})_([^_]+)_(.+)$',
+        "VFX": r'^(\d{4}-\d{2}-\d{2})_CG_([^_]+)_(.+)$',
+        "Physical": r'^(\d{4}-\d{2}-\d{2})_3DPrint_([^_]+)_(.+)$',
+        "Godot": r'^(\d{4}-\d{2}-\d{2})_Godot_([^_]+)_(.+)$',
+        "TD": r'^(\d{4}-\d{2}-\d{2})_TD_([^_]+)_(.+)$',
+        "Audio": r'^(\d{4}-\d{2}-\d{2})_([^_]+)_(.+)$',
+        "Photo": r'^(\d{4}-\d{2}-\d{2})_([^_]+)_(.+)$'
+    }
+
+    # Active project directories (auto-converted for WSL)
+    SCAN_DIRECTORIES_ACTIVE = {
+        # Visual
+        "Visual": _get_platform_path(r"D:\_work\Active\Visual"),
+        "Visual_Personal": _get_platform_path(r"D:\_work\Active\Visual\_Personal"),
+        # Audio
+        "Audio_InProgress": _get_platform_path(r"D:\_work\Active\Audio\01_Prod\01_InProgress"),
+        "Audio_Finished": _get_platform_path(r"D:\_work\Active\Audio\01_Prod\03_Finished"),
+        # Physical
+        "Physical": _get_platform_path(r"D:\_work\Active\Physical\Project"),
+        "Physical_Personal": _get_platform_path(r"D:\_work\Active\Physical\_Personal"),
+        # RealTime
+        "RealTime": _get_platform_path(r"D:\_work\Active\RealTIme"),  # Note: folder has typo "RealTIme"
+        "RealTime_Personal": _get_platform_path(r"D:\_work\Active\RealTIme\_Personal"),
+        # Photo
+        "Photo": _get_platform_path(r"D:\_work\Active\Photo"),
+        # Web
+        "Web": _get_platform_path(r"D:\_work\Active\Web"),
+    }
+
+    # Archive directories
+    SCAN_DIRECTORIES_ARCHIVE = {
+        # Visual
+        "Visual": _get_platform_path(r"D:\_work\Archive\Visual"),
+        "Visual_Personal": _get_platform_path(r"D:\_work\Archive\Visual\_Personal"),
+        # Physical
+        "Physical": _get_platform_path(r"D:\_work\Archive\Physical"),
+        "Physical_Personal": _get_platform_path(r"D:\_work\Archive\Physical\_Personal"),
+        # RealTime
+        "RealTime": _get_platform_path(r"D:\_work\Archive\RealTime"),
+        "RealTime_Personal": _get_platform_path(r"D:\_work\Archive\RealTime\_Personal"),
+        # Web
+        "Web": _get_platform_path(r"D:\_work\Archive\Web"),
+        # VJ (only in archive)
+        "VJ": _get_platform_path(r"D:\_work\Archive\VJ"),
+    }
+
+    @classmethod
+    def scan_and_import(cls, db: ProjectDatabase, status_callback=None) -> Dict:
+        """
+        Scan filesystem and import existing projects from both active and archive.
+
+        Args:
+            db: ProjectDatabase instance
+            status_callback: Optional callback function for status updates
+
+        Returns:
+            Dictionary with import statistics
+        """
+        stats = {"scanned": 0, "imported": 0, "skipped": 0, "errors": 0}
+
+        # First, collect all folders to import
+        folders_to_process = []
+
+        # Scan active directories
+        for category, base_dir in cls.SCAN_DIRECTORIES_ACTIVE.items():
+            if not base_dir.exists():
+                continue
+
+            if status_callback:
+                status_callback(f"Scanning active {category}...")
+
+            try:
+                for item in base_dir.iterdir():
+                    if not item.is_dir():
+                        continue
+                    if item.name.startswith('_') or item.name.startswith('.'):
+                        continue
+
+                    parsed = cls._parse_folder_name(item.name, category)
+                    if parsed:
+                        folders_to_process.append({
+                            "path": str(item),
+                            "base_dir": str(base_dir),
+                            "parsed": parsed,
+                            "status": "active"
+                        })
+            except Exception:
+                pass
+
+        # Scan archive directories
+        for category, base_dir in cls.SCAN_DIRECTORIES_ARCHIVE.items():
+            if not base_dir.exists():
+                continue
+
+            if status_callback:
+                status_callback(f"Scanning archive {category}...")
+
+            try:
+                for item in base_dir.iterdir():
+                    if not item.is_dir():
+                        continue
+                    if item.name.startswith('_') or item.name.startswith('.'):
+                        continue
+
+                    parsed = cls._parse_folder_name(item.name, category)
+                    if parsed:
+                        folders_to_process.append({
+                            "path": str(item),
+                            "base_dir": str(base_dir),
+                            "parsed": parsed,
+                            "status": "archived"
+                        })
+            except Exception:
+                pass
+
+        # Now process collected folders
+        if status_callback:
+            status_callback(f"Importing {len(folders_to_process)} projects...")
+
+        for folder_info in folders_to_process:
+            stats["scanned"] += 1
+
+            try:
+                # Check if already exists
+                if db.get_project_by_path(folder_info["path"]):
+                    stats["skipped"] += 1
+                    continue
+
+                # Register new project (don't save yet - batch at end)
+                parsed = folder_info["parsed"]
+                db.register_project({
+                    "client_name": parsed["client"],
+                    "project_name": parsed["project"],
+                    "project_type": parsed["type"],
+                    "date_created": parsed["date"],
+                    "path": folder_info["path"],
+                    "base_directory": folder_info["base_dir"],
+                    "status": folder_info.get("status", "active"),
+                    "notes": "",
+                    "metadata": {"is_personal": parsed.get("is_personal", False)}
+                }, auto_save=False)
+                stats["imported"] += 1
+
+            except Exception:
+                stats["errors"] += 1
+
+        # Save once at the end
+        if stats["imported"] > 0:
+            db.save()
+
+        return stats
+
+    @classmethod
+    def _parse_folder_name(cls, folder_name: str, category: str) -> Optional[Dict]:
+        """
+        Parse folder name to extract project information.
+
+        Args:
+            folder_name: Folder name to parse
+            category: Category from SCAN_DIRECTORIES
+
+        Returns:
+            Dictionary with date, client, project, type or None if not parseable
+        """
+        # Check if this is a personal project
+        is_personal = "_Personal" in category
+        base_category = category.replace("_Personal", "")
+
+        # Visual: Try VFX pattern (CG_) first, then GD pattern
+        if base_category == "Visual":
+            match = re.match(cls.PATTERNS["VFX"], folder_name)
+            if match:
+                return {
+                    "date": match.group(1),
+                    "client": "Personal" if is_personal else match.group(2),
+                    "project": match.group(3),
+                    "type": "VFX",
+                    "is_personal": is_personal
+                }
+            match = re.match(cls.PATTERNS["GD"], folder_name)
+            if match:
+                return {
+                    "date": match.group(1),
+                    "client": "Personal" if is_personal else match.group(2),
+                    "project": match.group(3),
+                    "type": "GD",
+                    "is_personal": is_personal
+                }
+            # VJ pattern in Visual/_Personal
+            match = re.match(r'^(\d{4}-\d{2}-\d{2})_VJ_(.+)$', folder_name)
+            if match:
+                return {
+                    "date": match.group(1),
+                    "client": "Personal",
+                    "project": match.group(2),
+                    "type": "VFX",
+                    "is_personal": True
+                }
+
+        # Physical: 3DPrint or Technical pattern
+        elif base_category == "Physical":
+            # 3DPrint pattern
+            match = re.match(cls.PATTERNS["Physical"], folder_name)
+            if match:
+                return {
+                    "date": match.group(1),
+                    "client": "Personal" if is_personal else match.group(2),
+                    "project": match.group(3),
+                    "type": "Physical",
+                    "is_personal": is_personal
+                }
+            # Technical pattern (older archive format)
+            match = re.match(r'^(\d{4}-\d{2}-\d{2})_Technical_(.+)$', folder_name)
+            if match:
+                return {
+                    "date": match.group(1),
+                    "client": "Personal",
+                    "project": match.group(2),
+                    "type": "Physical",
+                    "is_personal": True
+                }
+
+        # RealTime: Try various patterns
+        elif base_category == "RealTime":
+            # Full CG_ pattern: YYYY-MM-DD_CG_Client_Project
+            match = re.match(cls.PATTERNS["VFX"], folder_name)
+            if match:
+                return {
+                    "date": match.group(1),
+                    "client": "Personal" if is_personal else match.group(2),
+                    "project": match.group(3),
+                    "type": "RealTime",
+                    "is_personal": is_personal
+                }
+            # Simple CG_ pattern: YYYY-MM-DD_CG_ProjectName (no client)
+            match = re.match(r'^(\d{4}-\d{2}-\d{2})_CG_(.+)$', folder_name)
+            if match:
+                return {
+                    "date": match.group(1),
+                    "client": "Personal",
+                    "project": match.group(2),
+                    "type": "RealTime",
+                    "is_personal": True
+                }
+            # Godot_ pattern
+            match = re.match(cls.PATTERNS["Godot"], folder_name)
+            if match:
+                return {
+                    "date": match.group(1),
+                    "client": "Personal" if is_personal else match.group(2),
+                    "project": match.group(3),
+                    "type": "Godot",
+                    "is_personal": is_personal
+                }
+            # TD_ pattern
+            match = re.match(cls.PATTERNS["TD"], folder_name)
+            if match:
+                return {
+                    "date": match.group(1),
+                    "client": "Personal" if is_personal else match.group(2),
+                    "project": match.group(3),
+                    "type": "TD",
+                    "is_personal": is_personal
+                }
+            # Simple: YYYY-MM-DD_ProjectName (no client)
+            match = re.match(r'^(\d{4}-\d{2}-\d{2})_(.+)$', folder_name)
+            if match:
+                return {
+                    "date": match.group(1),
+                    "client": "Personal",
+                    "project": match.group(2),
+                    "type": "RealTime",
+                    "is_personal": True
+                }
+
+        # Audio: Date_ProjectName or Date_Client_Project
+        elif base_category.startswith("Audio"):
+            # Try with client first: YYYY-MM-DD_Client_Project
+            match = re.match(r'^(\d{4}-\d{2}-\d{2})_([^_]+)_(.+)$', folder_name)
+            if match:
+                return {
+                    "date": match.group(1),
+                    "client": match.group(2),
+                    "project": match.group(3),
+                    "type": "Audio",
+                    "is_personal": False
+                }
+            # Simple: YYYY-MM-DD_ProjectName
+            match = re.match(r'^(\d{4}-\d{2}-\d{2})_(.+)$', folder_name)
+            if match:
+                return {
+                    "date": match.group(1),
+                    "client": "Personal",
+                    "project": match.group(2),
+                    "type": "Audio",
+                    "is_personal": True
+                }
+
+        # Photo: Date_Location_Description
+        elif base_category == "Photo":
+            match = re.match(r'^(\d{4}-\d{2}-\d{2})_(.+)$', folder_name)
+            if match:
+                return {
+                    "date": match.group(1),
+                    "client": "Photo",
+                    "project": match.group(2),
+                    "type": "Photo",
+                    "is_personal": False
+                }
+
+        # Web: Just project name (no date prefix typically)
+        elif base_category == "Web":
+            # Try date pattern first
+            match = re.match(r'^(\d{4}-\d{2}-\d{2})_(.+)$', folder_name)
+            if match:
+                return {
+                    "date": match.group(1),
+                    "client": "Web",
+                    "project": match.group(2),
+                    "type": "Web",
+                    "is_personal": False
+                }
+            # No date - use folder name as project, today as date
+            from datetime import date
+            return {
+                "date": date.today().isoformat(),
+                "client": "Web",
+                "project": folder_name,
+                "type": "Web",
+                "is_personal": False
+            }
+
+        # VJ: Various patterns (archived projects)
+        elif base_category == "VJ":
+            # VJ_ prefix pattern: YYYY-MM-DD_VJ_ProjectName
+            match = re.match(r'^(\d{4}-\d{2}-\d{2})_VJ_(.+)$', folder_name)
+            if match:
+                return {
+                    "date": match.group(1),
+                    "client": "Personal",
+                    "project": match.group(2),
+                    "type": "VFX",  # VJ projects go under Visual
+                    "is_personal": True
+                }
+            # Client_Project pattern: YYYY-MM-DD_Client_Project
+            match = re.match(r'^(\d{4}-\d{2}-\d{2})_([^_]+)_(.+)$', folder_name)
+            if match:
+                return {
+                    "date": match.group(1),
+                    "client": match.group(2),
+                    "project": match.group(3),
+                    "type": "VFX",
+                    "is_personal": False
+                }
+            # Simple: YYYY-MM-DD_ProjectName
+            match = re.match(r'^(\d{4}-\d{2}-\d{2})_(.+)$', folder_name)
+            if match:
+                return {
+                    "date": match.group(1),
+                    "client": "Personal",
+                    "project": match.group(2),
+                    "type": "VFX",
+                    "is_personal": True
+                }
+
+        return None
+
+
+class ProjectTrackerApp:
+    """Main application window for Project Tracker."""
+
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Project Tracker")
+        self.root.geometry("1000x700")
+        self.root.minsize(800, 600)
+
+        # Initialize database
+        self.db = ProjectDatabase()
+
+        # Current selection
+        self.selected_project = None
+        self.selected_category = None  # Track selected category
+        self.tree_item_to_project = {}  # Map tree items to project data
+
+        # Grid view selection tracking
+        self.grid_selected_index = -1
+        self.grid_cards = []  # List of card frames for keyboard navigation
+        self.grid_projects = []  # List of projects in grid order
+        self.grid_cols = 1  # Current number of columns
+
+        # Filter status
+        self.filter_status = tk.StringVar(value="active")
+
+        # Search query
+        self.search_query = tk.StringVar()
+        self.search_query.trace('w', self._on_search_changed)
+
+        # Category buttons storage
+        self.category_buttons = {}
+
+        # Build UI
+        self._build_ui()
+
+        # Load projects
+        self.refresh_project_list()
+
+        logger.info("Project Tracker initialized")
+
+    def _build_ui(self):
+        """Build the user interface."""
+        # Header
+        self._build_header()
+
+        # Main content area
+        main_frame = tk.Frame(self.root, bg="#f0f0f0")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Left panel (project list)
+        self._build_left_panel(main_frame)
+
+        # Separator
+        separator = ttk.Separator(main_frame, orient=tk.VERTICAL)
+        separator.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
+
+        # Right panel (details)
+        self._build_right_panel(main_frame)
+
+        # Status bar
+        self._build_status_bar()
+
+    def _build_header(self):
+        """Build header section."""
+        header_frame = tk.Frame(self.root, bg="#2c3e50", height=60)
+        header_frame.pack(fill=tk.X)
+        header_frame.pack_propagate(False)
+
+        title_label = tk.Label(
+            header_frame,
+            text="📊 Project Tracker",
+            font=("Arial", 16, "bold"),
+            fg="white",
+            bg="#2c3e50"
+        )
+        title_label.pack(side=tk.LEFT, padx=20, pady=15)
+
+    def _build_left_panel(self, parent):
+        """Build left panel with category buttons in a simple grid."""
+        left_frame = tk.Frame(parent, width=200, bg="#0d1117")
+        left_frame.pack(side=tk.LEFT, fill=tk.Y, pady=5, padx=(5, 0))
+        left_frame.pack_propagate(False)
+
+        # Title - clickable to show all projects
+        title_label = tk.Label(left_frame, text="Categories", bg="#0d1117", fg="white",
+                              font=("Arial", 12, "bold"), cursor="hand2")
+        title_label.pack(pady=(10, 15), padx=10)
+        title_label.bind('<Button-1>', lambda e: self._clear_category_selection())
+
+        # Category buttons frame
+        buttons_frame = tk.Frame(left_frame, bg="#0d1117")
+        buttons_frame.pack(fill=tk.BOTH, expand=True, padx=10)
+
+        # Define categories
+        # Categories matching pipeline manager
+        categories = [
+            ("Visual", "🎨", CATEGORY_COLORS["Visual"]),
+            ("Audio", "🎵", CATEGORY_COLORS["Audio"]),
+            ("Physical", "🔧", CATEGORY_COLORS["Physical"]),
+            ("RealTime", "⚡", CATEGORY_COLORS["RealTime"]),
+            ("Photo", "📷", CATEGORY_COLORS["Photo"]),
+            ("Web", "🌐", CATEGORY_COLORS["Web"]),
+        ]
+
+        # Create category buttons in grid (2 columns)
+        for idx, (name, icon, color) in enumerate(categories):
+            row = idx // 2
+            col = idx % 2
+
+            # Use highlightthickness for selection border (doesn't shift layout)
+            btn_frame = tk.Frame(buttons_frame, bg=color, relief=tk.FLAT, cursor="hand2",
+                                highlightthickness=3, highlightbackground="#0d1117")
+            btn_frame.grid(row=row, column=col, padx=2, pady=5, sticky="nsew")
+
+            # Store reference
+            self.category_buttons[name] = {"frame": btn_frame, "color": color}
+
+            # Icon and name
+            icon_label = tk.Label(btn_frame, text=icon, bg=color, fg="white", font=("Arial", 24))
+            icon_label.pack(pady=(10, 2))
+
+            name_label = tk.Label(btn_frame, text=name, bg=color, fg="white", font=("Arial", 9, "bold"))
+            name_label.pack(pady=(0, 2))
+
+            # Count label
+            count_label = tk.Label(btn_frame, text="(0)", bg=color, fg="white", font=("Arial", 8))
+            count_label.pack(pady=(0, 10))
+
+            # Store count label
+            self.category_buttons[name]["count_label"] = count_label
+
+            # Click handler
+            def make_click_handler(cat_name):
+                return lambda e: self._select_category(cat_name)
+
+            click_handler = make_click_handler(name)
+
+            for widget in (btn_frame, icon_label, name_label, count_label):
+                widget.bind('<Button-1>', click_handler)
+
+        # Configure grid weights
+        buttons_frame.columnconfigure(0, weight=1)
+        buttons_frame.columnconfigure(1, weight=1)
+
+        # Spacer
+        tk.Frame(left_frame, bg="#0d1117", height=20).pack()
+
+        # Bottom buttons
+        import_btn = tk.Button(
+            left_frame,
+            text="📥 Import",
+            command=self._import_projects,
+            bg="#238636",
+            fg="white",
+            font=("Arial", 9, "bold"),
+            relief=tk.FLAT,
+            cursor="hand2",
+            pady=8
+        )
+        import_btn.pack(fill=tk.X, padx=10, pady=5)
+
+        refresh_btn = tk.Button(
+            left_frame,
+            text="🔄 Refresh",
+            command=self.refresh_project_list,
+            bg="#1c2128",
+            fg="white",
+            font=("Arial", 9),
+            relief=tk.FLAT,
+            cursor="hand2",
+            pady=6
+        )
+        refresh_btn.pack(fill=tk.X, padx=10, pady=5)
+
+    def _build_right_panel(self, parent):
+        """Build right panel with project list and details."""
+        right_frame = tk.Frame(parent, bg="#0d1117")
+        right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(0, 5), pady=5)
+
+        # Top: Search and filter
+        controls_frame = tk.Frame(right_frame, bg="#0d1117")
+        controls_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        # Search
+        search_label = tk.Label(controls_frame, text="Search:", bg="#0d1117", fg="white", font=("Arial", 9))
+        search_label.grid(row=0, column=0, sticky=tk.W, pady=5)
+
+        search_entry = tk.Entry(controls_frame, textvariable=self.search_query, bg="#1c2128", fg="white",
+                               insertbackground="white", font=("Arial", 10), width=30)
+        search_entry.grid(row=0, column=1, sticky=tk.W, padx=(5, 15), pady=5)
+
+        # Filter
+        filter_label = tk.Label(controls_frame, text="Filter:", bg="#0d1117", fg="white", font=("Arial", 9))
+        filter_label.grid(row=0, column=2, sticky=tk.W, pady=5)
+
+        filter_combo = ttk.Combobox(
+            controls_frame,
+            textvariable=self.filter_status,
+            values=["active", "archived", "all"],
+            state="readonly",
+            width=12,
+            font=("Arial", 9)
+        )
+        filter_combo.grid(row=0, column=3, sticky=tk.W, padx=5, pady=5)
+        filter_combo.bind('<<ComboboxSelected>>', lambda e: self.refresh_project_list())
+
+        # Project count
+        self.count_label = tk.Label(controls_frame, text="Projects (0)", bg="#0d1117", fg="#8b949e",
+                                    font=("Arial", 9))
+        self.count_label.grid(row=0, column=4, sticky=tk.E, padx=(15, 0), pady=5)
+
+        controls_frame.columnconfigure(4, weight=1)
+
+        # Middle: Project list header with view toggle
+        list_header = tk.Frame(right_frame, bg="#0d1117")
+        list_header.pack(fill=tk.X, padx=10, pady=(5, 5))
+
+        list_label = tk.Label(list_header, text="Projects", bg="#0d1117", fg="white",
+                            font=("Arial", 10, "bold"))
+        list_label.pack(side=tk.LEFT)
+
+        # View toggle buttons
+        self.view_mode = tk.StringVar(value="list")
+
+        grid_btn = tk.Radiobutton(list_header, text="⊞", variable=self.view_mode, value="grid",
+                                  bg="#0d1117", fg="white", selectcolor="#1c2128",
+                                  indicatoron=False, padx=8, pady=2, font=("Arial", 12),
+                                  command=self._switch_view)
+        grid_btn.pack(side=tk.RIGHT, padx=2)
+
+        list_btn = tk.Radiobutton(list_header, text="≡", variable=self.view_mode, value="list",
+                                  bg="#0d1117", fg="white", selectcolor="#1c2128",
+                                  indicatoron=False, padx=8, pady=2, font=("Arial", 12),
+                                  command=self._switch_view)
+        list_btn.pack(side=tk.RIGHT, padx=2)
+
+        # Separate scale sliders for list and grid views
+        self.list_scale_value = tk.IntVar(value=100)
+        self.grid_scale_value = tk.IntVar(value=100)
+
+        # List scale slider (shown when list view active)
+        self.list_scale_frame = tk.Frame(list_header, bg="#0d1117")
+        list_scale_label = tk.Label(self.list_scale_frame, text="Size:", bg="#0d1117", fg="#8b949e",
+                                   font=("Arial", 8))
+        list_scale_label.pack(side=tk.LEFT, padx=(0, 2))
+        self.list_scale_slider = tk.Scale(self.list_scale_frame, from_=50, to=150, orient=tk.HORIZONTAL,
+                                         variable=self.list_scale_value, command=self._on_list_scale_changed,
+                                         bg="#0d1117", fg="white", highlightthickness=0,
+                                         troughcolor="#1c2128", activebackground="#58a6ff",
+                                         length=80, showvalue=False, sliderlength=15)
+        self.list_scale_slider.pack(side=tk.LEFT)
+        self.list_scale_frame.pack(side=tk.RIGHT, padx=(10, 2))
+
+        # Grid scale slider (shown when grid view active)
+        self.grid_scale_frame = tk.Frame(list_header, bg="#0d1117")
+        grid_scale_label = tk.Label(self.grid_scale_frame, text="Size:", bg="#0d1117", fg="#8b949e",
+                                   font=("Arial", 8))
+        grid_scale_label.pack(side=tk.LEFT, padx=(0, 2))
+        self.grid_scale_slider = tk.Scale(self.grid_scale_frame, from_=50, to=150, orient=tk.HORIZONTAL,
+                                         variable=self.grid_scale_value, command=self._on_grid_scale_changed,
+                                         bg="#0d1117", fg="white", highlightthickness=0,
+                                         troughcolor="#1c2128", activebackground="#58a6ff",
+                                         length=80, showvalue=False, sliderlength=15)
+        self.grid_scale_slider.pack(side=tk.LEFT)
+        # Grid slider hidden by default (list view is default)
+
+        # Container for both views
+        self.view_container = tk.Frame(right_frame, bg="#0d1117")
+        self.view_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        # === LIST VIEW ===
+        self.list_frame = tk.Frame(self.view_container, bg="#0d1117")
+
+        # Wrapper frame to hide any white edges from treeview
+        tree_wrapper = tk.Frame(self.list_frame, bg="#0d1117")
+        tree_wrapper.pack(fill=tk.BOTH, expand=True)
+
+        scrollbar = ttk.Scrollbar(tree_wrapper)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Treeview styling - dark theme to match container
+        self.tree_style = ttk.Style()
+        # Use 'clam' theme for better control over colors
+        try:
+            self.tree_style.theme_use('clam')
+        except:
+            pass
+
+        # Base row height (scaled later)
+        self.base_row_height = 32
+
+        self.tree_style.configure("Dark.Treeview",
+                       background="#0d1117",
+                       foreground="white",
+                       fieldbackground="#0d1117",
+                       borderwidth=0,
+                       rowheight=self.base_row_height)
+        self.tree_style.configure("Dark.Treeview.Heading",
+                       background="#1c2128",
+                       foreground="white",
+                       font=("Arial", 10, "bold"))
+        self.tree_style.map("Dark.Treeview",
+                 background=[("selected", "#58a6ff")],
+                 foreground=[("selected", "white")])
+        # Remove the border/focus highlight
+        self.tree_style.layout("Dark.Treeview", [('Dark.Treeview.treearea', {'sticky': 'nswe'})])
+
+        self.project_tree = ttk.Treeview(
+            tree_wrapper,
+            columns=("date", "client", "project"),
+            show="headings",
+            yscrollcommand=scrollbar.set,
+            selectmode="browse",
+            style="Dark.Treeview"
+        )
+
+        # Configure columns
+        self.project_tree.heading("date", text="Date", anchor=tk.W)
+        self.project_tree.heading("client", text="Client", anchor=tk.W)
+        self.project_tree.heading("project", text="Project", anchor=tk.W)
+
+        self.project_tree.column("date", width=100, minwidth=80)
+        self.project_tree.column("client", width=150, minwidth=100)
+        self.project_tree.column("project", width=250, minwidth=150, stretch=True)
+
+        self.project_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=self.project_tree.yview)
+
+        # Store project IDs mapped to tree items
+        self.tree_item_to_project = {}
+        self.project_tree.bind('<<TreeviewSelect>>', self._on_project_selected)
+        self.project_tree.bind('<Return>', self._on_enter_key)
+        self.project_tree.bind('<Double-1>', self._on_enter_key)
+
+        # === GRID VIEW ===
+        self.grid_frame = tk.Frame(self.view_container, bg="#0d1117")
+
+        # Canvas with scrollbar for grid
+        self.grid_canvas = tk.Canvas(self.grid_frame, bg="#0d1117", highlightthickness=0, takefocus=True)
+        grid_scrollbar = ttk.Scrollbar(self.grid_frame, orient=tk.VERTICAL, command=self.grid_canvas.yview)
+        self.grid_inner = tk.Frame(self.grid_canvas, bg="#0d1117")
+
+        self.grid_canvas.configure(yscrollcommand=grid_scrollbar.set)
+        grid_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.grid_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self.grid_window = self.grid_canvas.create_window((0, 0), window=self.grid_inner, anchor="nw")
+
+        # Bind resize and scroll events
+        self.grid_inner.bind("<Configure>", lambda e: self.grid_canvas.configure(scrollregion=self.grid_canvas.bbox("all")))
+        self.grid_canvas.bind("<Configure>", self._on_grid_canvas_resize)
+
+        # Keyboard navigation for grid view
+        self.grid_canvas.bind('<Left>', self._on_grid_left)
+        self.grid_canvas.bind('<Right>', self._on_grid_right)
+        self.grid_canvas.bind('<Up>', self._on_grid_up)
+        self.grid_canvas.bind('<Down>', self._on_grid_down)
+        self.grid_canvas.bind('<Return>', self._on_enter_key)
+        # Mousewheel binding - different on Windows vs Linux
+        self.grid_canvas.bind_all("<MouseWheel>", self._on_grid_mousewheel)
+        self.grid_canvas.bind_all("<Button-4>", self._on_grid_mousewheel)  # Linux scroll up
+        self.grid_canvas.bind_all("<Button-5>", self._on_grid_mousewheel)  # Linux scroll down
+
+        # Show list view by default
+        self.list_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Bottom: Project details
+        details_frame = tk.Frame(right_frame, bg="#1c2128")
+        details_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        details_title = tk.Label(details_frame, text="Selected Project", bg="#1c2128", fg="white",
+                                font=("Arial", 10, "bold"))
+        details_title.pack(anchor=tk.W, padx=10, pady=(10, 5))
+
+        # Detail labels
+        self.detail_labels = {}
+        detail_fields = [
+            ("Client", "client_name"),
+            ("Project", "project_name"),
+            ("Type", "project_type"),
+            ("Date", "date_created"),
+            ("Path", "path")
+        ]
+
+        details_grid = tk.Frame(details_frame, bg="#1c2128")
+        details_grid.pack(fill=tk.X, padx=10, pady=5)
+
+        for i, (label, key) in enumerate(detail_fields):
+            tk.Label(details_grid, text=f"{label}:", bg="#1c2128", fg="#8b949e",
+                    font=("Arial", 8)).grid(row=i, column=0, sticky=tk.W, pady=2)
+
+            value_label = tk.Label(details_grid, text="-", bg="#1c2128", fg="white",
+                                  font=("Arial", 9))
+            value_label.grid(row=i, column=1, sticky=tk.W, pady=2, padx=(10, 0))
+
+            self.detail_labels[key] = value_label
+
+        # Action buttons
+        button_frame = tk.Frame(details_frame, bg="#1c2128")
+        button_frame.pack(fill=tk.X, padx=10, pady=(10, 10))
+
+        self.open_btn = tk.Button(
+            button_frame,
+            text="📂 Open Folder",
+            command=self._open_folder,
+            bg="#238636",
+            fg="white",
+            font=("Arial", 9),
+            relief=tk.FLAT,
+            cursor="hand2",
+            state=tk.DISABLED,
+            padx=15,
+            pady=6
+        )
+        self.open_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.archive_btn = tk.Button(
+            button_frame,
+            text="📦 Archive",
+            command=self._archive_project,
+            bg="#1c2128",
+            fg="white",
+            font=("Arial", 9),
+            relief=tk.FLAT,
+            cursor="hand2",
+            state=tk.DISABLED,
+            padx=15,
+            pady=6
+        )
+        self.archive_btn.pack(side=tk.LEFT, padx=5)
+
+        self.unarchive_btn = tk.Button(
+            button_frame,
+            text="📤 Un-Archive",
+            command=self._unarchive_project,
+            bg="#1c2128",
+            fg="white",
+            font=("Arial", 9),
+            relief=tk.FLAT,
+            cursor="hand2",
+            state=tk.DISABLED,
+            padx=15,
+            pady=6
+        )
+        self.unarchive_btn.pack(side=tk.LEFT, padx=5)
+
+    def _build_status_bar(self):
+        """Build status bar."""
+        self.status_bar = ttk.Label(
+            self.root,
+            text="Ready",
+            relief=tk.SUNKEN,
+            anchor=tk.W
+        )
+        self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+
+    def _update_status(self, message: str):
+        """Update status bar."""
+        self.status_bar.config(text=message)
+        self.root.update_idletasks()
+
+    def _select_category(self, category_name):
+        """Handle category button selection."""
+        self.selected_category = category_name
+
+        # Update all button styles
+        for name, btn_info in self.category_buttons.items():
+            self._update_category_card_style(btn_info, name)
+
+        # Refresh project list for this category
+        self.refresh_project_list()
+
+    def _update_category_card_style(self, btn_info, name):
+        """Update category button styling based on selection state."""
+        frame = btn_info["frame"]
+
+        if name == self.selected_category:
+            # Selected style - white highlight border
+            frame.configure(highlightbackground="white")
+        else:
+            # Unselected style - blend with background
+            frame.configure(highlightbackground="#0d1117")
+
+    def _clear_category_selection(self):
+        """Clear category selection to show all projects."""
+        self.selected_category = None
+
+        # Update all button styles
+        for name, btn_info in self.category_buttons.items():
+            self._update_category_card_style(btn_info, name)
+
+        # Refresh project list to show all
+        self.refresh_project_list()
+
+    def refresh_project_list(self):
+        """Refresh the project list from database based on selected category."""
+        # Clear tree
+        for item in self.project_tree.get_children():
+            self.project_tree.delete(item)
+
+        # Get filter status
+        status = self.filter_status.get()
+
+        # Get search query
+        query = self.search_query.get().strip()
+
+        # Get all projects first
+        if query:
+            projects = self.db.search_projects(query, include_archived=(status != "active"))
+            if status == "archived":
+                projects = [p for p in projects if p.get("status") == "archived"]
+        else:
+            if status == "all":
+                projects = self.db.get_all_projects(status="all")
+            else:
+                projects = self.db.get_all_projects(status=status)
+
+        # Group projects by category
+        categories = {
+            "Visual": {"icon": "🎨", "projects": [], "color": CATEGORY_COLORS["Visual"]},
+            "Audio": {"icon": "🎵", "projects": [], "color": CATEGORY_COLORS["Audio"]},
+            "Physical": {"icon": "🔧", "projects": [], "color": CATEGORY_COLORS["Physical"]},
+            "RealTime": {"icon": "⚡", "projects": [], "color": CATEGORY_COLORS["RealTime"]},
+            "Photo": {"icon": "📷", "projects": [], "color": CATEGORY_COLORS["Photo"]},
+            "Web": {"icon": "🌐", "projects": [], "color": CATEGORY_COLORS["Web"]},
+        }
+
+        # Categorize all projects
+        for project in projects:
+            project_type = project.get("project_type", "")
+
+            # Map project types to categories
+            if project_type in ["GD", "VFX"]:
+                categories["Visual"]["projects"].append(project)
+            elif project_type == "Audio":
+                categories["Audio"]["projects"].append(project)
+            elif project_type == "Physical":
+                categories["Physical"]["projects"].append(project)
+            elif project_type in ["Godot", "TD", "RealTime"]:
+                categories["RealTime"]["projects"].append(project)
+            elif project_type == "Photo":
+                categories["Photo"]["projects"].append(project)
+            elif project_type == "Web":
+                categories["Web"]["projects"].append(project)
+
+        # Update category button counts
+        for cat_name, cat_info in categories.items():
+            if cat_name in self.category_buttons:
+                btn_info = self.category_buttons[cat_name]
+                count = len(cat_info["projects"])
+                btn_info["count_label"].config(text=f"({count})")
+
+        # Filter by selected category if one is selected
+        if self.selected_category:
+            category_projects = categories.get(self.selected_category, {}).get("projects", [])
+        else:
+            # No category selected - show all
+            category_projects = []
+            for cat_info in categories.values():
+                category_projects.extend(cat_info["projects"])
+
+        # Sort by date (newest first)
+        category_projects.sort(key=lambda p: p.get("date_created", ""), reverse=True)
+
+        # Clear the project ID mapping
+        self.tree_item_to_project = {}
+
+        # Populate tree with flat list
+        for project in category_projects:
+            project_type = project.get("project_type", "")
+            type_info = PROJECT_TYPES.get(project_type, {"icon": "📁", "name": project_type})
+
+            # Get display values
+            date_str = project.get("date_created", "")
+            client_name = project.get("client_name", "")
+            project_name = f"{type_info['icon']} {project.get('project_name', '')}"
+
+            # Insert into tree
+            item_id = self.project_tree.insert(
+                "",
+                tk.END,
+                values=(date_str, client_name, project_name),
+                tags=(project.get("status"),)
+            )
+
+            # Store mapping from tree item to project
+            self.tree_item_to_project[item_id] = project
+
+        # Update count label
+        count = len(category_projects)
+        if self.selected_category:
+            self.count_label.config(text=f"({count})")
+        else:
+            self.count_label.config(text=f"({count})")
+
+        logger.debug(f"Refreshed project list: {count} projects" +
+                    (f" in {self.selected_category}" if self.selected_category else ""))
+
+        # Also refresh grid view if it's currently visible
+        if self.view_mode.get() == "grid":
+            self._populate_grid()
+
+    def _switch_view(self):
+        """Switch between list and grid view."""
+        if self.view_mode.get() == "list":
+            self.grid_frame.pack_forget()
+            self.grid_scale_frame.pack_forget()
+            self.list_frame.pack(fill=tk.BOTH, expand=True)
+            self.list_scale_frame.pack(side=tk.RIGHT, padx=(10, 2))
+            self.project_tree.focus_set()
+        else:
+            self.list_frame.pack_forget()
+            self.list_scale_frame.pack_forget()
+            self.grid_frame.pack(fill=tk.BOTH, expand=True)
+            self.grid_scale_frame.pack(side=tk.RIGHT, padx=(10, 2))
+            self._populate_grid()
+            # Set focus for keyboard navigation and select first if none selected
+            self.grid_canvas.focus_set()
+            if self.grid_selected_index < 0 and self.grid_projects:
+                self.grid_selected_index = 0
+                self._select_grid_card(0)
+
+    def _on_list_scale_changed(self, value):
+        """Handle list scale slider change - update row height."""
+        scale = int(value) / 100.0  # Convert to multiplier (0.5 - 1.5)
+        new_row_height = int(self.base_row_height * scale)
+        self.tree_style.configure("Dark.Treeview", rowheight=new_row_height)
+
+    def _on_grid_scale_changed(self, value):
+        """Handle grid scale slider change - repopulate grid."""
+        if self.view_mode.get() == "grid":
+            self._populate_grid()
+
+    def _get_scaled_card_size(self) -> int:
+        """Get card size based on current grid scale value."""
+        base_card_size = 120
+        scale = self.grid_scale_value.get() / 100.0
+        return int(base_card_size * scale)
+
+    def _on_grid_canvas_resize(self, event):
+        """Handle grid canvas resize to adjust inner frame width and repopulate."""
+        self.grid_canvas.itemconfig(self.grid_window, width=event.width)
+        # Repopulate grid when resized to adjust number of columns
+        if self.view_mode.get() == "grid" and self.tree_item_to_project:
+            self._populate_grid()
+
+    def _on_grid_mousewheel(self, event):
+        """Handle mousewheel scrolling for grid view."""
+        if self.view_mode.get() != "grid":
+            return
+
+        # Check if there's content to scroll
+        try:
+            bbox = self.grid_canvas.bbox("all")
+            if bbox is None:
+                return "break"
+
+            # Get view and content dimensions
+            view_height = self.grid_canvas.winfo_height()
+            content_height = bbox[3] - bbox[1]
+
+            # Only scroll if content is larger than view
+            if content_height <= view_height:
+                return "break"
+
+            # Handle both Windows (MouseWheel) and Linux (Button-4/5) events
+            if event.num == 4 or (hasattr(event, 'delta') and event.delta > 0):
+                # Scroll up
+                self.grid_canvas.yview_scroll(-1, "units")
+            elif event.num == 5 or (hasattr(event, 'delta') and event.delta < 0):
+                # Scroll down
+                self.grid_canvas.yview_scroll(1, "units")
+
+            return "break"
+        except:
+            return "break"
+
+    def _populate_grid(self):
+        """Populate the grid view with project cards."""
+        # Reset grid tracking BEFORE destroying widgets
+        self.grid_cards = []
+        self.grid_projects = []
+
+        # Clear existing grid items
+        for widget in self.grid_inner.winfo_children():
+            widget.destroy()
+
+        # Get current projects (use the same data as list view)
+        projects = list(self.tree_item_to_project.values())
+
+        if not projects:
+            no_projects = tk.Label(self.grid_inner, text="No projects found",
+                                  bg="#0d1117", fg="#8b949e", font=("Arial", 11))
+            no_projects.pack(pady=20)
+            self.grid_selected_index = -1
+            return
+
+        # Calculate number of columns based on canvas width and scaled card size
+        canvas_width = self.grid_canvas.winfo_width()
+        card_size = self._get_scaled_card_size()
+        padding = 16  # Total padding between cards
+        self.grid_cols = max(1, canvas_width // (card_size + padding))
+
+        # Create grid of project cards - use constant spacing (no weight distribution)
+        for idx, project in enumerate(projects):
+            row = idx // self.grid_cols
+            col = idx % self.grid_cols
+
+            card = self._create_project_card(project, row, col, card_size)
+            self.grid_cards.append(card)
+            self.grid_projects.append(project)
+
+        # Restore selection if valid, otherwise select first
+        if self.grid_selected_index >= len(self.grid_projects):
+            self.grid_selected_index = 0 if self.grid_projects else -1
+
+        # Highlight current selection
+        if self.grid_selected_index >= 0:
+            self._highlight_grid_card(self.grid_selected_index)
+
+    def _create_project_card(self, project: Dict, row: int, col: int, card_size: int = 120):
+        """Create a single square project card for grid view."""
+        project_type = project.get("project_type", "")
+        type_info = PROJECT_TYPES.get(project_type, {"icon": "📁", "color": "#1c2128"})
+        status = project.get("status", "active")
+
+        # Scale factor for fonts based on card size (120 is base)
+        font_scale = card_size / 120.0
+        icon_size = max(16, int(24 * font_scale))
+        name_size = max(7, int(8 * font_scale))
+        small_size = max(6, int(7 * font_scale))
+
+        # Truncation lengths scale with size
+        name_max = max(8, int(12 * font_scale))
+        client_max = max(6, int(10 * font_scale))
+
+        # Card frame - fixed square size
+        card = tk.Frame(self.grid_inner, bg="#1c2128", relief=tk.FLAT,
+                       width=card_size, height=card_size, cursor="hand2")
+        card.grid(row=row, column=col, padx=8, pady=8)
+        card.grid_propagate(False)  # Keep fixed size
+        card.pack_propagate(False)  # Keep fixed size
+
+        # Add border for archived projects
+        if status == "archived":
+            card.configure(highlightbackground="#8b949e", highlightthickness=1)
+
+        # Icon - scales with card size
+        icon_label = tk.Label(card, text=type_info["icon"], bg="#1c2128", fg="white",
+                             font=("Arial", icon_size))
+        icon_label.pack(pady=(int(15 * font_scale), int(5 * font_scale)))
+
+        # Project name - truncate based on card size
+        project_name = project.get("project_name", "")[:name_max]
+        if len(project.get("project_name", "")) > name_max:
+            project_name += "..."
+        name_label = tk.Label(card, text=project_name, bg="#1c2128", fg="white",
+                             font=("Arial", name_size, "bold"), wraplength=card_size-10)
+        name_label.pack(pady=(0, 2))
+
+        # Client name - smaller
+        client_name = project.get("client_name", "")[:client_max]
+        if len(project.get("client_name", "")) > client_max:
+            client_name += "..."
+        client_label = tk.Label(card, text=client_name, bg="#1c2128", fg="#8b949e",
+                               font=("Arial", small_size))
+        client_label.pack(pady=(0, 2))
+
+        # Date - compact format
+        date_str = project.get("date_created", "")
+        if len(date_str) > 7:
+            date_str = date_str[2:]  # Remove century: 2025-12-29 -> 25-12-29
+        date_label = tk.Label(card, text=date_str, bg="#1c2128",
+                             fg="#8b949e", font=("Arial", small_size))
+        date_label.pack()
+
+        # Bind click event to all card elements
+        # Store index in closure for click handler
+        card_index = len(self.grid_cards)  # Current index (before this card is added)
+
+        def on_card_click(e, p=project, idx=card_index):
+            self.grid_selected_index = idx
+            self.selected_project = p
+            self._display_project_details(p)
+            self._highlight_grid_card(idx)
+            # Set focus to canvas for keyboard navigation
+            self.grid_canvas.focus_set()
+
+        card.bind("<Button-1>", on_card_click)
+        for child in card.winfo_children():
+            child.bind("<Button-1>", on_card_click)
+
+        return card
+
+    def _highlight_grid_card(self, index: int):
+        """Highlight the card at given index and unhighlight others."""
+        for i, card in enumerate(self.grid_cards):
+            # Check if card still exists
+            if not card.winfo_exists():
+                continue
+            try:
+                if i == index:
+                    card.configure(bg="#2d333b")
+                    for child in card.winfo_children():
+                        child.configure(bg="#2d333b")
+                else:
+                    card.configure(bg="#1c2128")
+                    for child in card.winfo_children():
+                        child.configure(bg="#1c2128")
+            except tk.TclError:
+                continue
+
+        # Scroll to make selected card visible
+        if index >= 0 and index < len(self.grid_cards):
+            card = self.grid_cards[index]
+            # Check if card still exists
+            if not card.winfo_exists():
+                return
+            try:
+                # Get card position relative to canvas
+                self.grid_canvas.update_idletasks()
+                card_y = card.winfo_y()
+                card_height = card.winfo_height()
+                canvas_height = self.grid_canvas.winfo_height()
+
+                # Get current scroll position
+                bbox = self.grid_canvas.bbox("all")
+                if bbox:
+                    content_height = bbox[3] - bbox[1]
+                    if content_height > canvas_height:
+                        # Calculate visible region
+                        scroll_top = self.grid_canvas.yview()[0] * content_height
+                        scroll_bottom = scroll_top + canvas_height
+
+                        # Scroll if card is outside visible region
+                        if card_y < scroll_top:
+                            self.grid_canvas.yview_moveto(card_y / content_height)
+                        elif card_y + card_height > scroll_bottom:
+                            self.grid_canvas.yview_moveto((card_y + card_height - canvas_height) / content_height)
+            except tk.TclError:
+                pass
+
+    def _on_grid_left(self, event):
+        """Navigate left in grid."""
+        if not self.grid_projects:
+            return "break"
+        if self.grid_selected_index > 0:
+            self.grid_selected_index -= 1
+            self._select_grid_card(self.grid_selected_index)
+        return "break"
+
+    def _on_grid_right(self, event):
+        """Navigate right in grid."""
+        if not self.grid_projects:
+            return "break"
+        if self.grid_selected_index < len(self.grid_projects) - 1:
+            self.grid_selected_index += 1
+            self._select_grid_card(self.grid_selected_index)
+        return "break"
+
+    def _on_grid_up(self, event):
+        """Navigate up in grid (previous row)."""
+        if not self.grid_projects:
+            return "break"
+        new_index = self.grid_selected_index - self.grid_cols
+        if new_index >= 0:
+            self.grid_selected_index = new_index
+            self._select_grid_card(self.grid_selected_index)
+        return "break"
+
+    def _on_grid_down(self, event):
+        """Navigate down in grid (next row)."""
+        if not self.grid_projects:
+            return "break"
+        new_index = self.grid_selected_index + self.grid_cols
+        if new_index < len(self.grid_projects):
+            self.grid_selected_index = new_index
+            self._select_grid_card(self.grid_selected_index)
+        return "break"
+
+    def _select_grid_card(self, index: int):
+        """Select card at index and update details."""
+        if 0 <= index < len(self.grid_projects):
+            self.selected_project = self.grid_projects[index]
+            self._display_project_details(self.selected_project)
+            self._highlight_grid_card(index)
+
+    def _on_enter_key(self, event):
+        """Handle Enter key to open selected project folder."""
+        if self.selected_project:
+            self._open_folder()
+        return "break"
+
+    def _on_search_changed(self, *args):
+        """Handle search query change."""
+        self.refresh_project_list()
+
+    def _on_project_selected(self, event):
+        """Handle project selection."""
+        selection = self.project_tree.selection()
+
+        if not selection:
+            self.selected_project = None
+            self._clear_details()
+            return
+
+        # Get project from our mapping
+        item = selection[0]
+        project = self.tree_item_to_project.get(item)
+
+        if not project:
+            return
+
+        self.selected_project = project
+        self._display_project_details(project)
+
+    def _clear_details(self):
+        """Clear detail panel."""
+        for label in self.detail_labels.values():
+            label.config(text="-")
+
+        self.open_btn.config(state=tk.DISABLED)
+        self.archive_btn.config(state=tk.DISABLED)
+        self.unarchive_btn.config(state=tk.DISABLED)
+
+    def _display_project_details(self, project: Dict):
+        """Display project details in right panel."""
+        # Update detail labels
+        for key, label in self.detail_labels.items():
+            value = project.get(key, "")
+
+            # Format type with icon
+            if key == "project_type":
+                type_info = PROJECT_TYPES.get(value, {"name": value})
+                value = type_info["name"]
+
+            label.config(text=str(value))
+
+        # Enable buttons
+        self.open_btn.config(state=tk.NORMAL)
+
+        # Enable archive/unarchive based on status
+        status = project.get("status", "")
+        if status == "active":
+            self.archive_btn.config(state=tk.NORMAL)
+            self.unarchive_btn.config(state=tk.DISABLED)
+        elif status == "archived":
+            self.archive_btn.config(state=tk.DISABLED)
+            self.unarchive_btn.config(state=tk.NORMAL)
+
+    def _open_folder(self):
+        """Open project folder in file explorer."""
+        if not self.selected_project:
+            return
+
+        path = Path(self.selected_project["path"])
+
+        if not path.exists():
+            messagebox.showerror(
+                "Folder Not Found",
+                f"Project folder does not exist:\n{path}"
+            )
+            return
+
+        try:
+            if sys.platform == "win32":
+                os.startfile(path)
+            elif sys.platform == "darwin":
+                os.system(f'open "{path}"')
+            else:
+                os.system(f'xdg-open "{path}"')
+
+            logger.info(f"Opened folder: {path}")
+
+        except Exception as e:
+            logger.error(f"Failed to open folder: {e}")
+            messagebox.showerror("Error", f"Failed to open folder:\n{str(e)}")
+
+    def _archive_project(self):
+        """Archive the selected project."""
+        if not self.selected_project:
+            return
+
+        # Confirm
+        response = messagebox.askyesno(
+            "Confirm Archive",
+            f"Archive this project?\n\n"
+            f"Client: {self.selected_project.get('client_name')}\n"
+            f"Project: {self.selected_project.get('project_name')}\n\n"
+            f"The folder will be moved to D:\\_work\\Archive"
+        )
+
+        if not response:
+            return
+
+        # Archive
+        self._update_status("Archiving project...")
+        success = ArchiveManager.archive_project(self.selected_project, self.db)
+
+        if success:
+            self._update_status("Project archived successfully")
+            self.refresh_project_list()
+            self._clear_details()
+        else:
+            self._update_status("Archive failed")
+
+    def _unarchive_project(self):
+        """Un-archive the selected project."""
+        if not self.selected_project:
+            return
+
+        # Confirm
+        response = messagebox.askyesno(
+            "Confirm Un-Archive",
+            f"Restore this project from archive?\n\n"
+            f"Client: {self.selected_project.get('client_name')}\n"
+            f"Project: {self.selected_project.get('project_name')}\n\n"
+            f"The folder will be moved back to its original location."
+        )
+
+        if not response:
+            return
+
+        # Un-archive
+        self._update_status("Un-archiving project...")
+        success = ArchiveManager.unarchive_project(self.selected_project, self.db)
+
+        if success:
+            self._update_status("Project restored successfully")
+            self.refresh_project_list()
+            self._clear_details()
+        else:
+            self._update_status("Un-archive failed")
+
+    def _save_notes(self):
+        """Save project notes."""
+        if not self.selected_project:
+            return
+
+        notes = self.notes_text.get(1.0, tk.END).strip()
+
+        try:
+            self.db.update_project_notes(self.selected_project["id"], notes)
+            self._update_status("Notes saved")
+            logger.info(f"Saved notes for project: {self.selected_project['id']}")
+
+            # Update selected project
+            self.selected_project["notes"] = notes
+
+        except Exception as e:
+            logger.error(f"Failed to save notes: {e}")
+            messagebox.showerror("Error", f"Failed to save notes:\n{str(e)}")
+
+    def _import_projects(self):
+        """Import existing projects from filesystem."""
+        response = messagebox.askyesno(
+            "Import Existing Projects",
+            "This will scan your project directories and import any projects\n"
+            "that are not already in the database.\n\n"
+            "Continue?"
+        )
+
+        if not response:
+            return
+
+        # Run import directly (simplified approach)
+        self._update_status("Importing projects...")
+        self.root.update_idletasks()
+
+        try:
+            stats = ProjectImporter.scan_and_import(self.db, None)
+
+            # Show results
+            messagebox.showinfo(
+                "Import Complete",
+                f"Import completed:\n\n"
+                f"Scanned: {stats['scanned']} folders\n"
+                f"Imported: {stats['imported']} new projects\n"
+                f"Skipped: {stats['skipped']} existing projects\n"
+                f"Errors: {stats['errors']}"
+            )
+
+            # Refresh list
+            self.refresh_project_list()
+            self._update_status(f"Imported {stats['imported']} projects")
+
+        except Exception as e:
+            messagebox.showerror("Import Failed", f"Failed to import projects:\n{str(e)}")
+
+
+def main():
+    """Main entry point."""
+    # Initialize logging first! Use MODULE_NAME to match get_logger() call
+    setup_logging(MODULE_NAME)
+    logger.info("Starting Project Tracker")
+
+    root = tk.Tk()
+    app = ProjectTrackerApp(root)
+
+    try:
+        root.mainloop()
+    except KeyboardInterrupt:
+        logger.info("Project Tracker closed by user")
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        raise
+
+
+if __name__ == "__main__":
+    main()
