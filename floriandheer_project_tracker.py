@@ -1,8 +1,12 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 """
 Project Tracker
 
 Standalone GUI for managing active projects, clients, and archives.
 Provides overview of all projects, search/filter, archive/unarchive, and import functionality.
+
+Can be run standalone or embedded as a tab in the Pipeline Manager.
 """
 
 import tkinter as tk
@@ -15,8 +19,9 @@ import shutil
 from datetime import datetime
 from typing import List, Dict, Optional
 
-# Add modules to path
-MODULES_DIR = Path(__file__).parent
+# Add modules to path (modules folder is a subdirectory)
+SCRIPT_DIR = Path(__file__).parent
+MODULES_DIR = SCRIPT_DIR / "modules"
 sys.path.insert(0, str(MODULES_DIR))
 
 from shared_logging import get_logger, setup_logging
@@ -646,13 +651,34 @@ class ProjectImporter:
 
 
 class ProjectTrackerApp:
-    """Main application window for Project Tracker."""
+    """
+    Project Tracker application.
 
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Project Tracker")
-        self.root.geometry("1000x700")
-        self.root.minsize(800, 600)
+    Can run as standalone window or be embedded in a parent frame.
+    Use embedded=True when integrating into another application (like Pipeline Manager).
+    """
+
+    def __init__(self, root_or_frame, embedded=False):
+        """
+        Initialize the Project Tracker.
+
+        Args:
+            root_or_frame: Either a Tk root window (standalone) or a Frame (embedded)
+            embedded: If True, skip window configuration and header
+        """
+        self.embedded = embedded
+
+        if embedded:
+            # Embedded mode: root_or_frame is the parent frame
+            self.root = root_or_frame.winfo_toplevel()
+            self.parent = root_or_frame
+        else:
+            # Standalone mode: root_or_frame is the Tk root
+            self.root = root_or_frame
+            self.parent = root_or_frame
+            self.root.title("Project Tracker")
+            self.root.geometry("1000x700")
+            self.root.minsize(800, 600)
 
         # Initialize database
         self.db = ProjectDatabase()
@@ -688,11 +714,12 @@ class ProjectTrackerApp:
 
     def _build_ui(self):
         """Build the user interface."""
-        # Header
-        self._build_header()
+        if not self.embedded:
+            # Header (only for standalone mode)
+            self._build_header()
 
         # Main content area
-        main_frame = tk.Frame(self.root, bg="#f0f0f0")
+        main_frame = tk.Frame(self.parent, bg="#0d1117")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
         # Left panel (project list)
@@ -1094,12 +1121,25 @@ class ProjectTrackerApp:
 
     def _build_status_bar(self):
         """Build status bar."""
-        self.status_bar = ttk.Label(
-            self.root,
-            text="Ready",
-            relief=tk.SUNKEN,
-            anchor=tk.W
-        )
+        if self.embedded:
+            # Simpler status bar for embedded mode
+            self.status_bar = tk.Label(
+                self.parent,
+                text="Ready",
+                bg="#161b22",
+                fg="#8b949e",
+                anchor=tk.W,
+                padx=10,
+                pady=5
+            )
+        else:
+            # Full status bar for standalone mode
+            self.status_bar = ttk.Label(
+                self.root,
+                text="Ready",
+                relief=tk.SUNKEN,
+                anchor=tk.W
+            )
         self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
     def _update_status(self, message: str):
