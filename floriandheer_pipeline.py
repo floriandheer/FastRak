@@ -1371,9 +1371,10 @@ class ProfessionalPipelineGUI:
         )
         self.tools_header.pack(anchor="w", pady=(0, 10))
 
-        # Tools container (will be populated when category is selected)
-        self.tools_container = tk.Frame(tools_section, bg=COLORS["bg_card"])
-        self.tools_container.pack(fill=tk.BOTH, expand=True)
+        # Scrollable tools container (will be populated when category is selected)
+        self.tools_scroll = ScrollableFrame(tools_section, bg=COLORS["bg_card"])
+        self.tools_scroll.pack(fill=tk.BOTH, expand=True)
+        self.tools_container = self.tools_scroll.get_frame()
 
         # Placeholder text when no category selected
         self.tools_placeholder = tk.Label(
@@ -1385,6 +1386,14 @@ class ProfessionalPipelineGUI:
             justify="center"
         )
         self.tools_placeholder.pack(expand=True)
+
+        # Fixed notes button container at bottom (outside scroll area)
+        self.notes_button_container = tk.Frame(tools_section, bg=COLORS["bg_card"])
+        self.notes_button_container.pack(fill=tk.X, side=tk.BOTTOM)
+
+        # Create persistent notes button (initially hidden)
+        self._create_persistent_notes_button()
+        self.notes_button_container.pack_forget()  # Hide until category selected
 
         # ═══════════════════════════════════════════════════════════
         # RIGHT PANEL: Project Tracker
@@ -1530,6 +1539,9 @@ class ProfessionalPipelineGUI:
         for widget in self.tools_container.winfo_children():
             widget.destroy()
 
+        # Hide notes button
+        self.notes_button_container.pack_forget()
+
         # Show placeholder
         placeholder = tk.Label(
             self.tools_container,
@@ -1552,11 +1564,12 @@ class ProfessionalPipelineGUI:
 
     def _update_tools_panel(self, category_key):
         """Update the tools panel to show tools for the selected category."""
-        # Clear current tools
+        # Clear current tools from scrollable container
         for widget in self.tools_container.winfo_children():
             widget.destroy()
 
         if category_key not in CREATIVE_CATEGORIES:
+            self.notes_button_container.pack_forget()
             return
 
         category_data = CREATIVE_CATEGORIES[category_key]
@@ -1587,17 +1600,26 @@ class ProfessionalPipelineGUI:
                 justify="center"
             )
             placeholder.pack(expand=True)
-            return
+        else:
+            # Sort tools by priority (folder structure first, then backup, then others)
+            all_tools.sort(key=lambda x: self._get_script_priority(x[0], x[2].get("name", "")))
 
-        # Create tool buttons
-        for script_key, subcat_key, script_data in all_tools:
-            self._create_tool_button(
-                self.tools_container,
-                category_key,
-                script_key,
-                subcat_key,
-                script_data
-            )
+            # Create tool buttons in scrollable container
+            for script_key, subcat_key, script_data in all_tools:
+                self._create_tool_button(
+                    self.tools_container,
+                    category_key,
+                    script_key,
+                    subcat_key,
+                    script_data
+                )
+
+        # Update and show the persistent notes button
+        self._update_notes_button(category_key)
+        self.notes_button_container.pack(fill=tk.X, side=tk.BOTTOM)
+
+        # Rebind mousewheel after adding tools
+        self.tools_scroll.rebind_mousewheel()
 
     def _create_tool_button(self, parent, category_key, script_key, subcat_key, script_data):
         """Create a professional tool button."""
@@ -1670,6 +1692,95 @@ class ProfessionalPipelineGUI:
             widget.bind("<Enter>", on_enter)
             widget.bind("<Leave>", on_leave)
             widget.bind("<Button-1>", on_click)
+
+    def _create_persistent_notes_button(self):
+        """Create a persistent notepad-style button (called once during setup)."""
+        parent = self.notes_button_container
+
+        # Notepad yellow colors (store for hover effects)
+        self._notepad_bg = "#FFF9C4"  # Light yellow (notepad color)
+        self._notepad_hover = "#FFF59D"  # Slightly darker yellow for hover
+        notepad_accent = "#FFD54F"  # Golden accent
+        self._notepad_text_color = "#5D4037"  # Brown text for notepad feel
+
+        # Store current category for click handler
+        self._notes_category = None
+
+        # Separator line above notes button
+        separator = tk.Frame(parent, bg=COLORS["border"], height=1)
+        separator.pack(fill=tk.X, pady=(10, 8))
+
+        # Button frame with notepad styling
+        self._notes_btn_frame = tk.Frame(parent, bg=self._notepad_bg, cursor="hand2")
+        self._notes_btn_frame.pack(fill=tk.X, pady=(0, 5))
+
+        # Left accent bar (golden)
+        accent_bar = tk.Frame(self._notes_btn_frame, bg=notepad_accent, width=4)
+        accent_bar.pack(side=tk.LEFT, fill=tk.Y)
+
+        # Content area
+        self._notes_content = tk.Frame(self._notes_btn_frame, bg=self._notepad_bg)
+        self._notes_content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=12, pady=10)
+
+        # Notepad icon
+        self._notes_icon = tk.Label(
+            self._notes_content,
+            text="📝",
+            font=font.Font(family="Segoe UI Emoji", size=14),
+            fg=self._notepad_text_color,
+            bg=self._notepad_bg
+        )
+        self._notes_icon.pack(side=tk.LEFT)
+
+        # Text label (will be updated when category changes)
+        self._notes_label = tk.Label(
+            self._notes_content,
+            text="Open Notes",
+            font=font.Font(family="Segoe UI", size=10),
+            fg=self._notepad_text_color,
+            bg=self._notepad_bg,
+            anchor="w"
+        )
+        self._notes_label.pack(side=tk.LEFT, padx=(10, 0), fill=tk.X, expand=True)
+
+        # Arrow indicator
+        self._notes_arrow = tk.Label(
+            self._notes_content,
+            text=">",
+            font=font.Font(family="Segoe UI", size=10),
+            fg=self._notepad_text_color,
+            bg=self._notepad_bg
+        )
+        self._notes_arrow.pack(side=tk.RIGHT)
+
+        # Hover effects
+        def on_enter(e):
+            self._notes_btn_frame.configure(bg=self._notepad_hover)
+            self._notes_content.configure(bg=self._notepad_hover)
+            self._notes_icon.configure(bg=self._notepad_hover)
+            self._notes_label.configure(bg=self._notepad_hover)
+            self._notes_arrow.configure(bg=self._notepad_hover)
+
+        def on_leave(e):
+            self._notes_btn_frame.configure(bg=self._notepad_bg)
+            self._notes_content.configure(bg=self._notepad_bg)
+            self._notes_icon.configure(bg=self._notepad_bg)
+            self._notes_label.configure(bg=self._notepad_bg)
+            self._notes_arrow.configure(bg=self._notepad_bg)
+
+        def on_click(e):
+            if self._notes_category:
+                self.open_note(self._notes_category)
+
+        for widget in [self._notes_btn_frame, self._notes_content, self._notes_icon, self._notes_label, self._notes_arrow]:
+            widget.bind("<Enter>", on_enter)
+            widget.bind("<Leave>", on_leave)
+            widget.bind("<Button-1>", on_click)
+
+    def _update_notes_button(self, category_key):
+        """Update the notes button text for the current category."""
+        self._notes_category = category_key
+        self._notes_label.configure(text=f"Open {category_key.title()} Notes")
 
     def setup_grid_layout(self, parent_frame, categories):
         """Setup grid layout for categories."""

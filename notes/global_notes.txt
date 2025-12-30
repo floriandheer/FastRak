@@ -1,4 +1,3 @@
 # Notes for GLOBAL
 
-- Lijst van klanten bij het creeeren van nieuwe projecten
-- Lijst van actieve projecten voor quick acces
+- Notes terug toegankelijk maken in Project manager UI
