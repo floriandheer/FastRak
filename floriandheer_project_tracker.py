@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 import re
 import shutil
+import json
 from datetime import datetime
 from typing import List, Dict, Optional
 
@@ -95,6 +96,68 @@ ARCHIVE_CATEGORIES = {
     "Photo": "Photo",
     "Web": "Web",
 }
+
+
+def _get_appdata_path() -> Path:
+    """Get the appropriate AppData path for the platform."""
+    if sys.platform == "win32":
+        return Path.home() / "AppData" / "Local" / "PipelineManager"
+    else:
+        # WSL/Linux: use Windows user profile via /mnt/c
+        windows_appdata = Path("/mnt/c/Users")
+        if windows_appdata.exists():
+            username = os.environ.get("USER", "")
+            user_path = windows_appdata / username
+            if user_path.exists():
+                return user_path / "AppData" / "Local" / "PipelineManager"
+        # Fallback to Linux standard location
+        return Path.home() / ".local" / "share" / "PipelineManager"
+
+
+class TrackerSettings:
+    """Manages UI settings persistence for Project Tracker."""
+
+    DEFAULT_SETTINGS = {
+        "view_mode": "list",
+        "list_scale": 100,
+        "grid_scale": 100,
+        "filter_status": "active",
+    }
+
+    def __init__(self):
+        self.settings_path = _get_appdata_path() / "tracker_settings.json"
+        self.settings = self._load()
+
+    def _load(self) -> Dict:
+        """Load settings from file or return defaults."""
+        try:
+            if self.settings_path.exists():
+                with open(self.settings_path, 'r', encoding='utf-8') as f:
+                    loaded = json.load(f)
+                    # Merge with defaults to handle new settings
+                    return {**self.DEFAULT_SETTINGS, **loaded}
+        except Exception as e:
+            logger.warning(f"Failed to load tracker settings: {e}")
+        return self.DEFAULT_SETTINGS.copy()
+
+    def save(self):
+        """Save settings to file."""
+        try:
+            self.settings_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.settings_path, 'w', encoding='utf-8') as f:
+                json.dump(self.settings, f, indent=2)
+            logger.debug("Tracker settings saved")
+        except Exception as e:
+            logger.warning(f"Failed to save tracker settings: {e}")
+
+    def get(self, key: str, default=None):
+        """Get a setting value."""
+        return self.settings.get(key, default)
+
+    def set(self, key: str, value):
+        """Set a setting value and save."""
+        self.settings[key] = value
+        self.save()
 
 
 class ArchiveManager:
@@ -683,6 +746,9 @@ class ProjectTrackerApp:
         # Initialize database
         self.db = ProjectDatabase()
 
+        # Initialize settings
+        self.settings = TrackerSettings()
+
         # Current selection
         self.selected_project = None
         self.selected_category = None  # Track selected category
@@ -694,8 +760,8 @@ class ProjectTrackerApp:
         self.grid_projects = []  # List of projects in grid order
         self.grid_cols = 1  # Current number of columns
 
-        # Filter status
-        self.filter_status = tk.StringVar(value="active")
+        # Filter status (load from settings)
+        self.filter_status = tk.StringVar(value=self.settings.get("filter_status", "active"))
 
         # Search query
         self.search_query = tk.StringVar()
@@ -706,6 +772,9 @@ class ProjectTrackerApp:
 
         # Build UI
         self._build_ui()
+
+        # Apply saved settings after UI is built
+        self._apply_saved_settings()
 
         # Load projects
         self.refresh_project_list()
@@ -877,7 +946,7 @@ class ProjectTrackerApp:
             font=("Arial", 9)
         )
         filter_combo.grid(row=0, column=3, sticky=tk.W, padx=5, pady=5)
-        filter_combo.bind('<<ComboboxSelected>>', lambda e: self.refresh_project_list())
+        filter_combo.bind('<<ComboboxSelected>>', self._on_filter_changed)
 
         # Project count
         self.count_label = tk.Label(controls_frame, text="Projects (0)", bg="#0d1117", fg="#8b949e",
@@ -1142,6 +1211,33 @@ class ProjectTrackerApp:
             )
         self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
+    def _apply_saved_settings(self):
+        """Apply saved settings after UI is built."""
+        # Apply scale values
+        saved_list_scale = self.settings.get("list_scale", 100)
+        saved_grid_scale = self.settings.get("grid_scale", 100)
+
+        self.list_scale_value.set(saved_list_scale)
+        self.grid_scale_value.set(saved_grid_scale)
+
+        # Apply list scale to treeview
+        scale = saved_list_scale / 100.0
+        new_row_height = int(self.base_row_height * scale)
+        self.tree_style.configure("Dark.Treeview", rowheight=new_row_height)
+
+        # Apply view mode
+        saved_view_mode = self.settings.get("view_mode", "list")
+        self.view_mode.set(saved_view_mode)
+
+        # Switch to the saved view (without saving again)
+        if saved_view_mode == "grid":
+            self.list_frame.pack_forget()
+            self.list_scale_frame.pack_forget()
+            self.grid_frame.pack(fill=tk.BOTH, expand=True)
+            self.grid_scale_frame.pack(side=tk.RIGHT, padx=(10, 2))
+
+        logger.debug(f"Applied saved settings: view={saved_view_mode}, list_scale={saved_list_scale}, grid_scale={saved_grid_scale}")
+
     def _update_status(self, message: str):
         """Update status bar."""
         self.status_bar.config(text=message)
@@ -1290,7 +1386,12 @@ class ProjectTrackerApp:
 
     def _switch_view(self):
         """Switch between list and grid view."""
-        if self.view_mode.get() == "list":
+        view = self.view_mode.get()
+
+        # Save view mode preference
+        self.settings.set("view_mode", view)
+
+        if view == "list":
             self.grid_frame.pack_forget()
             self.grid_scale_frame.pack_forget()
             self.list_frame.pack(fill=tk.BOTH, expand=True)
@@ -1313,9 +1414,13 @@ class ProjectTrackerApp:
         scale = int(value) / 100.0  # Convert to multiplier (0.5 - 1.5)
         new_row_height = int(self.base_row_height * scale)
         self.tree_style.configure("Dark.Treeview", rowheight=new_row_height)
+        # Save scale preference
+        self.settings.set("list_scale", int(value))
 
     def _on_grid_scale_changed(self, value):
         """Handle grid scale slider change - repopulate grid."""
+        # Save scale preference
+        self.settings.set("grid_scale", int(value))
         if self.view_mode.get() == "grid":
             self._populate_grid()
 
@@ -1581,6 +1686,12 @@ class ProjectTrackerApp:
 
     def _on_search_changed(self, *args):
         """Handle search query change."""
+        self.refresh_project_list()
+
+    def _on_filter_changed(self, event=None):
+        """Handle filter status change."""
+        # Save filter preference
+        self.settings.set("filter_status", self.filter_status.get())
         self.refresh_project_list()
 
     def _on_project_selected(self, event):
