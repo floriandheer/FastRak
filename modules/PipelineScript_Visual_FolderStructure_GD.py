@@ -14,6 +14,7 @@ sys.path.insert(0, str(MODULES_DIR))
 from shared_logging import get_logger
 from shared_project_db import ProjectDatabase
 from shared_autocomplete_widget import AutocompleteEntry
+from shared_path_config import get_path_config
 
 logger = get_logger(__name__)
 
@@ -23,6 +24,9 @@ class FolderStructureCreator:
         self.root.title("Graphic Design Folder Structure")
         self.root.geometry("750x650")
         self.root.minsize(700, 550)
+
+        # Initialize path config
+        self.path_config = get_path_config()
 
         # Initialize project database
         try:
@@ -57,9 +61,10 @@ class FolderStructureCreator:
         form_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         form_frame.columnconfigure(1, weight=1)
 
-        # Base directory
+        # Base directory (from path config)
         ttk.Label(form_frame, text="Base Directory:").grid(row=0, column=0, sticky="w", padx=10, pady=10)
-        self.base_dir_var = tk.StringVar(value='I:/Visual')
+        default_base = self.path_config.get_work_path("Visual").replace('\\', '/')
+        self.base_dir_var = tk.StringVar(value=default_base)
         base_dir_entry = ttk.Entry(form_frame, textvariable=self.base_dir_var, width=40)
         base_dir_entry.grid(row=0, column=1, sticky="ew", padx=5, pady=10)
         ttk.Button(form_frame, text="Browse", command=self.browse_base_dir).grid(row=0, column=2, padx=5, pady=10)

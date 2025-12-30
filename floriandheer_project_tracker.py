@@ -27,6 +27,7 @@ sys.path.insert(0, str(MODULES_DIR))
 
 from shared_logging import get_logger, setup_logging
 from shared_project_db import ProjectDatabase
+from shared_path_config import get_path_config
 
 # Module name for logging (must match setup_logging call)
 MODULE_NAME = "project_tracker"
@@ -58,8 +59,18 @@ def _get_platform_path(windows_path: str) -> Path:
     return Path(windows_path)
 
 
-# Archive base directory
-ARCHIVE_BASE = _get_platform_path(r"D:\_work\Archive")
+def _get_archive_base() -> Path:
+    """Get the archive base path from PathConfig."""
+    try:
+        path_config = get_path_config()
+        return _get_platform_path(path_config.get_archive_base())
+    except Exception:
+        # Fallback to default if PathConfig fails
+        return _get_platform_path(r"D:\_work\Archive")
+
+
+# Archive base directory (loaded from PathConfig)
+ARCHIVE_BASE = _get_archive_base()
 
 # Category colors matching pipeline manager
 CATEGORY_COLORS = {
@@ -73,8 +84,9 @@ CATEGORY_COLORS = {
 
 # Project type icons and display names
 PROJECT_TYPES = {
-    "GD": {"icon": "🎨", "name": "Graphic Design", "color": "#f97316"},
+    "GD": {"icon": "🎬", "name": "Graphic Design", "color": "#f97316"},
     "VFX": {"icon": "🎬", "name": "VFX/CG", "color": "#f97316"},
+    "VJ": {"icon": "💫", "name": "VJ", "color": "#f97316"},
     "Audio": {"icon": "🎵", "name": "Audio", "color": "#9333ea"},
     "Physical": {"icon": "🔧", "name": "3D Print", "color": "#ec4899"},
     "Godot": {"icon": "⚡", "name": "Godot", "color": "#06b6d4"},
@@ -88,6 +100,7 @@ PROJECT_TYPES = {
 ARCHIVE_CATEGORIES = {
     "GD": "Visual",
     "VFX": "Visual",
+    "VJ": "Visual",
     "Audio": "Audio",
     "Physical": "Physical",
     "Godot": "RealTime",
@@ -387,8 +400,6 @@ class ProjectImporter:
         "RealTime_Personal": _get_platform_path(r"D:\_work\Archive\RealTime\_Personal"),
         # Web
         "Web": _get_platform_path(r"D:\_work\Archive\Web"),
-        # VJ (only in archive)
-        "VJ": _get_platform_path(r"D:\_work\Archive\VJ"),
     }
 
     @classmethod
@@ -404,6 +415,12 @@ class ProjectImporter:
             Dictionary with import statistics
         """
         stats = {"scanned": 0, "imported": 0, "skipped": 0, "errors": 0}
+
+        # Get path config for converting active paths to work drive
+        try:
+            path_config = get_path_config()
+        except Exception:
+            path_config = None
 
         # First, collect all folders to import
         folders_to_process = []
@@ -425,9 +442,17 @@ class ProjectImporter:
 
                     parsed = cls._parse_folder_name(item.name, category)
                     if parsed:
+                        # Convert to work drive path for active projects
+                        stored_path = str(item)
+                        stored_base = str(base_dir)
+                        if path_config:
+                            stored_path = path_config.convert_to_work_drive_path(stored_path)
+                            stored_base = path_config.convert_to_work_drive_path(stored_base)
+
                         folders_to_process.append({
-                            "path": str(item),
-                            "base_dir": str(base_dir),
+                            "path": stored_path,
+                            "base_dir": stored_base,
+                            "scanned_path": str(item),  # Keep original for duplicate check
                             "parsed": parsed,
                             "status": "active"
                         })
@@ -468,8 +493,11 @@ class ProjectImporter:
             stats["scanned"] += 1
 
             try:
-                # Check if already exists
-                if db.get_project_by_path(folder_info["path"]):
+                # Check if already exists (check both stored path and original scanned path)
+                stored_path = folder_info["path"]
+                scanned_path = folder_info.get("scanned_path", stored_path)
+
+                if db.get_project_by_path(stored_path) or db.get_project_by_path(scanned_path):
                     stats["skipped"] += 1
                     continue
 
@@ -480,7 +508,7 @@ class ProjectImporter:
                     "project_name": parsed["project"],
                     "project_type": parsed["type"],
                     "date_created": parsed["date"],
-                    "path": folder_info["path"],
+                    "path": stored_path,
                     "base_directory": folder_info["base_dir"],
                     "status": folder_info.get("status", "active"),
                     "notes": "",
@@ -513,8 +541,29 @@ class ProjectImporter:
         is_personal = "_Personal" in category
         base_category = category.replace("_Personal", "")
 
-        # Visual: Try VFX pattern (CG_) first, then GD pattern
+        # Visual: Try VJ pattern first, then VFX (CG_), then GD pattern
         if base_category == "Visual":
+            # VJ pattern with client: YYYY-MM-DD_VJ_Client_Project
+            match = re.match(r'^(\d{4}-\d{2}-\d{2})_VJ_([^_]+)_(.+)$', folder_name)
+            if match:
+                return {
+                    "date": match.group(1),
+                    "client": "Personal" if is_personal else match.group(2),
+                    "project": match.group(3),
+                    "type": "VJ",
+                    "is_personal": is_personal
+                }
+            # VJ pattern without client: YYYY-MM-DD_VJ_Project
+            match = re.match(r'^(\d{4}-\d{2}-\d{2})_VJ_(.+)$', folder_name)
+            if match:
+                return {
+                    "date": match.group(1),
+                    "client": "Personal",
+                    "project": match.group(2),
+                    "type": "VJ",
+                    "is_personal": True
+                }
+            # VFX/CG pattern: YYYY-MM-DD_CG_Client_Project
             match = re.match(cls.PATTERNS["VFX"], folder_name)
             if match:
                 return {
@@ -524,6 +573,17 @@ class ProjectImporter:
                     "type": "VFX",
                     "is_personal": is_personal
                 }
+            # CG pattern without client: YYYY-MM-DD_CG_Project (for personal projects)
+            match = re.match(r'^(\d{4}-\d{2}-\d{2})_CG_(.+)$', folder_name)
+            if match:
+                return {
+                    "date": match.group(1),
+                    "client": "Personal",
+                    "project": match.group(2),
+                    "type": "VFX",
+                    "is_personal": True
+                }
+            # GD pattern: YYYY-MM-DD_Client_Project
             match = re.match(cls.PATTERNS["GD"], folder_name)
             if match:
                 return {
@@ -532,16 +592,6 @@ class ProjectImporter:
                     "project": match.group(3),
                     "type": "GD",
                     "is_personal": is_personal
-                }
-            # VJ pattern in Visual/_Personal
-            match = re.match(r'^(\d{4}-\d{2}-\d{2})_VJ_(.+)$', folder_name)
-            if match:
-                return {
-                    "date": match.group(1),
-                    "client": "Personal",
-                    "project": match.group(2),
-                    "type": "VFX",
-                    "is_personal": True
                 }
 
         # Physical: 3DPrint or Technical pattern
@@ -677,39 +727,6 @@ class ProjectImporter:
                 "is_personal": False
             }
 
-        # VJ: Various patterns (archived projects)
-        elif base_category == "VJ":
-            # VJ_ prefix pattern: YYYY-MM-DD_VJ_ProjectName
-            match = re.match(r'^(\d{4}-\d{2}-\d{2})_VJ_(.+)$', folder_name)
-            if match:
-                return {
-                    "date": match.group(1),
-                    "client": "Personal",
-                    "project": match.group(2),
-                    "type": "VFX",  # VJ projects go under Visual
-                    "is_personal": True
-                }
-            # Client_Project pattern: YYYY-MM-DD_Client_Project
-            match = re.match(r'^(\d{4}-\d{2}-\d{2})_([^_]+)_(.+)$', folder_name)
-            if match:
-                return {
-                    "date": match.group(1),
-                    "client": match.group(2),
-                    "project": match.group(3),
-                    "type": "VFX",
-                    "is_personal": False
-                }
-            # Simple: YYYY-MM-DD_ProjectName
-            match = re.match(r'^(\d{4}-\d{2}-\d{2})_(.+)$', folder_name)
-            if match:
-                return {
-                    "date": match.group(1),
-                    "client": "Personal",
-                    "project": match.group(2),
-                    "type": "VFX",
-                    "is_personal": True
-                }
-
         return None
 
 
@@ -754,6 +771,10 @@ class ProjectTrackerApp:
         self.selected_category = None  # Track selected category
         self.tree_item_to_project = {}  # Map tree items to project data
 
+        # Path tracking for clipboard copy
+        self._current_active_path = None
+        self._current_raw_path = None
+
         # Grid view selection tracking
         self.grid_selected_index = -1
         self.grid_cards = []  # List of card frames for keyboard navigation
@@ -788,15 +809,11 @@ class ProjectTrackerApp:
             self._build_header()
 
         # Main content area
-        main_frame = tk.Frame(self.parent, bg="#0d1117")
+        main_frame = tk.Frame(self.parent, bg="#0d1117", highlightthickness=0, bd=0)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
         # Left panel (project list)
         self._build_left_panel(main_frame)
-
-        # Separator
-        separator = ttk.Separator(main_frame, orient=tk.VERTICAL)
-        separator.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
 
         # Right panel (details)
         self._build_right_panel(main_frame)
@@ -820,7 +837,12 @@ class ProjectTrackerApp:
         title_label.pack(side=tk.LEFT, padx=20, pady=15)
 
     def _build_left_panel(self, parent):
-        """Build left panel with category buttons in a simple grid."""
+        """Build left panel with category buttons (standalone mode only)."""
+        # When embedded, skip entirely - categories handled by main pipeline UI
+        if self.embedded:
+            return
+
+        # Full left panel with category buttons (standalone mode)
         left_frame = tk.Frame(parent, width=200, bg="#0d1117")
         left_frame.pack(side=tk.LEFT, fill=tk.Y, pady=5, padx=(5, 0))
         left_frame.pack_propagate(False)
@@ -835,13 +857,12 @@ class ProjectTrackerApp:
         buttons_frame = tk.Frame(left_frame, bg="#0d1117")
         buttons_frame.pack(fill=tk.BOTH, expand=True, padx=10)
 
-        # Define categories
-        # Categories matching pipeline manager
+        # Define categories in unified order: Visual, RealTime, Audio, Physical, Photo, Web
         categories = [
-            ("Visual", "🎨", CATEGORY_COLORS["Visual"]),
+            ("Visual", "🎬", CATEGORY_COLORS["Visual"]),
+            ("RealTime", "⚡", CATEGORY_COLORS["RealTime"]),
             ("Audio", "🎵", CATEGORY_COLORS["Audio"]),
             ("Physical", "🔧", CATEGORY_COLORS["Physical"]),
-            ("RealTime", "⚡", CATEGORY_COLORS["RealTime"]),
             ("Photo", "📷", CATEGORY_COLORS["Photo"]),
             ("Web", "🌐", CATEGORY_COLORS["Web"]),
         ]
@@ -918,7 +939,7 @@ class ProjectTrackerApp:
 
     def _build_right_panel(self, parent):
         """Build right panel with project list and details."""
-        right_frame = tk.Frame(parent, bg="#0d1117")
+        right_frame = tk.Frame(parent, bg="#0d1117", highlightthickness=0, bd=0)
         right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(0, 5), pady=5)
 
         # Top: Search and filter
@@ -933,20 +954,52 @@ class ProjectTrackerApp:
                                insertbackground="white", font=("Arial", 10), width=30)
         search_entry.grid(row=0, column=1, sticky=tk.W, padx=(5, 15), pady=5)
 
-        # Filter
-        filter_label = tk.Label(controls_frame, text="Filter:", bg="#0d1117", fg="white", font=("Arial", 9))
-        filter_label.grid(row=0, column=2, sticky=tk.W, pady=5)
+        # Filter buttons frame
+        filter_frame = tk.Frame(controls_frame, bg="#0d1117")
+        filter_frame.grid(row=0, column=2, columnspan=2, sticky=tk.W, padx=(15, 0), pady=5)
 
-        filter_combo = ttk.Combobox(
-            controls_frame,
-            textvariable=self.filter_status,
-            values=["active", "archived", "all"],
-            state="readonly",
-            width=12,
-            font=("Arial", 9)
-        )
-        filter_combo.grid(row=0, column=3, sticky=tk.W, padx=5, pady=5)
-        filter_combo.bind('<<ComboboxSelected>>', self._on_filter_changed)
+        # Store filter buttons for styling updates
+        self.filter_buttons = {}
+
+        def create_filter_button(parent, text, value):
+            """Create a filter toggle button."""
+            btn = tk.Label(
+                parent,
+                text=text,
+                font=("Arial", 9),
+                fg="white",
+                bg="#1c2128",
+                padx=12,
+                pady=4,
+                cursor="hand2"
+            )
+            btn.pack(side=tk.LEFT, padx=(0, 2))
+
+            def on_click(e):
+                self.filter_status.set(value)
+                self._on_filter_changed()
+
+            def on_enter(e):
+                if self.filter_status.get() != value:
+                    btn.configure(bg="#2d333b")
+
+            def on_leave(e):
+                if self.filter_status.get() != value:
+                    btn.configure(bg="#1c2128")
+
+            btn.bind("<Button-1>", on_click)
+            btn.bind("<Enter>", on_enter)
+            btn.bind("<Leave>", on_leave)
+
+            self.filter_buttons[value] = btn
+            return btn
+
+        create_filter_button(filter_frame, "Active", "active")
+        create_filter_button(filter_frame, "Archive", "archived")
+        create_filter_button(filter_frame, "All", "all")
+
+        # Update initial button styling
+        self._update_filter_button_styles()
 
         # Project count
         self.count_label = tk.Label(controls_frame, text="Projects (0)", bg="#0d1117", fg="#8b949e",
@@ -1009,14 +1062,14 @@ class ProjectTrackerApp:
         # Grid slider hidden by default (list view is default)
 
         # Container for both views
-        self.view_container = tk.Frame(right_frame, bg="#0d1117")
+        self.view_container = tk.Frame(right_frame, bg="#0d1117", highlightthickness=0, bd=0)
         self.view_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
         # === LIST VIEW ===
-        self.list_frame = tk.Frame(self.view_container, bg="#0d1117")
+        self.list_frame = tk.Frame(self.view_container, bg="#0d1117", highlightthickness=0, bd=0)
 
         # Wrapper frame to hide any white edges from treeview
-        tree_wrapper = tk.Frame(self.list_frame, bg="#0d1117")
+        tree_wrapper = tk.Frame(self.list_frame, bg="#0d1117", highlightthickness=0, bd=0)
         tree_wrapper.pack(fill=tk.BOTH, expand=True)
 
         scrollbar = ttk.Scrollbar(tree_wrapper)
@@ -1029,6 +1082,13 @@ class ProjectTrackerApp:
             self.tree_style.theme_use('clam')
         except:
             pass
+
+        # Style scrollbars to be dark
+        self.tree_style.configure("Vertical.TScrollbar",
+                       background="#1c2128",
+                       troughcolor="#0d1117",
+                       bordercolor="#0d1117",
+                       arrowcolor="#8b949e")
 
         # Base row height (scaled later)
         self.base_row_height = 32
@@ -1077,12 +1137,12 @@ class ProjectTrackerApp:
         self.project_tree.bind('<Double-1>', self._on_enter_key)
 
         # === GRID VIEW ===
-        self.grid_frame = tk.Frame(self.view_container, bg="#0d1117")
+        self.grid_frame = tk.Frame(self.view_container, bg="#0d1117", highlightthickness=0, bd=0)
 
         # Canvas with scrollbar for grid
-        self.grid_canvas = tk.Canvas(self.grid_frame, bg="#0d1117", highlightthickness=0, takefocus=True)
+        self.grid_canvas = tk.Canvas(self.grid_frame, bg="#0d1117", highlightthickness=0, bd=0, takefocus=True)
         grid_scrollbar = ttk.Scrollbar(self.grid_frame, orient=tk.VERTICAL, command=self.grid_canvas.yview)
-        self.grid_inner = tk.Frame(self.grid_canvas, bg="#0d1117")
+        self.grid_inner = tk.Frame(self.grid_canvas, bg="#0d1117", highlightthickness=0, bd=0)
 
         self.grid_canvas.configure(yscrollcommand=grid_scrollbar.set)
         grid_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -1123,7 +1183,6 @@ class ProjectTrackerApp:
             ("Project", "project_name"),
             ("Type", "project_type"),
             ("Date", "date_created"),
-            ("Path", "path")
         ]
 
         details_grid = tk.Frame(details_frame, bg="#1c2128")
@@ -1138,6 +1197,42 @@ class ProjectTrackerApp:
             value_label.grid(row=i, column=1, sticky=tk.W, pady=2, padx=(10, 0))
 
             self.detail_labels[key] = value_label
+
+        # Path section with clickable copy-to-clipboard
+        path_section = tk.Frame(details_frame, bg="#1c2128")
+        path_section.pack(fill=tk.X, padx=10, pady=(5, 0))
+
+        # Active Path (only shown for active projects)
+        self.active_path_frame = tk.Frame(path_section, bg="#1c2128")
+        self.active_path_frame.pack(fill=tk.X, pady=2)
+
+        tk.Label(self.active_path_frame, text="Active Path:", bg="#1c2128", fg="#8b949e",
+                font=("Arial", 8), width=10, anchor="w").pack(side=tk.LEFT)
+
+        self.active_path_label = tk.Label(
+            self.active_path_frame, text="-", bg="#1c2128", fg="#58a6ff",
+            font=("Arial", 9), cursor="hand2", anchor="w"
+        )
+        self.active_path_label.pack(side=tk.LEFT, padx=(10, 0), fill=tk.X, expand=True)
+        self.active_path_label.bind("<Button-1>", lambda e: self._copy_path_to_clipboard("active"))
+        self.active_path_label.bind("<Enter>", lambda e: self.active_path_label.configure(fg="#79c0ff"))
+        self.active_path_label.bind("<Leave>", lambda e: self.active_path_label.configure(fg="#58a6ff"))
+
+        # RAW Path (always shown)
+        raw_path_frame = tk.Frame(path_section, bg="#1c2128")
+        raw_path_frame.pack(fill=tk.X, pady=2)
+
+        tk.Label(raw_path_frame, text="RAW Path:", bg="#1c2128", fg="#8b949e",
+                font=("Arial", 8), width=10, anchor="w").pack(side=tk.LEFT)
+
+        self.raw_path_label = tk.Label(
+            raw_path_frame, text="-", bg="#1c2128", fg="#58a6ff",
+            font=("Arial", 9), cursor="hand2", anchor="w"
+        )
+        self.raw_path_label.pack(side=tk.LEFT, padx=(10, 0), fill=tk.X, expand=True)
+        self.raw_path_label.bind("<Button-1>", lambda e: self._copy_path_to_clipboard("raw"))
+        self.raw_path_label.bind("<Enter>", lambda e: self.raw_path_label.configure(fg="#79c0ff"))
+        self.raw_path_label.bind("<Leave>", lambda e: self.raw_path_label.configure(fg="#58a6ff"))
 
         # Action buttons
         button_frame = tk.Frame(details_frame, bg="#1c2128")
@@ -1236,6 +1331,9 @@ class ProjectTrackerApp:
             self.grid_frame.pack(fill=tk.BOTH, expand=True)
             self.grid_scale_frame.pack(side=tk.RIGHT, padx=(10, 2))
 
+        # Update filter button styles based on saved filter
+        self._update_filter_button_styles()
+
         logger.debug(f"Applied saved settings: view={saved_view_mode}, list_scale={saved_list_scale}, grid_scale={saved_grid_scale}")
 
     def _update_status(self, message: str):
@@ -1301,7 +1399,7 @@ class ProjectTrackerApp:
 
         # Group projects by category
         categories = {
-            "Visual": {"icon": "🎨", "projects": [], "color": CATEGORY_COLORS["Visual"]},
+            "Visual": {"icon": "🎬", "projects": [], "color": CATEGORY_COLORS["Visual"]},
             "Audio": {"icon": "🎵", "projects": [], "color": CATEGORY_COLORS["Audio"]},
             "Physical": {"icon": "🔧", "projects": [], "color": CATEGORY_COLORS["Physical"]},
             "RealTime": {"icon": "⚡", "projects": [], "color": CATEGORY_COLORS["RealTime"]},
@@ -1314,7 +1412,7 @@ class ProjectTrackerApp:
             project_type = project.get("project_type", "")
 
             # Map project types to categories
-            if project_type in ["GD", "VFX"]:
+            if project_type in ["GD", "VFX", "VJ"]:
                 categories["Visual"]["projects"].append(project)
             elif project_type == "Audio":
                 categories["Audio"]["projects"].append(project)
@@ -1692,7 +1790,22 @@ class ProjectTrackerApp:
         """Handle filter status change."""
         # Save filter preference
         self.settings.set("filter_status", self.filter_status.get())
+        # Update button styles
+        self._update_filter_button_styles()
         self.refresh_project_list()
+
+    def _update_filter_button_styles(self):
+        """Update filter button visual states based on current selection."""
+        if not hasattr(self, 'filter_buttons'):
+            return
+        current = self.filter_status.get()
+        for value, btn in self.filter_buttons.items():
+            if value == current:
+                # Selected state - highlighted
+                btn.configure(bg="#58a6ff", fg="white")
+            else:
+                # Unselected state
+                btn.configure(bg="#1c2128", fg="white")
 
     def _on_project_selected(self, event):
         """Handle project selection."""
@@ -1718,6 +1831,13 @@ class ProjectTrackerApp:
         for label in self.detail_labels.values():
             label.config(text="-")
 
+        # Clear path labels and tracking variables
+        self.active_path_label.config(text="-")
+        self.raw_path_label.config(text="-")
+        self._current_active_path = None
+        self._current_raw_path = None
+        self.active_path_frame.pack(fill=tk.X, pady=2)  # Show by default
+
         self.open_btn.config(state=tk.DISABLED)
         self.archive_btn.config(state=tk.DISABLED)
         self.unarchive_btn.config(state=tk.DISABLED)
@@ -1735,11 +1855,47 @@ class ProjectTrackerApp:
 
             label.config(text=str(value))
 
+        # Get status and stored path
+        status = project.get("status", "active")
+        stored_path = project.get("path", "")
+
+        # Store paths for clipboard copy
+        self._current_raw_path = stored_path
+        self._current_active_path = None
+
+        # Handle paths based on project status
+        if status == "active":
+            # Show Active Path frame
+            self.active_path_frame.pack(fill=tk.X, pady=2)
+
+            # Get the active path (work drive version)
+            try:
+                path_config = get_path_config()
+                active_path = path_config.convert_to_work_drive_path(stored_path)
+                self._current_active_path = active_path
+                self.active_path_label.config(text=active_path)
+            except Exception:
+                self.active_path_label.config(text=stored_path)
+                self._current_active_path = stored_path
+
+            # RAW path is the stored D:\ path or derive it from active path
+            # If stored path is already the work drive path, convert back to D:\ path
+            if stored_path.upper().startswith("I:"):
+                raw_path = stored_path.replace("I:", "D:\\_work\\Active", 1).replace("I:\\", "D:\\_work\\Active\\")
+            else:
+                raw_path = stored_path
+            self._current_raw_path = raw_path
+            self.raw_path_label.config(text=raw_path)
+        else:
+            # Archived: Hide Active Path frame, only show RAW Path
+            self.active_path_frame.pack_forget()
+            self.raw_path_label.config(text=stored_path)
+            self._current_raw_path = stored_path
+
         # Enable buttons
         self.open_btn.config(state=tk.NORMAL)
 
         # Enable archive/unarchive based on status
-        status = project.get("status", "")
         if status == "active":
             self.archive_btn.config(state=tk.NORMAL)
             self.unarchive_btn.config(state=tk.DISABLED)
@@ -1747,12 +1903,49 @@ class ProjectTrackerApp:
             self.archive_btn.config(state=tk.DISABLED)
             self.unarchive_btn.config(state=tk.NORMAL)
 
+    def _copy_path_to_clipboard(self, path_type: str):
+        """Copy the specified path to clipboard."""
+        if path_type == "active" and self._current_active_path:
+            path = self._current_active_path
+        elif path_type == "raw" and self._current_raw_path:
+            path = self._current_raw_path
+        else:
+            return
+
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(path)
+            self._update_status(f"Copied: {path}")
+            logger.debug(f"Copied path to clipboard: {path}")
+        except Exception as e:
+            logger.error(f"Failed to copy to clipboard: {e}")
+
     def _open_folder(self):
         """Open project folder in file explorer."""
         if not self.selected_project:
             return
 
-        path = Path(self.selected_project["path"])
+        # Get path from project
+        stored_path = self.selected_project["path"]
+        status = self.selected_project.get("status", "active")
+
+        # For active projects, convert to configured work drive path
+        if status == "active":
+            try:
+                path_config = get_path_config()
+                open_path = path_config.convert_to_work_drive_path(stored_path)
+                path = Path(open_path)
+
+                # If converted path doesn't exist, fall back to stored path
+                if not path.exists():
+                    logger.debug(f"Work drive path not found, using stored path: {stored_path}")
+                    path = Path(stored_path)
+            except Exception as e:
+                logger.warning(f"Path conversion failed, using stored path: {e}")
+                path = Path(stored_path)
+        else:
+            # Archived projects use stored path directly
+            path = Path(stored_path)
 
         if not path.exists():
             messagebox.showerror(

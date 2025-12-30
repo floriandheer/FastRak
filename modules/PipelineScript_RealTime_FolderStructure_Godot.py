@@ -1,8 +1,16 @@
 import os
+import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from datetime import datetime
 import shutil
+from pathlib import Path
+
+# Add modules to path
+MODULES_DIR = Path(__file__).parent
+sys.path.insert(0, str(MODULES_DIR))
+
+from shared_path_config import get_path_config
 
 class FolderStructureCreator:
     def __init__(self, root):
@@ -10,6 +18,9 @@ class FolderStructureCreator:
         self.root.title("Godot Folder Structure")
         self.root.geometry("750x700")
         self.root.minsize(700, 550)
+
+        # Initialize path config
+        self.path_config = get_path_config()
 
         # Configure main window
         self.root.columnconfigure(0, weight=1)
@@ -37,9 +48,10 @@ class FolderStructureCreator:
         form_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         form_frame.columnconfigure(1, weight=1)
 
-        # Base directory
+        # Base directory (from path config)
         ttk.Label(form_frame, text="Base Directory:").grid(row=0, column=0, sticky="w", padx=10, pady=10)
-        self.base_dir_var = tk.StringVar(value='I:/RealTime')
+        default_base = self.path_config.get_work_path("RealTime").replace('\\', '/')
+        self.base_dir_var = tk.StringVar(value=default_base)
         base_dir_entry = ttk.Entry(form_frame, textvariable=self.base_dir_var, width=40)
         base_dir_entry.grid(row=0, column=1, sticky="ew", padx=5, pady=10)
         ttk.Button(form_frame, text="Browse", command=self.browse_base_dir).grid(row=0, column=2, padx=5, pady=10)
