@@ -59,19 +59,6 @@ def _get_platform_path(windows_path: str) -> Path:
     return Path(windows_path)
 
 
-def _get_archive_base() -> Path:
-    """Get the archive base path from PathConfig."""
-    try:
-        path_config = get_path_config()
-        return _get_platform_path(path_config.get_archive_base())
-    except Exception:
-        # Fallback to default if PathConfig fails
-        return _get_platform_path(r"D:\_work\Archive")
-
-
-# Archive base directory (loaded from PathConfig)
-ARCHIVE_BASE = _get_archive_base()
-
 # Category colors matching pipeline manager
 CATEGORY_COLORS = {
     "Audio": "#9333ea",      # Purple
@@ -177,6 +164,32 @@ class ArchiveManager:
     """Handles archiving and unarchiving of project folders."""
 
     @staticmethod
+    def _get_archive_dir(project_type: str, is_personal: bool) -> Path:
+        """Get the archive directory for a project type."""
+        path_config = get_path_config()
+        archive_category = ARCHIVE_CATEGORIES.get(project_type, "Other")
+        archive_path_str = path_config.get_archive_path(archive_category)
+        archive_dir = _get_platform_path(archive_path_str)
+
+        if is_personal:
+            archive_dir = archive_dir / "_Personal"
+
+        return archive_dir
+
+    @staticmethod
+    def _get_active_dir(project_type: str, is_personal: bool) -> Path:
+        """Get the active directory for a project type."""
+        path_config = get_path_config()
+        archive_category = ARCHIVE_CATEGORIES.get(project_type, "Other")
+        work_path_str = path_config.get_work_path(archive_category)
+        active_dir = _get_platform_path(work_path_str)
+
+        if is_personal:
+            active_dir = active_dir / "_Personal"
+
+        return active_dir
+
+    @staticmethod
     def archive_project(project: Dict, db: ProjectDatabase) -> bool:
         """
         Archive a project by moving it to the archive directory.
@@ -200,17 +213,13 @@ class ArchiveManager:
 
             # Determine archive category
             project_type = project.get("project_type", "")
-            archive_category = ARCHIVE_CATEGORIES.get(project_type, "Other")
 
             # Check if this is a personal project
             metadata = project.get("metadata", {})
             is_personal = metadata.get("is_personal", False)
 
-            # Build archive path (add _Personal subfolder if needed)
-            if is_personal:
-                archive_dir = ARCHIVE_BASE / archive_category / "_Personal"
-            else:
-                archive_dir = ARCHIVE_BASE / archive_category
+            # Build archive path using PathConfig
+            archive_dir = ArchiveManager._get_archive_dir(project_type, is_personal)
             archive_dir.mkdir(parents=True, exist_ok=True)
 
             archive_path = archive_dir / source_path.name
@@ -252,7 +261,7 @@ class ArchiveManager:
 
             # Rollback: try to move folder back if it was moved
             try:
-                if archive_path.exists() and not source_path.exists():
+                if 'archive_path' in locals() and archive_path.exists() and not source_path.exists():
                     shutil.move(str(archive_path), str(source_path))
                     logger.info("Rolled back archive operation")
             except Exception as rollback_error:
@@ -263,7 +272,9 @@ class ArchiveManager:
     @staticmethod
     def unarchive_project(project: Dict, db: ProjectDatabase) -> bool:
         """
-        Unarchive a project by moving it back to the original location.
+        Unarchive a project by moving it back to the active directory.
+
+        The active path is computed from project type and personal status.
 
         Args:
             project: Project dictionary
@@ -282,22 +293,20 @@ class ArchiveManager:
                 )
                 return False
 
-            # Get original path
-            original_path = Path(project.get("archived_from", ""))
+            # Compute the active path based on project type
+            project_type = project.get("project_type", "")
+            metadata = project.get("metadata", {})
+            is_personal = metadata.get("is_personal", False)
 
-            if not original_path:
-                messagebox.showerror(
-                    "Error",
-                    "Original path not found in database.\n"
-                    "Cannot determine where to restore the project."
-                )
-                return False
+            # Get the active directory for this project type
+            active_dir = ArchiveManager._get_active_dir(project_type, is_personal)
+            active_path = active_dir / source_path.name
 
-            # Check if original path is available
-            if original_path.exists():
+            # Check if active path is already occupied
+            if active_path.exists():
                 response = messagebox.askyesnocancel(
                     "Path Conflict",
-                    f"Original location is occupied:\n{original_path}\n\n"
+                    f"Active location is occupied:\n{active_path}\n\n"
                     "Yes: Rename and restore\n"
                     "No: Cancel"
                 )
@@ -307,29 +316,29 @@ class ArchiveManager:
 
                 # Find available name with counter
                 counter = 1
-                base_name = original_path.name
-                parent = original_path.parent
+                base_name = active_path.name
+                parent = active_path.parent
 
-                while original_path.exists():
+                while active_path.exists():
                     new_name = f"{base_name}_restored_{counter}"
-                    original_path = parent / new_name
+                    active_path = parent / new_name
                     counter += 1
 
-                logger.info(f"Using alternate path: {original_path}")
+                logger.info(f"Using alternate path: {active_path}")
 
             # Ensure parent directory exists
-            original_path.parent.mkdir(parents=True, exist_ok=True)
+            active_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # Move folder back
-            logger.info(f"Unarchiving: {source_path} -> {original_path}")
-            shutil.move(str(source_path), str(original_path))
+            # Move folder to active
+            logger.info(f"Unarchiving: {source_path} -> {active_path}")
+            shutil.move(str(source_path), str(active_path))
 
             # Update database
-            db.unarchive_project(project["id"], str(original_path))
+            db.unarchive_project(project["id"], str(active_path))
 
             messagebox.showinfo(
                 "Success",
-                f"Project restored successfully to:\n{original_path}"
+                f"Project restored successfully to:\n{active_path}"
             )
 
             logger.info(f"Successfully unarchived project: {project['id']}")
@@ -344,8 +353,8 @@ class ArchiveManager:
 
             # Rollback: try to move folder back if it was moved
             try:
-                if original_path.exists() and not source_path.exists():
-                    shutil.move(str(original_path), str(source_path))
+                if 'active_path' in locals() and active_path.exists() and not source_path.exists():
+                    shutil.move(str(active_path), str(source_path))
                     logger.info("Rolled back unarchive operation")
             except Exception as rollback_error:
                 logger.error(f"Rollback failed: {rollback_error}")
