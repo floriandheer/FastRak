@@ -66,7 +66,93 @@ CATEGORY_COLORS = {
 }
 
 # Pipeline categories organized by main sections
+# Order: Visual, RealTime, Audio, Physical, Photo, Web
 CREATIVE_CATEGORIES = {
+    "VISUAL": {
+        "name": "Visual",
+        "description": "Visual effects, graphics and animation tools",
+        "icon": "🎬",
+        "folder_path": "I:\\Visual",
+        "scripts": {
+            "add_txt_to_metadata": {
+                "name": "Add Text to Image Metadata",
+                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Visual_AddTxtToMetadata.py"),
+                "description": "Add text from matching .txt files to JPEG image metadata",
+                "icon": "🏷"
+            }
+        },
+        "subcategories": {
+            "GD": {
+                "name": "Graphic Design",
+                "icon": "🖼️",
+                "scripts": {
+                    "folder_structure": {
+                        "name": "New Graphic Design Project",
+                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Visual_FolderStructure_GD.py"),
+                        "description": "Create folder structure for graphic design projects",
+                        "icon": "📁"
+                    }
+                }
+            },
+            "CG": {
+                "name": "Computer Graphics",
+                "icon": "🎬",
+                "scripts": {
+                    "folder_structure": {
+                        "name": "New VFX Project",
+                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Visual_FolderStructure_VFX.py"),
+                        "description": "Create folder structure for VFX/3D projects",
+                        "icon": "📁"
+                    }
+                }
+            },
+            "VJ": {
+                "name": "VJ",
+                "icon": "💫",
+                "scripts": {
+                    "folder_structure": {
+                        "name": "New VJ Project",
+                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Visual_FolderStructure_VJ.py"),
+                        "description": "Create folder structure for VJ projects",
+                        "icon": "📁"
+                    }
+                }
+            }
+        }
+    },
+    "REALTIME": {
+        "name": "RealTime",
+        "description": "Real-time processing and performance tools",
+        "icon": "⚡",
+        "folder_path": "I:\\RealTime",
+        "scripts": {},
+        "subcategories": {
+            "GODOT": {
+                "name": "Godot Engine",
+                "icon": "🔵",
+                "scripts": {
+                    "folder_structure": {
+                        "name": "New Godot Project",
+                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_RealTime_FolderStructure_Godot.py"),
+                        "description": "Create folder structure for Godot game development projects",
+                        "icon": "📁"
+                    }
+                }
+            },
+            "TD": {
+                "name": "TouchDesigner",
+                "icon": "🟠",
+                "scripts": {
+                    "folder_structure": {
+                        "name": "New TouchDesigner Project",
+                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_RealTime_FolderStructure_TouchDesigner.py"),
+                        "description": "Create folder structure for TouchDesigner real-time projects",
+                        "icon": "📁"
+                    }
+                }
+            }
+        }
+    },
     "AUDIO": {
         "name": "Audio",
         "description": "Audio processing tools for DJs and producers",
@@ -107,93 +193,6 @@ CREATIVE_CATEGORIES = {
             }
         }
     },
-    "PHOTO": {
-        "name": "Photo",
-        "description": "Photography workflow automation",
-        "icon": "📷",
-        "folder_path": "I:\\Photo",
-        "scripts": {
-            "folder_structure": {
-                "name": "New Photo Project",
-                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Photo_FolderStructure.py"),
-                "description": "Create folder structure for photography projects",
-                "icon": "📁"
-            },
-            "new_collection": {
-                "name": "New Photo Collection",
-                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Photo_NewCollection.py"),
-                "description": "Create a photo collection folder in E:/_photo with date, location, and activity",
-                "icon": "📸"
-            }
-        },
-        "subcategories": {}
-    },
-    "VISUAL": {
-        "name": "Visual",
-        "description": "Visual effects and animation tools",
-        "icon": "🎨",
-        "folder_path": "I:\\Visual",
-        "scripts": {
-            "add_txt_to_metadata": {
-                "name": "Add Text to Image Metadata",
-                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Visual_AddTxtToMetadata.py"),
-                "description": "Add text from matching .txt files to JPEG image metadata",
-                "icon": "🏷"
-            }
-        },
-        "subcategories": {
-            "CG": {
-                "name": "Computer Graphics",
-                "icon": "🎬",
-                "scripts": {
-                    "folder_structure": {
-                        "name": "New VFX Project",
-                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Visual_FolderStructure_VFX.py"),
-                        "description": "Create folder structure for VFX/3D projects",
-                        "icon": "📁"
-                    }
-                }
-            },
-            "GD": {
-                "name": "Graphic Design",
-                "icon": "🖼️",
-                "scripts": {
-                    "folder_structure": {
-                        "name": "New Graphic Design Project",
-                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Visual_FolderStructure_GD.py"),
-                        "description": "Create folder structure for graphic design projects",
-                        "icon": "📁"
-                    }
-                }
-            },
-            "VJ": {
-                "name": "VJ Tools",
-                "icon": "💫",
-                "scripts": {}
-            }
-        }
-    },
-    "WEB": {
-        "name": "Web",
-        "description": "Web development and publishing tools",
-        "icon": "🌐",
-        "folder_path": "I:\\Web",
-        "scripts": {
-            "backup_laragon": {
-                "name": "Backup Laragon",
-                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Web_BackupLaragon.py"),
-                "description": "Create a timestamped backup of Laragon installation",
-                "icon": "💾"
-            },
-            "folder_structure": {
-                "name": "New Webdev Project",
-                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Web_FolderStructure.py"),
-                "description": "Create folder structure for web projects",
-                "icon": "📁"
-            }
-        },
-        "subcategories": {}
-    },
     "PHYSICAL": {
         "name": "Physical",
         "description": "Physical workflow automation",
@@ -221,38 +220,47 @@ CREATIVE_CATEGORIES = {
             }
         }
     },
-    "REALTIME": {
-        "name": "Real Time",
-        "description": "Real-time processing and performance tools",
-        "icon": "⚡",
-        "folder_path": "I:\\RealTime",
-        "scripts": {},
-        "subcategories": {
-            "TD": {
-                "name": "TouchDesigner",
-                "icon": "🟠",
-                "scripts": {
-                    "folder_structure": {
-                        "name": "New TouchDesigner Project",
-                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_RealTime_FolderStructure_TouchDesigner.py"),
-                        "description": "Create folder structure for TouchDesigner real-time projects",
-                        "icon": "📁"
-                    }
-                }
+    "PHOTO": {
+        "name": "Photo",
+        "description": "Photography workflow automation",
+        "icon": "📷",
+        "folder_path": "I:\\Photo",
+        "scripts": {
+            "folder_structure": {
+                "name": "New Photo Project",
+                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Photo_FolderStructure.py"),
+                "description": "Create folder structure for photography projects",
+                "icon": "📁"
             },
-            "GODOT": {
-                "name": "Godot Engine",
-                "icon": "🔵",
-                "scripts": {
-                    "folder_structure": {
-                        "name": "New Godot Project",
-                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_RealTime_FolderStructure_Godot.py"),
-                        "description": "Create folder structure for Godot game development projects",
-                        "icon": "📁"
-                    }
-                }
+            "new_collection": {
+                "name": "New Photo Collection",
+                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Photo_NewCollection.py"),
+                "description": "Create a photo collection folder in E:/_photo with date, location, and activity",
+                "icon": "📸"
             }
-        }
+        },
+        "subcategories": {}
+    },
+    "WEB": {
+        "name": "Web",
+        "description": "Web development and publishing tools",
+        "icon": "🌐",
+        "folder_path": "I:\\Web",
+        "scripts": {
+            "backup_laragon": {
+                "name": "Backup Laragon",
+                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Web_BackupLaragon.py"),
+                "description": "Create a timestamped backup of Laragon installation",
+                "icon": "💾"
+            },
+            "folder_structure": {
+                "name": "New Webdev Project",
+                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Web_FolderStructure.py"),
+                "description": "Create folder structure for web projects",
+                "icon": "📁"
+            }
+        },
+        "subcategories": {}
     }
 }
 
@@ -308,6 +316,7 @@ DEFAULT_CONFIG_PATH = os.path.join(os.path.expanduser("~"), "AppData", "Local", 
 # Import shared logging utility
 sys.path.insert(0, SCRIPTS_DIR)
 from shared_logging import get_logger, setup_logging
+from shared_path_config import PathConfig, get_path_config
 
 # Get logger reference (configured in main())
 logger = get_logger("pipeline")
@@ -377,6 +386,465 @@ class ConfigManager:
         script_id = f"{category_key}_{script_key}"
         self.config.setdefault("scripts", {})[script_id] = new_config
         return self._save_config()
+
+
+class SettingsDialog:
+    """Settings dialog for configuring pipeline paths and preferences."""
+
+    def __init__(self, parent, path_config: PathConfig):
+        """
+        Initialize the settings dialog.
+
+        Args:
+            parent: Parent window
+            path_config: PathConfig instance
+        """
+        self.parent = parent
+        self.path_config = path_config
+        self.result = False  # True if saved
+
+        # Create dialog window
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title("Pipeline Settings")
+        self.dialog.geometry("700x550")
+        self.dialog.minsize(600, 450)
+        self.dialog.configure(bg=COLORS["bg_primary"])
+
+        # Make dialog modal
+        self.dialog.transient(parent)
+        self.dialog.grab_set()
+
+        # Center on parent
+        self.dialog.update_idletasks()
+        x = parent.winfo_x() + (parent.winfo_width() - self.dialog.winfo_width()) // 2
+        y = parent.winfo_y() + (parent.winfo_height() - self.dialog.winfo_height()) // 2
+        self.dialog.geometry(f"+{x}+{y}")
+
+        # Store original values for cancel
+        self._original_work_drive = path_config.get_work_drive()
+        self._original_archive_base = path_config.get_archive_base()
+
+        # Build UI
+        self._build_ui()
+
+        # Validate on open
+        self._validate_paths()
+
+    def _build_ui(self):
+        """Build the settings dialog UI."""
+        # Header
+        header_frame = tk.Frame(self.dialog, bg=COLORS["bg_secondary"], height=60)
+        header_frame.pack(fill=tk.X)
+        header_frame.pack_propagate(False)
+
+        header_label = tk.Label(
+            header_frame,
+            text="Pipeline Settings",
+            font=font.Font(family="Segoe UI", size=16, weight="bold"),
+            fg=COLORS["text_primary"],
+            bg=COLORS["bg_secondary"]
+        )
+        header_label.pack(side=tk.LEFT, padx=20, pady=15)
+
+        # Main content area with scrollbar
+        content_frame = tk.Frame(self.dialog, bg=COLORS["bg_primary"])
+        content_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+
+        # === DRIVE CONFIGURATION SECTION ===
+        drive_section = tk.LabelFrame(
+            content_frame,
+            text=" Drive Configuration ",
+            font=font.Font(family="Segoe UI", size=11, weight="bold"),
+            fg=COLORS["text_primary"],
+            bg=COLORS["bg_card"],
+            padx=15,
+            pady=10
+        )
+        drive_section.pack(fill=tk.X, pady=(0, 15))
+
+        # Active Drive row
+        work_frame = tk.Frame(drive_section, bg=COLORS["bg_card"])
+        work_frame.pack(fill=tk.X, pady=5)
+
+        tk.Label(
+            work_frame,
+            text="Active Drive:",
+            font=font.Font(family="Segoe UI", size=10),
+            fg=COLORS["text_primary"],
+            bg=COLORS["bg_card"],
+            width=15,
+            anchor="w"
+        ).pack(side=tk.LEFT)
+
+        self.work_drive_var = tk.StringVar(value=self.path_config.get_work_drive())
+        work_entry = tk.Entry(
+            work_frame,
+            textvariable=self.work_drive_var,
+            font=font.Font(family="Segoe UI", size=10),
+            bg=COLORS["bg_secondary"],
+            fg=COLORS["text_primary"],
+            insertbackground=COLORS["text_primary"],
+            width=30
+        )
+        work_entry.pack(side=tk.LEFT, padx=(0, 10))
+        work_entry.bind('<KeyRelease>', lambda e: self._validate_paths())
+
+        self.work_status_label = tk.Label(
+            work_frame,
+            text="",
+            font=font.Font(family="Segoe UI", size=9),
+            bg=COLORS["bg_card"],
+            width=25,
+            anchor="w"
+        )
+        self.work_status_label.pack(side=tk.LEFT)
+
+        # Help text for work drive
+        tk.Label(
+            drive_section,
+            text="Mapped via VisualSubst to your active projects directory",
+            font=font.Font(family="Segoe UI", size=9, slant="italic"),
+            fg=COLORS["text_secondary"],
+            bg=COLORS["bg_card"]
+        ).pack(anchor="w", padx=(15 * 10, 0), pady=(0, 5))
+
+        # Archive Base row
+        archive_frame = tk.Frame(drive_section, bg=COLORS["bg_card"])
+        archive_frame.pack(fill=tk.X, pady=5)
+
+        tk.Label(
+            archive_frame,
+            text="Archive Base:",
+            font=font.Font(family="Segoe UI", size=10),
+            fg=COLORS["text_primary"],
+            bg=COLORS["bg_card"],
+            width=15,
+            anchor="w"
+        ).pack(side=tk.LEFT)
+
+        self.archive_base_var = tk.StringVar(value=self.path_config.get_archive_base())
+        archive_entry = tk.Entry(
+            archive_frame,
+            textvariable=self.archive_base_var,
+            font=font.Font(family="Segoe UI", size=10),
+            bg=COLORS["bg_secondary"],
+            fg=COLORS["text_primary"],
+            insertbackground=COLORS["text_primary"],
+            width=30
+        )
+        archive_entry.pack(side=tk.LEFT, padx=(0, 10))
+        archive_entry.bind('<KeyRelease>', lambda e: self._validate_paths())
+
+        browse_btn = tk.Button(
+            archive_frame,
+            text="Browse",
+            command=self._browse_archive,
+            bg=COLORS["bg_secondary"],
+            fg=COLORS["text_primary"],
+            font=font.Font(family="Segoe UI", size=9),
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=10
+        )
+        browse_btn.pack(side=tk.LEFT, padx=(0, 10))
+
+        self.archive_status_label = tk.Label(
+            archive_frame,
+            text="",
+            font=font.Font(family="Segoe UI", size=9),
+            bg=COLORS["bg_card"],
+            width=20,
+            anchor="w"
+        )
+        self.archive_status_label.pack(side=tk.LEFT)
+
+        # === CATEGORY PATHS SECTION ===
+        paths_section = tk.LabelFrame(
+            content_frame,
+            text=" Category Paths ",
+            font=font.Font(family="Segoe UI", size=11, weight="bold"),
+            fg=COLORS["text_primary"],
+            bg=COLORS["bg_card"],
+            padx=15,
+            pady=10
+        )
+        paths_section.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
+
+        # Header row
+        header_row = tk.Frame(paths_section, bg=COLORS["bg_card"])
+        header_row.pack(fill=tk.X, pady=(0, 5))
+
+        tk.Label(
+            header_row,
+            text="Category",
+            font=font.Font(family="Segoe UI", size=9, weight="bold"),
+            fg=COLORS["text_secondary"],
+            bg=COLORS["bg_card"],
+            width=12,
+            anchor="w"
+        ).pack(side=tk.LEFT)
+
+        tk.Label(
+            header_row,
+            text="Active Path",
+            font=font.Font(family="Segoe UI", size=9, weight="bold"),
+            fg=COLORS["text_secondary"],
+            bg=COLORS["bg_card"],
+            width=25,
+            anchor="w"
+        ).pack(side=tk.LEFT, padx=(10, 0))
+
+        tk.Label(
+            header_row,
+            text="Archive Path",
+            font=font.Font(family="Segoe UI", size=9, weight="bold"),
+            fg=COLORS["text_secondary"],
+            bg=COLORS["bg_card"],
+            width=30,
+            anchor="w"
+        ).pack(side=tk.LEFT, padx=(10, 0))
+
+        # Separator
+        sep = tk.Frame(paths_section, bg=COLORS["border"], height=1)
+        sep.pack(fill=tk.X, pady=5)
+
+        # Category rows
+        self.category_labels = {}
+        for category in self.path_config.get_ordered_categories():
+            row = tk.Frame(paths_section, bg=COLORS["bg_card"])
+            row.pack(fill=tk.X, pady=2)
+
+            # Category name with color indicator
+            cat_color = CATEGORY_COLORS.get(category.upper(), COLORS["text_primary"])
+            cat_label = tk.Label(
+                row,
+                text=f"  {category}",
+                font=font.Font(family="Segoe UI", size=10),
+                fg=cat_color,
+                bg=COLORS["bg_card"],
+                width=12,
+                anchor="w"
+            )
+            cat_label.pack(side=tk.LEFT)
+
+            # Work path (read-only, computed from drive + subpath)
+            work_path = self.path_config.get_work_path(category)
+            work_label = tk.Label(
+                row,
+                text=work_path.replace('\\', '/'),
+                font=font.Font(family="Consolas", size=9),
+                fg=COLORS["text_primary"],
+                bg=COLORS["bg_secondary"],
+                width=25,
+                anchor="w",
+                padx=5
+            )
+            work_label.pack(side=tk.LEFT, padx=(10, 0))
+
+            # Archive path
+            archive_path = self.path_config.get_archive_path(category)
+            archive_label = tk.Label(
+                row,
+                text=archive_path.replace('\\', '/'),
+                font=font.Font(family="Consolas", size=9),
+                fg=COLORS["text_primary"],
+                bg=COLORS["bg_secondary"],
+                width=30,
+                anchor="w",
+                padx=5
+            )
+            archive_label.pack(side=tk.LEFT, padx=(10, 0))
+
+            self.category_labels[category] = {
+                "work": work_label,
+                "archive": archive_label
+            }
+
+            # Show subcategories if any
+            cat_config = self.path_config.get_category_config(category)
+            subcats = cat_config.get("subcategories", [])
+            if subcats:
+                for subcat in subcats:
+                    sub_row = tk.Frame(paths_section, bg=COLORS["bg_card"])
+                    sub_row.pack(fill=tk.X, pady=1)
+
+                    tk.Label(
+                        sub_row,
+                        text=f"    {subcat}",
+                        font=font.Font(family="Segoe UI", size=9),
+                        fg=COLORS["text_secondary"],
+                        bg=COLORS["bg_card"],
+                        width=12,
+                        anchor="w"
+                    ).pack(side=tk.LEFT)
+
+                    tk.Label(
+                        sub_row,
+                        text="(inherits)",
+                        font=font.Font(family="Segoe UI", size=9, slant="italic"),
+                        fg=COLORS["text_secondary"],
+                        bg=COLORS["bg_card"]
+                    ).pack(side=tk.LEFT, padx=(10, 0))
+
+        # === BUTTON ROW ===
+        button_frame = tk.Frame(self.dialog, bg=COLORS["bg_primary"])
+        button_frame.pack(fill=tk.X, padx=20, pady=15)
+
+        # Reset button (left side)
+        reset_btn = tk.Button(
+            button_frame,
+            text="Reset Defaults",
+            command=self._reset_defaults,
+            bg=COLORS["bg_secondary"],
+            fg=COLORS["text_primary"],
+            font=font.Font(family="Segoe UI", size=10),
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=15,
+            pady=8
+        )
+        reset_btn.pack(side=tk.LEFT)
+
+        # Cancel button (right side)
+        cancel_btn = tk.Button(
+            button_frame,
+            text="Cancel",
+            command=self._cancel,
+            bg=COLORS["bg_secondary"],
+            fg=COLORS["text_primary"],
+            font=font.Font(family="Segoe UI", size=10),
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=15,
+            pady=8
+        )
+        cancel_btn.pack(side=tk.RIGHT, padx=(10, 0))
+
+        # Save button (right side)
+        save_btn = tk.Button(
+            button_frame,
+            text="Save",
+            command=self._save,
+            bg=COLORS["accent_dark"],
+            fg="#ffffff",
+            font=font.Font(family="Segoe UI", size=10, weight="bold"),
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=20,
+            pady=8
+        )
+        save_btn.pack(side=tk.RIGHT)
+
+    def _validate_paths(self):
+        """Validate current path entries and update status labels."""
+        # Validate work drive
+        work_drive = self.work_drive_var.get()
+        work_valid, work_msg = self.path_config.validate_drive(work_drive)
+
+        if work_valid:
+            self.work_status_label.config(text=f"OK {work_msg}", fg=COLORS["success"])
+        else:
+            self.work_status_label.config(text=f"! {work_msg}", fg=COLORS["warning"])
+
+        # Validate archive base
+        archive_base = self.archive_base_var.get()
+        archive_valid, archive_msg = self.path_config.validate_drive(archive_base)
+
+        if archive_valid:
+            self.archive_status_label.config(text=f"OK {archive_msg}", fg=COLORS["success"])
+        else:
+            self.archive_status_label.config(text=f"! {archive_msg}", fg=COLORS["warning"])
+
+        # Update category path labels
+        self._update_category_paths()
+
+    def _update_category_paths(self):
+        """Update category path labels based on current drive settings."""
+        work_drive = self.work_drive_var.get()
+        archive_base = self.archive_base_var.get()
+
+        for category, labels in self.category_labels.items():
+            cat_config = self.path_config.get_category_config(category)
+            work_subpath = cat_config.get("work_subpath", category)
+            archive_subpath = cat_config.get("archive_subpath", category)
+
+            work_path = f"{work_drive}\\{work_subpath}".replace('\\', '/')
+            archive_path = f"{archive_base}\\{archive_subpath}".replace('\\', '/')
+
+            labels["work"].config(text=work_path)
+            labels["archive"].config(text=archive_path)
+
+    def _browse_archive(self):
+        """Open folder browser for archive base."""
+        current = self.archive_base_var.get()
+        initial_dir = current if os.path.isdir(current) else None
+
+        folder = filedialog.askdirectory(
+            parent=self.dialog,
+            title="Select Archive Base Directory",
+            initialdir=initial_dir
+        )
+
+        if folder:
+            # Normalize to Windows path format
+            folder = folder.replace('/', '\\')
+            self.archive_base_var.set(folder)
+            self._validate_paths()
+
+    def _reset_defaults(self):
+        """Reset to default values."""
+        if messagebox.askyesno(
+            "Reset Defaults",
+            "Reset all paths to default values?\n\n"
+            "Active Drive: I:\n"
+            "Archive Base: D:\\_work\\Archive",
+            parent=self.dialog
+        ):
+            self.work_drive_var.set("I:")
+            self.archive_base_var.set("D:\\_work\\Archive")
+            self._validate_paths()
+
+    def _save(self):
+        """Save settings and close dialog."""
+        work_drive = self.work_drive_var.get()
+        archive_base = self.archive_base_var.get()
+
+        # Validate before saving
+        work_valid, _ = self.path_config.validate_drive(work_drive)
+        archive_valid, _ = self.path_config.validate_drive(archive_base)
+
+        if not work_valid or not archive_valid:
+            if not messagebox.askyesno(
+                "Invalid Paths",
+                "Some paths could not be validated.\n\n"
+                "Save anyway? (You can fix this later)",
+                parent=self.dialog
+            ):
+                return
+
+        # Save to config
+        self.path_config.set_work_drive(work_drive)
+        self.path_config.set_archive_base(archive_base)
+
+        self.result = True
+        self.dialog.destroy()
+        logger.info("Settings saved")
+
+    def _cancel(self):
+        """Cancel and close dialog."""
+        self.result = False
+        self.dialog.destroy()
+
+    def show(self) -> bool:
+        """
+        Show the dialog and wait for it to close.
+
+        Returns:
+            True if settings were saved, False if cancelled
+        """
+        self.dialog.wait_window()
+        return self.result
+
 
 class ScriptRunner:
     """Handles running external scripts."""
@@ -575,26 +1043,29 @@ class ProfessionalPipelineGUI:
         """Initialize the Pipeline Manager GUI."""
         self.root = root
         self.root.title(f"{APP_NAME} v{APP_VERSION}")
-        
+
         # Open in fullscreen
         self.root.state('zoomed')  # Windows
         # For Linux/Mac, use: self.root.attributes('-zoomed', True)
-        
+
         # Set minimum size
         self.root.minsize(1200, 800)
-        
+
         # Configure root window background
         self.root.configure(bg=COLORS["bg_primary"])
-        
+
         # Load configuration
         self.config_manager = ConfigManager()
-        
+
+        # Load path configuration
+        self.path_config = get_path_config()
+
         # Setup custom styles
         self.setup_styles()
-        
+
         # Create main layout
         self.create_layout()
-        
+
         # Initialize with last used tab
         self.current_categories = CREATIVE_CATEGORIES
         self.select_main_tab(self.config_manager.config.get("last_main_tab", "creative"))
@@ -749,7 +1220,7 @@ class ProfessionalPipelineGUI:
         # Title section (center-left)
         title_container = tk.Frame(inner_header, bg=COLORS["bg_secondary"])
         title_container.grid(row=0, column=1, sticky="w", padx=20)
-        
+
         # Main title
         title_font = font.Font(family="Segoe UI", size=26, weight="bold")
         title_label = tk.Label(title_container,
@@ -758,17 +1229,34 @@ class ProfessionalPipelineGUI:
                               fg=COLORS["text_primary"],
                               bg=COLORS["bg_secondary"])
         title_label.pack(anchor="w", pady=(20, 0))
+
+        # Settings button (right side of header)
+        settings_frame = tk.Frame(inner_header, bg=COLORS["bg_secondary"])
+        settings_frame.grid(row=0, column=2, sticky="e", padx=20)
+
+        settings_btn = tk.Button(
+            settings_frame,
+            text="Settings",
+            command=self.open_settings,
+            bg=COLORS["bg_hover"],
+            fg=COLORS["text_primary"],
+            font=font.Font(family="Segoe UI", size=10),
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=15,
+            pady=8
+        )
+        settings_btn.pack(pady=20)
         
     
     def create_main_notebook(self):
-        """Create the main notebook with Project Tracker, Project Setup, and Business tabs."""
+        """Create the main notebook with Project Manager and Business tabs."""
         # Notebook container with padding
         notebook_container = tk.Frame(self.main_container, bg=COLORS["bg_primary"])
         notebook_container.pack(fill=tk.BOTH, expand=True, padx=30, pady=(15, 10))
 
         # Try using theme to fix tab colors
         style = ttk.Style()
-
 
         style.configure("Main.TNotebook.Tab",
                        background=COLORS["bg_secondary"],
@@ -787,28 +1275,402 @@ class ProfessionalPipelineGUI:
         self.main_notebook = ttk.Notebook(notebook_container, style="Main.TNotebook")
         self.main_notebook.pack(fill=tk.BOTH, expand=True)
 
-        # Project Tracker Tab (first tab)
-        self.tracker_frame = tk.Frame(self.main_notebook, bg=COLORS["bg_primary"])
-        self.main_notebook.add(self.tracker_frame, text="Project Tracker")
-
-        # Project Setup Tab (was Creative Activities)
-        self.creative_frame = tk.Frame(self.main_notebook, bg=COLORS["bg_primary"])
-        self.main_notebook.add(self.creative_frame, text="Project Setup")
+        # Project Manager Tab (merged Project Tracker + Project Setup)
+        self.manager_frame = tk.Frame(self.main_notebook, bg=COLORS["bg_primary"])
+        self.main_notebook.add(self.manager_frame, text="Project Manager")
 
         # Business & Utilities Tab
         self.business_frame = tk.Frame(self.main_notebook, bg=COLORS["bg_primary"])
         self.main_notebook.add(self.business_frame, text="Business & Utilities")
 
-        # Setup Project Tracker (embedded mode)
-        self.project_tracker = ProjectTrackerApp(self.tracker_frame, embedded=True)
+        # Setup Project Manager with integrated project tracker and tools
+        self.setup_project_manager(self.manager_frame)
 
-        # Setup content for other tabs
-        self.setup_grid_layout(self.creative_frame, CREATIVE_CATEGORIES)
+        # Setup Business tab with grid layout
         self.setup_grid_layout(self.business_frame, BUSINESS_CATEGORIES)
 
         # Bind tab change event
         self.main_notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
-    
+
+    def setup_project_manager(self, parent_frame):
+        """Setup the unified Project Manager with category selection and tools."""
+        # Main container with two columns
+        main_container = tk.Frame(parent_frame, bg=COLORS["bg_primary"])
+        main_container.pack(fill=tk.BOTH, expand=True)
+
+        # Left panel: Categories + Tools
+        left_panel = tk.Frame(main_container, bg=COLORS["bg_card"], width=280)
+        left_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 15), pady=0)
+        left_panel.pack_propagate(False)
+
+        # ═══════════════════════════════════════════════════════════
+        # CATEGORIES SECTION
+        # ═══════════════════════════════════════════════════════════
+        categories_section = tk.Frame(left_panel, bg=COLORS["bg_card"])
+        categories_section.pack(fill=tk.X, padx=15, pady=(15, 10))
+
+        # Categories header (clickable to show all)
+        cat_header = tk.Label(
+            categories_section,
+            text="CATEGORIES",
+            font=font.Font(family="Segoe UI", size=9, weight="bold"),
+            fg=COLORS["text_secondary"],
+            bg=COLORS["bg_card"],
+            cursor="hand2"
+        )
+        cat_header.pack(anchor="w", pady=(0, 10))
+        cat_header.bind("<Button-1>", lambda e: self._clear_category_selection())
+        cat_header.bind("<Enter>", lambda e: cat_header.configure(fg=COLORS["accent"]))
+        cat_header.bind("<Leave>", lambda e: cat_header.configure(fg=COLORS["text_secondary"]))
+
+        # Category buttons grid (2 columns, 3 rows)
+        cat_grid = tk.Frame(categories_section, bg=COLORS["bg_card"])
+        cat_grid.pack(fill=tk.X)
+
+        # Store category button references
+        self.category_buttons = {}
+        self.selected_category = None
+
+        # Category order and data
+        category_order = ["VISUAL", "REALTIME", "AUDIO", "PHYSICAL", "PHOTO", "WEB"]
+
+        for idx, category_key in enumerate(category_order):
+            if category_key not in CREATIVE_CATEGORIES:
+                continue
+
+            category_data = CREATIVE_CATEGORIES[category_key]
+            row = idx // 2
+            col = idx % 2
+
+            btn = self._create_category_button(cat_grid, category_key, category_data)
+            btn.grid(row=row, column=col, padx=4, pady=4, sticky="nsew")
+
+        # Configure grid columns to be equal
+        cat_grid.columnconfigure(0, weight=1)
+        cat_grid.columnconfigure(1, weight=1)
+
+        # ═══════════════════════════════════════════════════════════
+        # SEPARATOR
+        # ═══════════════════════════════════════════════════════════
+        separator = tk.Frame(left_panel, bg=COLORS["border"], height=1)
+        separator.pack(fill=tk.X, padx=15, pady=15)
+
+        # ═══════════════════════════════════════════════════════════
+        # TOOLS SECTION
+        # ═══════════════════════════════════════════════════════════
+        tools_section = tk.Frame(left_panel, bg=COLORS["bg_card"])
+        tools_section.pack(fill=tk.BOTH, expand=True, padx=15, pady=(0, 15))
+
+        # Tools header
+        self.tools_header = tk.Label(
+            tools_section,
+            text="TOOLS",
+            font=font.Font(family="Segoe UI", size=9, weight="bold"),
+            fg=COLORS["text_secondary"],
+            bg=COLORS["bg_card"]
+        )
+        self.tools_header.pack(anchor="w", pady=(0, 10))
+
+        # Tools container (will be populated when category is selected)
+        self.tools_container = tk.Frame(tools_section, bg=COLORS["bg_card"])
+        self.tools_container.pack(fill=tk.BOTH, expand=True)
+
+        # Placeholder text when no category selected
+        self.tools_placeholder = tk.Label(
+            self.tools_container,
+            text="Select a category\nto see available tools",
+            font=font.Font(family="Segoe UI", size=10),
+            fg=COLORS["text_secondary"],
+            bg=COLORS["bg_card"],
+            justify="center"
+        )
+        self.tools_placeholder.pack(expand=True)
+
+        # ═══════════════════════════════════════════════════════════
+        # RIGHT PANEL: Project Tracker
+        # ═══════════════════════════════════════════════════════════
+        right_panel = tk.Frame(main_container, bg=COLORS["bg_primary"])
+        right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+        # Embed the Project Tracker
+        self.project_tracker = ProjectTrackerApp(right_panel, embedded=True)
+
+        # Restore last selected category from config, or default to None (show all)
+        last_category = self.config_manager.config.get("last_selected_category", None)
+        if last_category and last_category in CREATIVE_CATEGORIES:
+            self._select_category(last_category)
+        else:
+            # Show all by default (no category selected)
+            self._clear_category_selection()
+
+    def _create_category_button(self, parent, category_key, category_data):
+        """Create a square category selection button."""
+        color = CATEGORY_COLORS.get(category_key, COLORS["accent"])
+        icon = category_data.get("icon", "")
+        name = category_data.get("name", category_key)
+
+        # Button container (square)
+        btn_size = 115
+        btn_frame = tk.Frame(
+            parent,
+            bg=COLORS["bg_secondary"],
+            width=btn_size,
+            height=btn_size,
+            cursor="hand2"
+        )
+        btn_frame.pack_propagate(False)
+
+        # Content
+        content = tk.Frame(btn_frame, bg=COLORS["bg_secondary"])
+        content.place(relx=0.5, rely=0.5, anchor="center")
+
+        # Icon
+        icon_label = tk.Label(
+            content,
+            text=icon,
+            font=font.Font(family="Segoe UI Emoji", size=24),
+            fg=color,
+            bg=COLORS["bg_secondary"]
+        )
+        icon_label.pack()
+
+        # Name
+        name_label = tk.Label(
+            content,
+            text=name,
+            font=font.Font(family="Segoe UI", size=10, weight="bold"),
+            fg=COLORS["text_primary"],
+            bg=COLORS["bg_secondary"]
+        )
+        name_label.pack(pady=(5, 0))
+
+        # Store references
+        self.category_buttons[category_key] = {
+            "frame": btn_frame,
+            "content": content,
+            "icon": icon_label,
+            "name": name_label,
+            "color": color
+        }
+
+        # Hover and click effects
+        def on_enter(e):
+            if self.selected_category != category_key:
+                btn_frame.configure(bg=COLORS["bg_hover"])
+                content.configure(bg=COLORS["bg_hover"])
+                icon_label.configure(bg=COLORS["bg_hover"], fg=color)
+                name_label.configure(bg=COLORS["bg_hover"])
+
+        def on_leave(e):
+            if self.selected_category != category_key:
+                btn_frame.configure(bg=COLORS["bg_secondary"])
+                content.configure(bg=COLORS["bg_secondary"])
+                icon_label.configure(bg=COLORS["bg_secondary"], fg=color)
+                name_label.configure(bg=COLORS["bg_secondary"])
+
+        def on_click(e):
+            self._select_category(category_key)
+
+        for widget in [btn_frame, content, icon_label, name_label]:
+            widget.bind("<Enter>", on_enter)
+            widget.bind("<Leave>", on_leave)
+            widget.bind("<Button-1>", on_click)
+
+        return btn_frame
+
+    def _select_category(self, category_key):
+        """Select a category and show its tools."""
+        # Deselect previous
+        if self.selected_category and self.selected_category in self.category_buttons:
+            prev = self.category_buttons[self.selected_category]
+            prev_color = prev["color"]
+            prev["frame"].configure(bg=COLORS["bg_secondary"])
+            prev["content"].configure(bg=COLORS["bg_secondary"])
+            prev["icon"].configure(bg=COLORS["bg_secondary"], fg=prev_color)
+            prev["name"].configure(bg=COLORS["bg_secondary"], fg=COLORS["text_primary"])
+
+        # Select new
+        self.selected_category = category_key
+        if category_key in self.category_buttons:
+            curr = self.category_buttons[category_key]
+            color = curr["color"]
+            curr["frame"].configure(bg=color)
+            curr["content"].configure(bg=color)
+            curr["icon"].configure(bg=color, fg="#ffffff")
+            curr["name"].configure(bg=color, fg="#ffffff")
+
+        # Update tools
+        self._update_tools_panel(category_key)
+
+        # Save selected category to config
+        self.config_manager.config["last_selected_category"] = category_key
+        self.config_manager._save_config()
+
+        # Also filter project tracker if available
+        if hasattr(self, 'project_tracker') and self.project_tracker:
+            category_name = CREATIVE_CATEGORIES.get(category_key, {}).get("name", category_key)
+            # Use the project tracker's category selection method
+            if hasattr(self.project_tracker, '_select_category'):
+                self.project_tracker._select_category(category_name)
+
+    def _clear_category_selection(self):
+        """Clear category selection to show all projects."""
+        # Deselect current category button
+        if self.selected_category and self.selected_category in self.category_buttons:
+            prev = self.category_buttons[self.selected_category]
+            prev_color = prev["color"]
+            prev["frame"].configure(bg=COLORS["bg_secondary"])
+            prev["content"].configure(bg=COLORS["bg_secondary"])
+            prev["icon"].configure(bg=COLORS["bg_secondary"], fg=prev_color)
+            prev["name"].configure(bg=COLORS["bg_secondary"], fg=COLORS["text_primary"])
+
+        self.selected_category = None
+
+        # Clear tools panel
+        for widget in self.tools_container.winfo_children():
+            widget.destroy()
+
+        # Show placeholder
+        placeholder = tk.Label(
+            self.tools_container,
+            text="Select a category\nto see available tools",
+            font=font.Font(family="Segoe UI", size=10),
+            fg=COLORS["text_secondary"],
+            bg=COLORS["bg_card"],
+            justify="center"
+        )
+        placeholder.pack(expand=True)
+
+        # Save to config
+        self.config_manager.config["last_selected_category"] = None
+        self.config_manager._save_config()
+
+        # Clear project tracker filter
+        if hasattr(self, 'project_tracker') and self.project_tracker:
+            if hasattr(self.project_tracker, '_clear_category_selection'):
+                self.project_tracker._clear_category_selection()
+
+    def _update_tools_panel(self, category_key):
+        """Update the tools panel to show tools for the selected category."""
+        # Clear current tools
+        for widget in self.tools_container.winfo_children():
+            widget.destroy()
+
+        if category_key not in CREATIVE_CATEGORIES:
+            return
+
+        category_data = CREATIVE_CATEGORIES[category_key]
+
+        # Collect all tools (from category and subcategories)
+        all_tools = []
+
+        # Direct category scripts
+        scripts = category_data.get("scripts", {})
+        for script_key, script_data in scripts.items():
+            all_tools.append((script_key, None, script_data))
+
+        # Subcategory scripts
+        subcategories = category_data.get("subcategories", {})
+        for subcat_key, subcat_data in subcategories.items():
+            subcat_scripts = subcat_data.get("scripts", {})
+            for script_key, script_data in subcat_scripts.items():
+                all_tools.append((script_key, subcat_key, script_data))
+
+        if not all_tools:
+            # Show placeholder if no tools
+            placeholder = tk.Label(
+                self.tools_container,
+                text="No tools available\nfor this category",
+                font=font.Font(family="Segoe UI", size=10),
+                fg=COLORS["text_secondary"],
+                bg=COLORS["bg_card"],
+                justify="center"
+            )
+            placeholder.pack(expand=True)
+            return
+
+        # Create tool buttons
+        for script_key, subcat_key, script_data in all_tools:
+            self._create_tool_button(
+                self.tools_container,
+                category_key,
+                script_key,
+                subcat_key,
+                script_data
+            )
+
+    def _create_tool_button(self, parent, category_key, script_key, subcat_key, script_data):
+        """Create a professional tool button."""
+        color = CATEGORY_COLORS.get(category_key, COLORS["accent"])
+        icon = script_data.get("icon", "")
+        name = script_data.get("name", script_key)
+
+        # Button frame with left color accent
+        btn_frame = tk.Frame(parent, bg=COLORS["bg_secondary"], cursor="hand2")
+        btn_frame.pack(fill=tk.X, pady=3)
+
+        # Color accent bar on left
+        accent_bar = tk.Frame(btn_frame, bg=color, width=4)
+        accent_bar.pack(side=tk.LEFT, fill=tk.Y)
+
+        # Content area
+        content = tk.Frame(btn_frame, bg=COLORS["bg_secondary"])
+        content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=12, pady=10)
+
+        # Icon
+        icon_label = tk.Label(
+            content,
+            text=icon,
+            font=font.Font(family="Segoe UI Emoji", size=14),
+            fg=color,
+            bg=COLORS["bg_secondary"]
+        )
+        icon_label.pack(side=tk.LEFT)
+
+        # Name
+        name_label = tk.Label(
+            content,
+            text=name,
+            font=font.Font(family="Segoe UI", size=10),
+            fg=COLORS["text_primary"],
+            bg=COLORS["bg_secondary"],
+            anchor="w"
+        )
+        name_label.pack(side=tk.LEFT, padx=(10, 0), fill=tk.X, expand=True)
+
+        # Arrow indicator
+        arrow_label = tk.Label(
+            content,
+            text=">",
+            font=font.Font(family="Segoe UI", size=10),
+            fg=COLORS["text_secondary"],
+            bg=COLORS["bg_secondary"]
+        )
+        arrow_label.pack(side=tk.RIGHT)
+
+        # Hover effects
+        def on_enter(e):
+            btn_frame.configure(bg=COLORS["bg_hover"])
+            content.configure(bg=COLORS["bg_hover"])
+            icon_label.configure(bg=COLORS["bg_hover"])
+            name_label.configure(bg=COLORS["bg_hover"])
+            arrow_label.configure(bg=COLORS["bg_hover"], fg=color)
+
+        def on_leave(e):
+            btn_frame.configure(bg=COLORS["bg_secondary"])
+            content.configure(bg=COLORS["bg_secondary"])
+            icon_label.configure(bg=COLORS["bg_secondary"])
+            name_label.configure(bg=COLORS["bg_secondary"])
+            arrow_label.configure(bg=COLORS["bg_secondary"], fg=COLORS["text_secondary"])
+
+        def on_click(e):
+            self.run_script(category_key, script_key, subcat_key)
+
+        for widget in [btn_frame, content, icon_label, name_label, arrow_label]:
+            widget.bind("<Enter>", on_enter)
+            widget.bind("<Leave>", on_leave)
+            widget.bind("<Button-1>", on_click)
+
     def setup_grid_layout(self, parent_frame, categories):
         """Setup grid layout for categories."""
         # Create scrollable frame
@@ -865,6 +1727,29 @@ class ProfessionalPipelineGUI:
             self.update_status(f"Opened logs folder: {logs_folder}", "info")
         except Exception as e:
             self.update_status(f"Error opening logs folder: {e}", "error")
+
+    def open_settings(self):
+        """Open the settings dialog."""
+        dialog = SettingsDialog(self.root, self.path_config)
+        if dialog.show():
+            self.update_status("Settings saved", "success")
+            # Reload path config to reflect changes
+            self.path_config = get_path_config()
+
+    def import_projects(self):
+        """Trigger project import from the embedded Project Tracker."""
+        if hasattr(self, 'project_tracker') and self.project_tracker:
+            self.project_tracker._import_projects()
+        else:
+            self.update_status("Project Tracker not available", "error")
+
+    def refresh_projects(self):
+        """Trigger project list refresh from the embedded Project Tracker."""
+        if hasattr(self, 'project_tracker') and self.project_tracker:
+            self.project_tracker.refresh_project_list()
+            self.update_status("Projects refreshed", "info")
+        else:
+            self.update_status("Project Tracker not available", "error")
 
     def open_note(self, category_key):
         """Open or create a note file for a category."""
@@ -1400,11 +2285,8 @@ class ProfessionalPipelineGUI:
         """Handle main tab change event."""
         selected_index = self.main_notebook.index(self.main_notebook.select())
         if selected_index == 0:
-            self.current_categories = None  # Project Tracker tab
-            self.config_manager.config["last_main_tab"] = "tracker"
-        elif selected_index == 1:
-            self.current_categories = CREATIVE_CATEGORIES
-            self.config_manager.config["last_main_tab"] = "creative"
+            self.current_categories = CREATIVE_CATEGORIES  # Project Manager tab
+            self.config_manager.config["last_main_tab"] = "manager"
         else:
             self.current_categories = BUSINESS_CATEGORIES
             self.config_manager.config["last_main_tab"] = "business"
@@ -1412,14 +2294,12 @@ class ProfessionalPipelineGUI:
 
     def select_main_tab(self, tab_name):
         """Select a main tab by name."""
-        if tab_name == "tracker":
+        # Handle legacy tab names for backwards compatibility
+        if tab_name in ["tracker", "creative", "manager"]:
             self.main_notebook.select(0)
-            self.current_categories = None
-        elif tab_name == "creative":
-            self.main_notebook.select(1)
             self.current_categories = CREATIVE_CATEGORIES
         else:
-            self.main_notebook.select(2)
+            self.main_notebook.select(1)
             self.current_categories = BUSINESS_CATEGORIES
     
     def run_script(self, category_key, script_key, subcat_key=None):
@@ -1484,11 +2364,19 @@ def main():
     file_menu = tk.Menu(menu_bar, tearoff=0, bg=COLORS["bg_secondary"],
                        fg=COLORS["text_primary"],
                        activebackground=COLORS["accent"], activeforeground="#ffffff")
+    file_menu.add_command(label="Import Projects", command=app.import_projects)
+    file_menu.add_command(label="Refresh Projects", command=app.refresh_projects, accelerator="F5")
+    file_menu.add_separator()
+    file_menu.add_command(label="Settings...", command=app.open_settings, accelerator="Ctrl+,")
     file_menu.add_command(label="Open Logs Folder", command=app.open_logs_folder)
     file_menu.add_separator()
     file_menu.add_command(label="Exit", command=root.quit, accelerator="Alt+F4")
     menu_bar.add_cascade(label="File", menu=file_menu)
-    
+
+    # Bind keyboard shortcuts
+    root.bind('<Control-comma>', lambda e: app.open_settings())
+    root.bind('<F5>', lambda e: app.refresh_projects())
+
     # View menu
     view_menu = tk.Menu(menu_bar, tearoff=0, bg=COLORS["bg_secondary"], 
                        fg=COLORS["text_primary"],
