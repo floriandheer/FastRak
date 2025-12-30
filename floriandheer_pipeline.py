@@ -274,12 +274,6 @@ BUSINESS_CATEGORIES = {
                 "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Bookkeeping_InvoiceRenamer.py"),
                 "description": "Automatically rename invoices to standardized format: FAC_YY-MM-DD_CompanyName",
                 "icon": "📄"
-            },
-            "project_tracker": {
-                "name": "Project Tracker",
-                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Business_ProjectTracker.py"),
-                "description": "Track active projects, clients, and archive completed work",
-                "icon": "📊"
             }
         },
         "subcategories": {}
@@ -317,6 +311,9 @@ from shared_logging import get_logger, setup_logging
 
 # Get logger reference (configured in main())
 logger = get_logger("pipeline")
+
+# Import Project Tracker for embedded use (from top-level file)
+from floriandheer_project_tracker import ProjectTrackerApp
 
 class ConfigManager:
     """Manages configuration settings for the pipeline manager."""
@@ -764,44 +761,51 @@ class ProfessionalPipelineGUI:
         
     
     def create_main_notebook(self):
-        """Create the main notebook with Creative and Business tabs."""
+        """Create the main notebook with Project Tracker, Project Setup, and Business tabs."""
         # Notebook container with padding
         notebook_container = tk.Frame(self.main_container, bg=COLORS["bg_primary"])
         notebook_container.pack(fill=tk.BOTH, expand=True, padx=30, pady=(15, 10))
-        
+
         # Try using theme to fix tab colors
         style = ttk.Style()
-        
-        
+
+
         style.configure("Main.TNotebook.Tab",
                        background=COLORS["bg_secondary"],
                        foreground=COLORS["text_secondary"],
                        padding=[30, 15],
                        borderwidth=2,
                        relief="flat")
-        
+
         # Force selected tab to be dark blue with white text
         style.map("Main.TNotebook.Tab",
                  background=[('selected', '#1f6feb'), ('!selected', COLORS["bg_secondary"])],
                  foreground=[('selected', '#ffffff'), ('!selected', COLORS["text_secondary"])],
                  relief=[('selected', 'flat'), ('!selected', 'flat')],
                  borderwidth=[('selected', 0), ('!selected', 0)])
-        
+
         self.main_notebook = ttk.Notebook(notebook_container, style="Main.TNotebook")
         self.main_notebook.pack(fill=tk.BOTH, expand=True)
-        
-        # Creative Activities Tab
+
+        # Project Tracker Tab (first tab)
+        self.tracker_frame = tk.Frame(self.main_notebook, bg=COLORS["bg_primary"])
+        self.main_notebook.add(self.tracker_frame, text="Project Tracker")
+
+        # Project Setup Tab (was Creative Activities)
         self.creative_frame = tk.Frame(self.main_notebook, bg=COLORS["bg_primary"])
-        self.main_notebook.add(self.creative_frame, text="Creative Activities")
-        
+        self.main_notebook.add(self.creative_frame, text="Project Setup")
+
         # Business & Utilities Tab
         self.business_frame = tk.Frame(self.main_notebook, bg=COLORS["bg_primary"])
         self.main_notebook.add(self.business_frame, text="Business & Utilities")
-        
-        # Setup content for each tab
+
+        # Setup Project Tracker (embedded mode)
+        self.project_tracker = ProjectTrackerApp(self.tracker_frame, embedded=True)
+
+        # Setup content for other tabs
         self.setup_grid_layout(self.creative_frame, CREATIVE_CATEGORIES)
         self.setup_grid_layout(self.business_frame, BUSINESS_CATEGORIES)
-        
+
         # Bind tab change event
         self.main_notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
     
@@ -1396,20 +1400,26 @@ class ProfessionalPipelineGUI:
         """Handle main tab change event."""
         selected_index = self.main_notebook.index(self.main_notebook.select())
         if selected_index == 0:
+            self.current_categories = None  # Project Tracker tab
+            self.config_manager.config["last_main_tab"] = "tracker"
+        elif selected_index == 1:
             self.current_categories = CREATIVE_CATEGORIES
             self.config_manager.config["last_main_tab"] = "creative"
         else:
             self.current_categories = BUSINESS_CATEGORIES
             self.config_manager.config["last_main_tab"] = "business"
         self.config_manager._save_config()
-    
+
     def select_main_tab(self, tab_name):
         """Select a main tab by name."""
-        if tab_name == "creative":
+        if tab_name == "tracker":
             self.main_notebook.select(0)
+            self.current_categories = None
+        elif tab_name == "creative":
+            self.main_notebook.select(1)
             self.current_categories = CREATIVE_CATEGORIES
         else:
-            self.main_notebook.select(1)
+            self.main_notebook.select(2)
             self.current_categories = BUSINESS_CATEGORIES
     
     def run_script(self, category_key, script_key, subcat_key=None):
