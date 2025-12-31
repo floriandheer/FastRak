@@ -72,7 +72,7 @@ CATEGORY_COLORS = {
 # Project type icons and display names
 PROJECT_TYPES = {
     "GD": {"icon": "🎬", "name": "Graphic Design", "color": "#f97316"},
-    "VFX": {"icon": "🎬", "name": "VFX/CG", "color": "#f97316"},
+    "VFX": {"icon": "🎬", "name": "CG", "color": "#f97316"},
     "VJ": {"icon": "💫", "name": "VJ", "color": "#f97316"},
     "Audio": {"icon": "🎵", "name": "Audio", "color": "#9333ea"},
     "Physical": {"icon": "🔧", "name": "3D Print", "color": "#ec4899"},
@@ -1464,7 +1464,7 @@ class ProjectTrackerApp:
             # Get display values
             date_str = project.get("date_created", "")
             client_name = project.get("client_name", "")
-            project_name = f"{type_info['icon']} {project.get('project_name', '')}"
+            project_name = project.get('project_name', '')
 
             # Insert into tree
             item_id = self.project_tree.insert(
@@ -1645,8 +1645,8 @@ class ProjectTrackerApp:
         if status == "archived":
             card.configure(highlightbackground="#8b949e", highlightthickness=1)
 
-        # Icon - scales with card size
-        icon_label = tk.Label(card, text=type_info["icon"], bg="#1c2128", fg="white",
+        # Icon - scales with card size (folder icon for all types)
+        icon_label = tk.Label(card, text="📁", bg="#1c2128", fg="white",
                              font=("Arial", icon_size))
         icon_label.pack(pady=(int(15 * font_scale), int(5 * font_scale)))
 
@@ -1896,8 +1896,10 @@ class ProjectTrackerApp:
             self._current_raw_path = raw_path
             self.raw_path_label.config(text=raw_path)
         else:
-            # Archived: Hide Active Path frame, only show RAW Path
-            self.active_path_frame.pack_forget()
+            # Archived: Keep Active Path frame visible but blank
+            self.active_path_frame.pack(fill=tk.X, pady=2)
+            self.active_path_label.config(text="-")
+            self._current_active_path = None
             self.raw_path_label.config(text=stored_path)
             self._current_raw_path = stored_path
 
