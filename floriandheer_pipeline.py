@@ -1304,10 +1304,68 @@ class ProfessionalPipelineGUI:
         left_panel.pack_propagate(False)
 
         # ═══════════════════════════════════════════════════════════
+        # SCOPE TOGGLE (All / Personal / Client)
+        # ═══════════════════════════════════════════════════════════
+        scope_section = tk.Frame(left_panel, bg=COLORS["bg_card"])
+        scope_section.pack(fill=tk.X, padx=15, pady=(15, 5))
+
+        # Scope toggle buttons
+        scope_frame = tk.Frame(scope_section, bg=COLORS["bg_card"])
+        scope_frame.pack(fill=tk.X)
+
+        self.scope_buttons = {}
+        self.current_scope = "all"
+
+        scope_options = [
+            ("all", "All"),
+            ("personal", "👤"),
+            ("client", "💼"),
+        ]
+
+        for value, text in scope_options:
+            btn = tk.Label(
+                scope_frame,
+                text=text,
+                font=font.Font(family="Segoe UI", size=9),
+                fg="white",
+                bg=COLORS["bg_secondary"],
+                padx=12,
+                pady=6,
+                cursor="hand2"
+            )
+            btn.pack(side=tk.LEFT, padx=(0, 2), expand=True, fill=tk.X)
+
+            def make_scope_click(v):
+                def on_click(e):
+                    self._set_scope(v)
+                return on_click
+
+            def make_scope_enter(v, b):
+                def on_enter(e):
+                    if self.current_scope != v:
+                        b.configure(bg="#2d333b")
+                return on_enter
+
+            def make_scope_leave(v, b):
+                def on_leave(e):
+                    if self.current_scope != v:
+                        b.configure(bg=COLORS["bg_secondary"])
+                return on_leave
+
+            btn.bind("<Button-1>", make_scope_click(value))
+            btn.bind("<Enter>", make_scope_enter(value, btn))
+            btn.bind("<Leave>", make_scope_leave(value, btn))
+
+            self.scope_buttons[value] = btn
+
+        # Set initial scope button styling
+        self._update_scope_button_styles()
+
+        # ═══════════════════════════════════════════════════════════
         # CATEGORIES SECTION
         # ═══════════════════════════════════════════════════════════
         categories_section = tk.Frame(left_panel, bg=COLORS["bg_card"])
-        categories_section.pack(fill=tk.X, padx=15, pady=(15, 10))
+        categories_section.pack(fill=tk.X, padx=15, pady=(10, 10))
 
         # Categories header (clickable to show all)
         cat_header = tk.Label(
@@ -1403,6 +1461,12 @@ class ProfessionalPipelineGUI:
 
         # Embed the Project Tracker
         self.project_tracker = ProjectTrackerApp(right_panel, embedded=True)
+
+        # Sync scope from project tracker's saved settings
+        if hasattr(self.project_tracker, 'filter_scope'):
+            saved_scope = self.project_tracker.filter_scope.get()
+            self.current_scope = saved_scope
+            self._update_scope_button_styles()
 
         # Restore last selected category from config, or default to None (show all)
         last_category = self.config_manager.config.get("last_selected_category", None)
@@ -1561,6 +1625,28 @@ class ProfessionalPipelineGUI:
         if hasattr(self, 'project_tracker') and self.project_tracker:
             if hasattr(self.project_tracker, '_clear_category_selection'):
                 self.project_tracker._clear_category_selection()
+
+    def _set_scope(self, scope: str):
+        """Set the scope filter and update project tracker."""
+        self.current_scope = scope
+        self._update_scope_button_styles()
+
+        # Update project tracker
+        if hasattr(self, 'project_tracker') and self.project_tracker:
+            if hasattr(self.project_tracker, 'set_scope'):
+                self.project_tracker.set_scope(scope)
+
+    def _update_scope_button_styles(self):
+        """Update scope button visual states based on current selection."""
+        if not hasattr(self, 'scope_buttons'):
+            return
+        for value, btn in self.scope_buttons.items():
+            if value == self.current_scope:
+                # Selected state - highlighted
+                btn.configure(bg=COLORS["accent"], fg="white")
+            else:
+                # Unselected state
+                btn.configure(bg=COLORS["bg_secondary"], fg="white")
 
     def _update_tools_panel(self, category_key):
         """Update the tools panel to show tools for the selected category."""

@@ -784,6 +784,15 @@ class ProjectTrackerApp:
         self._current_active_path = None
         self._current_raw_path = None
 
+        # Column sorting and ordering (load from settings)
+        self.sort_column = self.settings.get("sort_column", "date")
+        self.sort_reverse = self.settings.get("sort_reverse", True)  # True = descending (newest first)
+        self.column_order = self.settings.get("column_order", ["date", "client", "project"])
+
+        # Column drag state
+        self._drag_column = None
+        self._drag_start_x = None
+
         # Grid view selection tracking
         self.grid_selected_index = -1
         self.grid_cards = []  # List of card frames for keyboard navigation
@@ -792,6 +801,10 @@ class ProjectTrackerApp:
 
         # Filter status (load from settings)
         self.filter_status = tk.StringVar(value=self.settings.get("filter_status", "active"))
+
+        # Scope filter (all/personal/client)
+        self.filter_scope = tk.StringVar(value=self.settings.get("filter_scope", "all"))
+        self.scope_buttons = {}
 
         # Search query
         self.search_query = tk.StringVar()
@@ -1121,23 +1134,29 @@ class ProjectTrackerApp:
         self.project_tree = ttk.Treeview(
             tree_wrapper,
             columns=("date", "client", "project"),
+            displaycolumns=self.column_order,
             show="headings",
             yscrollcommand=scrollbar.set,
             selectmode="browse",
             style="Dark.Treeview"
         )
 
-        # Configure columns
-        self.project_tree.heading("date", text="Date", anchor=tk.W)
-        self.project_tree.heading("client", text="Client", anchor=tk.W)
-        self.project_tree.heading("project", text="Project", anchor=tk.W)
+        # Column display names
+        self.column_names = {"date": "Date", "client": "Client", "project": "Project"}
 
-        self.project_tree.column("date", width=100, minwidth=80)
-        self.project_tree.column("client", width=150, minwidth=100)
-        self.project_tree.column("project", width=250, minwidth=150, stretch=True)
+        # Configure columns with sort click handlers - equal widths, all stretch equally
+        for col in ["date", "client", "project"]:
+            self.project_tree.heading(col, text=self._get_column_header(col), anchor=tk.W,
+                                      command=lambda c=col: self._on_column_click(c))
+            self.project_tree.column(col, width=150, minwidth=80, stretch=True)
 
         self.project_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.config(command=self.project_tree.yview)
+
+        # Bind column header drag events
+        self.project_tree.bind('<Button-1>', self._on_tree_click)
+        self.project_tree.bind('<B1-Motion>', self._on_tree_drag)
+        self.project_tree.bind('<ButtonRelease-1>', self._on_tree_release)
 
         # Store project IDs mapped to tree items
         self.tree_item_to_project = {}
@@ -1406,6 +1425,13 @@ class ProjectTrackerApp:
             else:
                 projects = self.db.get_all_projects(status=status)
 
+        # Filter by scope (personal/client) based on client name
+        scope = self.filter_scope.get()
+        if scope == "personal":
+            projects = [p for p in projects if p.get("client_name", "").lower() == "personal"]
+        elif scope == "client":
+            projects = [p for p in projects if p.get("client_name", "").lower() != "personal"]
+
         # Group projects by category
         categories = {
             "Visual": {"icon": "🎬", "projects": [], "color": CATEGORY_COLORS["Visual"]},
@@ -1450,8 +1476,14 @@ class ProjectTrackerApp:
             for cat_info in categories.values():
                 category_projects.extend(cat_info["projects"])
 
-        # Sort by date (newest first)
-        category_projects.sort(key=lambda p: p.get("date_created", ""), reverse=True)
+        # Sort by selected column
+        sort_key_map = {
+            "date": lambda p: p.get("date_created", ""),
+            "client": lambda p: p.get("client_name", "").lower(),
+            "project": lambda p: p.get("project_name", "").lower()
+        }
+        sort_key = sort_key_map.get(self.sort_column, sort_key_map["date"])
+        category_projects.sort(key=sort_key, reverse=self.sort_reverse)
 
         # Clear the project ID mapping
         self.tree_item_to_project = {}
@@ -1815,6 +1847,120 @@ class ProjectTrackerApp:
             else:
                 # Unselected state
                 btn.configure(bg="#1c2128", fg="white")
+
+    def set_scope(self, scope: str):
+        """Set the scope filter (called from external UI like pipeline)."""
+        self.filter_scope.set(scope)
+        self._on_scope_changed()
+
+    def _on_scope_changed(self, event=None):
+        """Handle scope filter change."""
+        # Save scope preference
+        self.settings.set("filter_scope", self.filter_scope.get())
+        # Update button styles (if buttons exist in this UI)
+        self._update_scope_button_styles()
+        self.refresh_project_list()
+
+    def _update_scope_button_styles(self):
+        """Update scope button visual states based on current selection."""
+        if not hasattr(self, 'scope_buttons') or not self.scope_buttons:
+            return
+        current = self.filter_scope.get()
+        for value, btn in self.scope_buttons.items():
+            if value == current:
+                # Selected state - highlighted
+                btn.configure(bg="#58a6ff", fg="white")
+            else:
+                # Unselected state
+                btn.configure(bg="#1c2128", fg="white")
+
+    def _get_column_header(self, col: str) -> str:
+        """Get column header text with sort indicator if applicable."""
+        name = self.column_names.get(col, col)
+        if col == self.sort_column:
+            indicator = " ▼" if self.sort_reverse else " ▲"
+            return name + indicator
+        return name
+
+    def _update_column_headers(self):
+        """Update all column headers to reflect current sort state."""
+        for col in ["date", "client", "project"]:
+            self.project_tree.heading(col, text=self._get_column_header(col))
+
+    def _on_column_click(self, col: str):
+        """Handle column header click for sorting."""
+        if col == self.sort_column:
+            # Toggle sort direction
+            self.sort_reverse = not self.sort_reverse
+        else:
+            # New column, default to descending for date, ascending for others
+            self.sort_column = col
+            self.sort_reverse = (col == "date")
+
+        # Save settings
+        self.settings.set("sort_column", self.sort_column)
+        self.settings.set("sort_reverse", self.sort_reverse)
+
+        # Update headers and refresh
+        self._update_column_headers()
+        self.refresh_project_list()
+
+    def _get_column_at_x(self, x: int) -> str:
+        """Get the column ID at the given x coordinate."""
+        # Get column widths in display order
+        total = 0
+        for col in self.column_order:
+            width = self.project_tree.column(col, "width")
+            if x < total + width:
+                return col
+            total += width
+        return None
+
+    def _on_tree_click(self, event):
+        """Handle click on treeview - detect header clicks for dragging."""
+        region = self.project_tree.identify_region(event.x, event.y)
+        if region == "heading":
+            col = self._get_column_at_x(event.x)
+            if col:
+                self._drag_column = col
+                self._drag_start_x = event.x
+
+    def _on_tree_drag(self, event):
+        """Handle dragging on treeview header."""
+        if self._drag_column and self._drag_start_x is not None:
+            # Check if we've moved enough to consider it a drag
+            if abs(event.x - self._drag_start_x) > 20:
+                # Change cursor to indicate dragging
+                self.project_tree.configure(cursor="fleur")
+
+    def _on_tree_release(self, event):
+        """Handle mouse release - complete column reorder if dragging."""
+        if self._drag_column and self._drag_start_x is not None:
+            drag_distance = event.x - self._drag_start_x
+
+            # Only reorder if we dragged far enough
+            if abs(drag_distance) > 20:
+                target_col = self._get_column_at_x(event.x)
+                if target_col and target_col != self._drag_column:
+                    # Reorder columns
+                    new_order = self.column_order.copy()
+                    old_idx = new_order.index(self._drag_column)
+                    new_idx = new_order.index(target_col)
+
+                    # Move the column
+                    new_order.pop(old_idx)
+                    new_order.insert(new_idx, self._drag_column)
+
+                    self.column_order = new_order
+                    self.project_tree["displaycolumns"] = self.column_order
+
+                    # Save settings
+                    self.settings.set("column_order", self.column_order)
+
+        # Reset drag state
+        self._drag_column = None
+        self._drag_start_x = None
+        self.project_tree.configure(cursor="")
 
     def _on_project_selected(self, event):
         """Handle project selection."""
