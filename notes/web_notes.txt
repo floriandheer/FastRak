@@ -1,6 +1,6 @@
 # Notes for WEB
 
-Alles3D
+===Alles3D===
 - Verbeteren UI Front End 3D-link , extra uitlegvak voor de parameters
 - Nestbare parameters/uitvouwbare sliders
 - Variabele prijzen
@@ -17,3 +17,6 @@ Alles3D
 - Klant is verantwoordelijk voor de maten
   Afbeeldingen
 - In een echte winkel displayen (Miliro, ...)
+
+===FlorianDheer===
+- SEO aanpassen
