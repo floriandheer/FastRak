@@ -122,6 +122,7 @@ class TrackerSettings:
         "list_scale": 100,
         "grid_scale": 100,
         "filter_status": "active",
+        "file_manager": "",  # Empty = system default, or path like "C:\\Program Files\\fman\\fman.exe"
     }
 
     def __init__(self):
@@ -1126,7 +1127,7 @@ class ProjectTrackerApp:
                        foreground="white",
                        font=("Arial", 10, "bold"))
         self.tree_style.map("Dark.Treeview",
-                 background=[("selected", "#58a6ff")],
+                 background=[("selected", "#2d333b")],
                  foreground=[("selected", "white")])
         # Remove the border/focus highlight
         self.tree_style.layout("Dark.Treeview", [('Dark.Treeview.treearea', {'sticky': 'nswe'})])
@@ -1536,15 +1537,30 @@ class ProjectTrackerApp:
             self.list_frame.pack(fill=tk.BOTH, expand=True)
             self.list_scale_frame.pack(side=tk.RIGHT, padx=(10, 2))
             self.project_tree.focus_set()
+            # Restore selection from selected_project
+            if self.selected_project:
+                for item_id, project in self.tree_item_to_project.items():
+                    if project.get("id") == self.selected_project.get("id"):
+                        self.project_tree.selection_set(item_id)
+                        self.project_tree.see(item_id)
+                        break
         else:
             self.list_frame.pack_forget()
             self.list_scale_frame.pack_forget()
             self.grid_frame.pack(fill=tk.BOTH, expand=True)
             self.grid_scale_frame.pack(side=tk.RIGHT, padx=(10, 2))
             self._populate_grid()
-            # Set focus for keyboard navigation and select first if none selected
+            # Set focus for keyboard navigation
             self.grid_canvas.focus_set()
-            if self.grid_selected_index < 0 and self.grid_projects:
+            # Restore selection from selected_project
+            if self.selected_project:
+                for idx, project in enumerate(self.grid_projects):
+                    if project.get("id") == self.selected_project.get("id"):
+                        self.grid_selected_index = idx
+                        self._select_grid_card(idx)
+                        break
+            elif self.grid_projects:
+                # No selection, select first
                 self.grid_selected_index = 0
                 self._select_grid_card(0)
 
@@ -2112,7 +2128,26 @@ class ProjectTrackerApp:
             return
 
         try:
-            if sys.platform == "win32":
+            # Check for custom file manager setting
+            custom_file_manager = self.settings.get("file_manager", "")
+
+            if custom_file_manager:
+                # Use custom file manager
+                import subprocess
+                open_path = str(path)
+
+                # If running in WSL with a Windows file manager, convert path to Windows format
+                if sys.platform != "win32" and custom_file_manager.lower().endswith(".exe"):
+                    # Convert /mnt/d/... to D:\...
+                    if open_path.startswith("/mnt/"):
+                        parts = open_path.split("/")
+                        if len(parts) >= 3:
+                            drive_letter = parts[2].upper()
+                            rest = "/".join(parts[3:])
+                            open_path = f"{drive_letter}:\\{rest}".replace("/", "\\")
+
+                subprocess.Popen([custom_file_manager, open_path])
+            elif sys.platform == "win32":
                 os.startfile(path)
             elif sys.platform == "darwin":
                 os.system(f'open "{path}"')
