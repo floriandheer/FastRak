@@ -1317,9 +1317,9 @@ class ProfessionalPipelineGUI:
         self.current_scope = "all"
 
         scope_options = [
+            ("personal", "Personal"),
+            ("client", "Work"),
             ("all", "All"),
-            ("personal", "👤"),
-            ("client", "💼"),
         ]
 
         for value, text in scope_options:
