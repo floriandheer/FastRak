@@ -56,6 +56,7 @@ RCLONE_DEFAULT_OPTIONS = [
     "--checkers=8",
     "--onedrive-chunk-size=10M",
     "--ignore-case",
+    "--no-unicode-normalization",  # Preserve Unicode characters as-is
     "--exclude", ".DS_Store",
     "--exclude", "Thumbs.db",
     "--exclude", "desktop.ini",
@@ -376,6 +377,14 @@ class RcloneManager:
                 if not line:
                     continue
 
+                # Log important messages (errors, warnings, notices) to file
+                if " ERROR " in line or " ERROR:" in line:
+                    logger.error(f"rclone: {line}")
+                elif " WARNING " in line or " WARNING:" in line:
+                    logger.warning(f"rclone: {line}")
+                elif " NOTICE " in line or " NOTICE:" in line:
+                    logger.warning(f"rclone: {line}")
+
                 # Count transferred files from verbose output (e.g., "INFO  : file.mp3: Copied")
                 if ": Copied" in line or ": Moved" in line:
                     stats.files_transferred += 1
@@ -423,6 +432,12 @@ class RcloneManager:
             self.process.wait()
 
             stats.elapsed_time = (datetime.datetime.now() - start_time).total_seconds()
+
+            # Log final summary
+            logger.info(f"Sync completed - Files: {stats.files_transferred}/{stats.files_checked}, "
+                       f"Size: {stats.bytes_transferred / (1024**3):.2f} GB, "
+                       f"Errors: {stats.errors}, "
+                       f"Time: {stats.elapsed_time / 60:.1f} min")
 
             if self.process.returncode == 0:
                 logger.info("Backup completed successfully")
@@ -521,6 +536,14 @@ class RcloneManager:
                 if not line:
                     continue
 
+                # Log important messages (errors, warnings, notices) to file
+                if " ERROR " in line or " ERROR:" in line:
+                    logger.error(f"rclone: {line}")
+                elif " WARNING " in line or " WARNING:" in line:
+                    logger.warning(f"rclone: {line}")
+                elif " NOTICE " in line or " NOTICE:" in line:
+                    logger.warning(f"rclone: {line}")
+
                 # Count transferred files from verbose output
                 if ": Copied" in line:
                     stats.files_transferred += 1
@@ -562,6 +585,12 @@ class RcloneManager:
             self.process.wait()
 
             stats.elapsed_time = (datetime.datetime.now() - start_time).total_seconds()
+
+            # Log final summary
+            logger.info(f"Copy completed - Files: {stats.files_transferred}/{stats.files_checked}, "
+                       f"Size: {stats.bytes_transferred / (1024**3):.2f} GB, "
+                       f"Errors: {stats.errors}, "
+                       f"Time: {stats.elapsed_time / 60:.1f} min")
 
             if self.process.returncode == 0:
                 logger.info("Initial copy completed successfully")
