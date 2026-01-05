@@ -160,7 +160,7 @@ CREATIVE_CATEGORIES = {
         "folder_path": "I:\\Audio",
         "scripts": {
             "backup_musicbee": {
-                "name": "Backup MusicBee to OneDrive",
+                "name": "Backup Music to OneDrive",
                 "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Audio_MusicBeeBackup.py"),
                 "description": "Backup MusicBee library to OneDrive, only transferring changed or new files",
                 "icon": "💾"
@@ -172,10 +172,16 @@ CREATIVE_CATEGORIES = {
                 "icon": "🎧",
                 "scripts": {
                     "sync_playlists": {
-                        "name": "Sync iTunes Playlists to DJ Library",
+                        "name": "Sync Playlists to Traktor",
                         "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Audio_TraktorSyncPlaylists.py"),
                         "description": "Synchronize iTunes playlists to Traktor DJ library with WAV conversion",
                         "icon": "🔄"
+                    },
+                    "poweramp_sync": {
+                        "name": "Sync Playlists to PowerAmp",
+                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Audio_PowerAmpSync.py"),
+                        "description": "Export MusicBee playlists to M3U8 format for PowerAmp on Android",
+                        "icon": "📱"
                     }
                 }
             },
