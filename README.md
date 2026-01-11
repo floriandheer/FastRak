@@ -16,7 +16,7 @@ The Pipeline-Manager is a toolkit designed to streamline various creative and bu
 
 ## Screenshots
 
-![Pipeline Manager Interface](docs/screenshot-2026-01-11)
+![Pipeline Manager Interface](docs/screenshot-2026-01-11.png)
 ## Requirements
 
 ### System Requirements
