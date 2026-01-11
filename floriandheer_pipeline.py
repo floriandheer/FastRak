@@ -161,7 +161,7 @@ CREATIVE_CATEGORIES = {
         "scripts": {
             "backup_musicbee": {
                 "name": "Backup Music to OneDrive",
-                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Audio_MusicBeeBackup.py"),
+                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Audio_Backup.py"),
                 "description": "Backup MusicBee library to OneDrive, only transferring changed or new files",
                 "icon": "💾"
             }
@@ -173,7 +173,7 @@ CREATIVE_CATEGORIES = {
                 "scripts": {
                     "sync_playlists": {
                         "name": "Sync Playlists to Traktor",
-                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Audio_TraktorSyncPlaylists.py"),
+                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Audio_TraktorSync.py"),
                         "description": "Synchronize iTunes playlists to Traktor DJ library with WAV conversion",
                         "icon": "🔄"
                     },
@@ -1786,7 +1786,7 @@ class ProfessionalPipelineGUI:
             widget.bind("<Button-1>", on_click)
 
     def _create_persistent_notes_button(self):
-        """Create a persistent notepad-style button (called once during setup)."""
+        """Create persistent Open Directory and Open Notes buttons (called once during setup)."""
         parent = self.notes_button_container
 
         # Notepad yellow colors (store for hover effects)
@@ -1795,14 +1795,89 @@ class ProfessionalPipelineGUI:
         notepad_accent = "#FFD54F"  # Golden accent
         self._notepad_text_color = "#5D4037"  # Brown text for notepad feel
 
+        # Folder button colors (blue theme)
+        self._folder_bg = "#E3F2FD"  # Light blue
+        self._folder_hover = "#BBDEFB"  # Slightly darker blue for hover
+        folder_accent = "#2196F3"  # Blue accent
+        self._folder_text_color = "#1565C0"  # Dark blue text
+
         # Store current category for click handler
         self._notes_category = None
+        self._folder_path = None
+        self._folder_category = None
 
-        # Separator line above notes button
+        # Separator line above buttons
         separator = tk.Frame(parent, bg=COLORS["border"], height=1)
         separator.pack(fill=tk.X, pady=(10, 8))
 
-        # Button frame with notepad styling
+        # === TOP BUTTON: Open Directory ===
+        self._folder_btn_frame = tk.Frame(parent, bg=self._folder_bg, cursor="hand2")
+        self._folder_btn_frame.pack(fill=tk.X, pady=(0, 4))
+
+        # Left accent bar (blue)
+        folder_accent_bar = tk.Frame(self._folder_btn_frame, bg=folder_accent, width=4)
+        folder_accent_bar.pack(side=tk.LEFT, fill=tk.Y)
+
+        # Content area
+        self._folder_content = tk.Frame(self._folder_btn_frame, bg=self._folder_bg)
+        self._folder_content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=8)
+
+        # Folder icon
+        self._folder_icon = tk.Label(
+            self._folder_content,
+            text="📂",
+            font=font.Font(family="Segoe UI Emoji", size=12),
+            fg=self._folder_text_color,
+            bg=self._folder_bg
+        )
+        self._folder_icon.pack(side=tk.LEFT)
+
+        # Text label
+        self._folder_label = tk.Label(
+            self._folder_content,
+            text="Open Directory",
+            font=font.Font(family="Segoe UI", size=9),
+            fg=self._folder_text_color,
+            bg=self._folder_bg,
+            anchor="w"
+        )
+        self._folder_label.pack(side=tk.LEFT, padx=(6, 0), fill=tk.X, expand=True)
+
+        # Folder button hover effects
+        def on_folder_enter(e):
+            self._folder_btn_frame.configure(bg=self._folder_hover)
+            self._folder_content.configure(bg=self._folder_hover)
+            self._folder_icon.configure(bg=self._folder_hover)
+            self._folder_label.configure(bg=self._folder_hover)
+
+        def on_folder_leave(e):
+            self._folder_btn_frame.configure(bg=self._folder_bg)
+            self._folder_content.configure(bg=self._folder_bg)
+            self._folder_icon.configure(bg=self._folder_bg)
+            self._folder_label.configure(bg=self._folder_bg)
+
+        def on_folder_click(e):
+            if self._folder_category:
+                # Check if project tracker is in archive mode
+                is_archive_mode = False
+                if hasattr(self, 'project_tracker') and self.project_tracker:
+                    if hasattr(self.project_tracker, 'filter_status'):
+                        is_archive_mode = self.project_tracker.filter_status.get() == "archived"
+
+                if is_archive_mode:
+                    # Open archive directory
+                    archive_path = self.path_config.get_archive_path(self._folder_category)
+                    self.open_folder(archive_path)
+                elif self._folder_path:
+                    # Open active directory
+                    self.open_folder(self._folder_path)
+
+        for widget in [self._folder_btn_frame, self._folder_content, self._folder_icon, self._folder_label]:
+            widget.bind("<Enter>", on_folder_enter)
+            widget.bind("<Leave>", on_folder_leave)
+            widget.bind("<Button-1>", on_folder_click)
+
+        # === BOTTOM BUTTON: Open Notes ===
         self._notes_btn_frame = tk.Frame(parent, bg=self._notepad_bg, cursor="hand2")
         self._notes_btn_frame.pack(fill=tk.X, pady=(0, 5))
 
@@ -1812,13 +1887,13 @@ class ProfessionalPipelineGUI:
 
         # Content area
         self._notes_content = tk.Frame(self._notes_btn_frame, bg=self._notepad_bg)
-        self._notes_content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=12, pady=10)
+        self._notes_content.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=8)
 
         # Notepad icon
         self._notes_icon = tk.Label(
             self._notes_content,
             text="📝",
-            font=font.Font(family="Segoe UI Emoji", size=14),
+            font=font.Font(family="Segoe UI Emoji", size=12),
             fg=self._notepad_text_color,
             bg=self._notepad_bg
         )
@@ -1828,51 +1903,55 @@ class ProfessionalPipelineGUI:
         self._notes_label = tk.Label(
             self._notes_content,
             text="Open Notes",
-            font=font.Font(family="Segoe UI", size=10),
+            font=font.Font(family="Segoe UI", size=9),
             fg=self._notepad_text_color,
             bg=self._notepad_bg,
             anchor="w"
         )
-        self._notes_label.pack(side=tk.LEFT, padx=(10, 0), fill=tk.X, expand=True)
+        self._notes_label.pack(side=tk.LEFT, padx=(6, 0), fill=tk.X, expand=True)
 
-        # Arrow indicator
-        self._notes_arrow = tk.Label(
-            self._notes_content,
-            text=">",
-            font=font.Font(family="Segoe UI", size=10),
-            fg=self._notepad_text_color,
-            bg=self._notepad_bg
-        )
-        self._notes_arrow.pack(side=tk.RIGHT)
-
-        # Hover effects
-        def on_enter(e):
+        # Notes button hover effects
+        def on_notes_enter(e):
             self._notes_btn_frame.configure(bg=self._notepad_hover)
             self._notes_content.configure(bg=self._notepad_hover)
             self._notes_icon.configure(bg=self._notepad_hover)
             self._notes_label.configure(bg=self._notepad_hover)
-            self._notes_arrow.configure(bg=self._notepad_hover)
 
-        def on_leave(e):
+        def on_notes_leave(e):
             self._notes_btn_frame.configure(bg=self._notepad_bg)
             self._notes_content.configure(bg=self._notepad_bg)
             self._notes_icon.configure(bg=self._notepad_bg)
             self._notes_label.configure(bg=self._notepad_bg)
-            self._notes_arrow.configure(bg=self._notepad_bg)
 
-        def on_click(e):
+        def on_notes_click(e):
             if self._notes_category:
                 self.open_note(self._notes_category)
 
-        for widget in [self._notes_btn_frame, self._notes_content, self._notes_icon, self._notes_label, self._notes_arrow]:
-            widget.bind("<Enter>", on_enter)
-            widget.bind("<Leave>", on_leave)
-            widget.bind("<Button-1>", on_click)
+        for widget in [self._notes_btn_frame, self._notes_content, self._notes_icon, self._notes_label]:
+            widget.bind("<Enter>", on_notes_enter)
+            widget.bind("<Leave>", on_notes_leave)
+            widget.bind("<Button-1>", on_notes_click)
 
     def _update_notes_button(self, category_key):
-        """Update the notes button text for the current category."""
+        """Update the notes and folder buttons for the current category."""
         self._notes_category = category_key
-        self._notes_label.configure(text=f"Open {category_key.title()} Notes")
+        self._notes_label.configure(text=f"{category_key.title()} Notes")
+
+        # Update folder button based on category's folder_path
+        category_data = PIPELINE_CATEGORIES.get(category_key, {})
+        folder_path = category_data.get('folder_path')
+
+        if folder_path:
+            self._folder_path = folder_path
+            self._folder_category = category_key
+            self._folder_label.configure(text=f"{category_key.title()} Directory")
+            # Re-pack in correct order: folder button first, then notes button
+            self._folder_btn_frame.pack(fill=tk.X, pady=(0, 4), before=self._notes_btn_frame)
+        else:
+            # Hide folder button for categories without folder_path (e.g., Global Tools)
+            self._folder_path = None
+            self._folder_category = None
+            self._folder_btn_frame.pack_forget()
 
     def setup_grid_layout(self, parent_frame, categories):
         """Setup grid layout for categories."""

@@ -13,6 +13,7 @@ import argparse
 import threading
 import shutil
 import logging
+import json
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import xml.etree.ElementTree as ET
@@ -21,6 +22,8 @@ import re
 import subprocess
 import tempfile
 import copy
+from typing import Optional, Dict, List, Any
+from dataclasses import dataclass, asdict, field
 
 # Setup logging using shared utility
 from shared_logging import get_logger, setup_logging as setup_shared_logging
@@ -29,10 +32,87 @@ from shared_logging import get_logger, setup_logging as setup_shared_logging
 logger = get_logger("traktor_sync")
 VALID_EXTENSIONS = {'.mp3', '.flac', '.wav', '.aiff', '.m4a', '.ogg', '.opus'}
 
+# Configuration paths
+APP_DATA_DIR = os.path.join(os.path.expanduser("~"), "AppData", "Local", "PipelineManager")
+CONFIG_FILE = os.path.join(APP_DATA_DIR, "traktor_sync_config.json")
+
+
+# ============================================================================
+# DATA CLASSES
+# ============================================================================
+
+@dataclass
+class SyncSettings:
+    """Sync configuration settings."""
+    itunes_xml_path: str = ""
+    dj_library_path: str = ""
+    export_xml_path: str = ""
+    target_os: str = "Local"
+    mac_dj_library_path: str = "/Users/flori/Music/DJ Library"
+    debug_mode: bool = True
+    skip_existing: bool = True
+    overwrite_all: bool = False
+    archive_removed: bool = True
+    selected_playlists: List[str] = field(default_factory=list)
+    selection_mode: str = "include"
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'SyncSettings':
+        valid_fields = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
+        return cls(**valid_fields)
+
+
+# ============================================================================
+# CONFIGURATION MANAGER
+# ============================================================================
+
+class ConfigManager:
+    """Manages persistent configuration settings."""
+
+    def __init__(self, config_path: str = CONFIG_FILE):
+        self.config_path = config_path
+        self.settings = self._load_settings()
+
+    def _load_settings(self) -> SyncSettings:
+        """Load settings from file or create defaults."""
+        if os.path.exists(self.config_path):
+            try:
+                with open(self.config_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    logger.info(f"Loaded settings from {self.config_path}")
+                    return SyncSettings.from_dict(data)
+            except Exception as e:
+                logger.warning(f"Failed to load settings: {e}, using defaults")
+
+        return SyncSettings()
+
+    def save_settings(self) -> bool:
+        """Save current settings to file."""
+        try:
+            os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
+            with open(self.config_path, 'w', encoding='utf-8') as f:
+                json.dump(self.settings.to_dict(), f, indent=2)
+            logger.info(f"Settings saved to {self.config_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save settings: {e}")
+            return False
+
+    def update_settings(self, **kwargs) -> None:
+        """Update specific settings."""
+        for key, value in kwargs.items():
+            if hasattr(self.settings, key):
+                setattr(self.settings, key, value)
+        self.save_settings()
+
+
 class PlaylistSyncUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("iTunes Playlist Sync Tool")
+        self.root.title("Traktor Sync")
         self.root.geometry("900x1100")
         self.root.minsize(900, 800)
         
@@ -43,7 +123,7 @@ class PlaylistSyncUI:
         header_frame.grid(row=0, column=0, sticky="ew", padx=0, pady=0)
         header_frame.grid_propagate(False)
         
-        title_label = tk.Label(header_frame, text="iTunes Playlist Sync Tool", 
+        title_label = tk.Label(header_frame, text="Traktor Sync", 
                              font=("Arial", 16, "bold"), fg="white", bg="#2c3e50")
         title_label.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
         
@@ -62,30 +142,60 @@ class PlaylistSyncUI:
         self.status_bar.grid(row=2, column=0, sticky="ew")
         
         self.syncing = False
+        self.config_manager = ConfigManager()
         self.initialize_default_paths()
         self.all_playlists = []  # Will be populated when analyzing XML
         self.playlist_data = {}  # Store playlist metadata
         self.itunes_root = None  # Store the XML root for reuse
         
     def initialize_default_paths(self):
-        possible_itunes_paths = [
-            "~/Music/iTunes/iTunes Music Library.xml",
-            "~/Music/iTunes/iTunes Library.xml",
-            "~/My Music/iTunes/iTunes Music Library.xml",
-            os.path.join(os.environ.get('USERPROFILE', ''), 'Music', 'iTunes', 'iTunes Music Library.xml'),
-            os.path.join(os.environ.get('USERPROFILE', ''), 'My Music', 'iTunes', 'iTunes Music Library.xml'),
-            "M:\\iTunes Music Library.xml"
-        ]
-        
-        for path in possible_itunes_paths:
-            expanded_path = os.path.expanduser(path)
-            if os.path.exists(expanded_path):
-                self.itunes_xml_var.set(expanded_path)
-                break
-        
-        default_dj_path = os.path.join(os.environ.get('USERPROFILE', ''), 'Music')
-        self.dj_library_var.set(os.path.join(default_dj_path, 'DJ Library'))
-        self.export_xml_var.set(os.path.join(default_dj_path, 'DJ Library.xml'))
+        """Initialize paths from saved settings or use defaults."""
+        settings = self.config_manager.settings
+
+        # Try to load iTunes XML from saved settings first
+        if settings.itunes_xml_path and os.path.exists(settings.itunes_xml_path):
+            self.itunes_xml_var.set(settings.itunes_xml_path)
+        else:
+            # Fall back to default paths
+            possible_itunes_paths = [
+                "~/Music/iTunes/iTunes Music Library.xml",
+                "~/Music/iTunes/iTunes Library.xml",
+                "~/My Music/iTunes/iTunes Music Library.xml",
+                os.path.join(os.environ.get('USERPROFILE', ''), 'Music', 'iTunes', 'iTunes Music Library.xml'),
+                os.path.join(os.environ.get('USERPROFILE', ''), 'My Music', 'iTunes', 'iTunes Music Library.xml'),
+                "M:\\iTunes Music Library.xml"
+            ]
+
+            for path in possible_itunes_paths:
+                expanded_path = os.path.expanduser(path)
+                if os.path.exists(expanded_path):
+                    self.itunes_xml_var.set(expanded_path)
+                    break
+
+        # Load DJ Library and Export XML paths
+        if settings.dj_library_path:
+            self.dj_library_var.set(settings.dj_library_path)
+        else:
+            default_dj_path = os.path.join(os.environ.get('USERPROFILE', ''), 'Music')
+            self.dj_library_var.set(os.path.join(default_dj_path, 'DJ Library'))
+
+        if settings.export_xml_path:
+            self.export_xml_var.set(settings.export_xml_path)
+        else:
+            default_dj_path = os.path.join(os.environ.get('USERPROFILE', ''), 'Music')
+            self.export_xml_var.set(os.path.join(default_dj_path, 'DJ Library.xml'))
+
+        # Load other settings
+        self.target_os_var.set(settings.target_os)
+        self.mac_dj_library_var.set(settings.mac_dj_library_path)
+        self.debug_var.set(settings.debug_mode)
+        self.skip_existing_var.set(settings.skip_existing)
+        self.overwrite_all_var.set(settings.overwrite_all)
+        self.archive_removed_var.set(settings.archive_removed)
+        self.selection_mode.set(settings.selection_mode)
+
+        # Update Mac paths visibility based on loaded target_os
+        self.on_target_os_changed()
 
     def create_config_panel(self, parent):
         config_frame = ttk.LabelFrame(parent, text="Configuration")
@@ -293,6 +403,9 @@ class PlaylistSyncUI:
         self.load_playlists_btn = ttk.Button(main_btn_frame, text="Load Playlists", command=self.load_playlists, width=15)
         self.load_playlists_btn.grid(row=0, column=1, padx=10)
 
+        self.save_settings_btn = ttk.Button(main_btn_frame, text="Save Settings", command=self._save_settings, width=15)
+        self.save_settings_btn.grid(row=1, column=1, padx=10)
+
         self.export_xml_btn = tk.Button(main_btn_frame, text="Export XML", command=self.export_xml_only, width=15, bg="yellow", fg="black", font=('', 9, 'bold'))
         self.export_xml_btn.grid(row=0, column=2, padx=10)
 
@@ -305,13 +418,37 @@ class PlaylistSyncUI:
     def on_target_os_changed(self, event=None):
         """Handle target OS selection change"""
         target_os = self.target_os_var.get()
-        
+
         if target_os == "External":
             self.mac_paths_frame.grid()
             self.os_info_label.config(text="Export to USB/local, then copy to external device")
         else:
             self.mac_paths_frame.grid_remove()
             self.os_info_label.config(text="")
+
+    def _save_settings(self):
+        """Save current UI settings to config file."""
+        # Collect selected playlists
+        selected = [
+            self.playlist_tree.item(item, "text")
+            for item in self.playlist_tree.selection()
+        ]
+
+        self.config_manager.update_settings(
+            itunes_xml_path=self.itunes_xml_var.get(),
+            dj_library_path=self.dj_library_var.get(),
+            export_xml_path=self.export_xml_var.get(),
+            target_os=self.target_os_var.get(),
+            mac_dj_library_path=self.mac_dj_library_var.get(),
+            debug_mode=self.debug_var.get(),
+            skip_existing=self.skip_existing_var.get(),
+            overwrite_all=self.overwrite_all_var.get(),
+            archive_removed=self.archive_removed_var.get(),
+            selected_playlists=selected,
+            selection_mode=self.selection_mode.get()
+        )
+        self.status_var.set("Settings saved")
+        messagebox.showinfo("Settings Saved", "Configuration saved successfully!")
 
     def update_selection_mode(self):
         """Update the UI when selection mode changes"""
