@@ -1642,6 +1642,10 @@ class ProfessionalPipelineGUI:
             if hasattr(self.project_tracker, 'set_scope'):
                 self.project_tracker.set_scope(scope)
 
+        # Update folder path based on new scope (if a category is selected)
+        if hasattr(self, '_folder_category') and self._folder_category:
+            self._update_notes_button(self._folder_category)
+
     def _update_scope_button_styles(self):
         """Update scope button visual states based on current selection."""
         if not hasattr(self, 'scope_buttons'):
@@ -1942,9 +1946,21 @@ class ProfessionalPipelineGUI:
         folder_path = category_data.get('folder_path')
 
         if folder_path:
+            # Categories that support _Personal subfolder
+            categories_with_personal = ["visual", "realtime", "web", "photo"]
+
+            # Adjust path based on current scope
+            if hasattr(self, 'current_scope') and self.current_scope == "personal":
+                if category_key.lower() in categories_with_personal:
+                    folder_path = os.path.join(folder_path, "_Personal")
+
             self._folder_path = folder_path
             self._folder_category = category_key
-            self._folder_label.configure(text=f"{category_key.title()} Directory")
+            # Show _Personal in label when in personal scope
+            if hasattr(self, 'current_scope') and self.current_scope == "personal" and category_key.lower() in categories_with_personal:
+                self._folder_label.configure(text=f"{category_key.title()} Personal")
+            else:
+                self._folder_label.configure(text=f"{category_key.title()} Directory")
             # Re-pack in correct order: folder button first, then notes button
             self._folder_btn_frame.pack(fill=tk.X, pady=(0, 4), before=self._notes_btn_frame)
         else:

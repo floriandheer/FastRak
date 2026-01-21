@@ -71,9 +71,15 @@ CATEGORY_COLORS = {
 
 # Project type icons and display names
 PROJECT_TYPES = {
-    "GD": {"icon": "🎬", "name": "Graphic Design", "color": "#f97316"},
-    "VFX": {"icon": "🎬", "name": "CG", "color": "#f97316"},
-    "VJ": {"icon": "💫", "name": "VJ", "color": "#f97316"},
+    # New Visual types
+    "Visual-Graphic Design": {"icon": "🖼️", "name": "Visual-Graphic Design", "color": "#f97316"},
+    "Visual-Computer Graphics": {"icon": "🎬", "name": "Visual-Computer Graphics", "color": "#f97316"},
+    "Visual-VJ": {"icon": "💫", "name": "Visual-VJ", "color": "#f97316"},
+    # Legacy Visual types (for backwards compatibility)
+    "GD": {"icon": "🖼️", "name": "Visual-Graphic Design", "color": "#f97316"},
+    "VFX": {"icon": "🎬", "name": "Visual-Computer Graphics", "color": "#f97316"},
+    "VJ": {"icon": "💫", "name": "Visual-VJ", "color": "#f97316"},
+    # Other types
     "Audio": {"icon": "🎵", "name": "Audio", "color": "#9333ea"},
     "Physical": {"icon": "🔧", "name": "3D Print", "color": "#ec4899"},
     "Godot": {"icon": "⚡", "name": "Godot", "color": "#06b6d4"},
@@ -85,9 +91,15 @@ PROJECT_TYPES = {
 
 # Archive category mapping
 ARCHIVE_CATEGORIES = {
+    # New Visual types
+    "Visual-Graphic Design": "Visual",
+    "Visual-Computer Graphics": "Visual",
+    "Visual-VJ": "Visual",
+    # Legacy Visual types (for backwards compatibility)
     "GD": "Visual",
     "VFX": "Visual",
     "VJ": "Visual",
+    # Other types
     "Audio": "Audio",
     "Physical": "Physical",
     "Godot": "RealTime",
@@ -393,8 +405,10 @@ class ProjectImporter:
         "RealTime_Personal": _get_platform_path(r"D:\_work\Active\RealTIme\_Personal"),
         # Photo
         "Photo": _get_platform_path(r"D:\_work\Active\Photo"),
+        "Photo_Personal": _get_platform_path(r"D:\_work\Active\Photo\_Personal"),
         # Web
         "Web": _get_platform_path(r"D:\_work\Active\Web"),
+        "Web_Personal": _get_platform_path(r"D:\_work\Active\Web\_Personal"),
     }
 
     # Archive directories
@@ -408,8 +422,12 @@ class ProjectImporter:
         # RealTime
         "RealTime": _get_platform_path(r"D:\_work\Archive\RealTime"),
         "RealTime_Personal": _get_platform_path(r"D:\_work\Archive\RealTime\_Personal"),
+        # Photo
+        "Photo": _get_platform_path(r"D:\_work\Archive\Photo"),
+        "Photo_Personal": _get_platform_path(r"D:\_work\Archive\Photo\_Personal"),
         # Web
         "Web": _get_platform_path(r"D:\_work\Archive\Web"),
+        "Web_Personal": _get_platform_path(r"D:\_work\Archive\Web\_Personal"),
     }
 
     @classmethod
@@ -1426,12 +1444,16 @@ class ProjectTrackerApp:
             else:
                 projects = self.db.get_all_projects(status=status)
 
-        # Filter by scope (personal/client) based on client name
+        # Filter by scope (personal/client) based on client name or is_personal metadata
         scope = self.filter_scope.get()
         if scope == "personal":
-            projects = [p for p in projects if p.get("client_name", "").lower() == "personal"]
+            projects = [p for p in projects if
+                        p.get("client_name", "").lower() == "personal" or
+                        p.get("metadata", {}).get("is_personal", False)]
         elif scope == "client":
-            projects = [p for p in projects if p.get("client_name", "").lower() != "personal"]
+            projects = [p for p in projects if
+                        p.get("client_name", "").lower() != "personal" and
+                        not p.get("metadata", {}).get("is_personal", False)]
 
         # Group projects by category
         categories = {
@@ -1448,7 +1470,7 @@ class ProjectTrackerApp:
             project_type = project.get("project_type", "")
 
             # Map project types to categories
-            if project_type in ["GD", "VFX", "VJ"]:
+            if project_type in ["GD", "VFX", "VJ"] or project_type.startswith("Visual-"):
                 categories["Visual"]["projects"].append(project)
             elif project_type == "Audio":
                 categories["Audio"]["projects"].append(project)
@@ -1734,9 +1756,16 @@ class ProjectTrackerApp:
             # Set focus to canvas for keyboard navigation
             self.grid_canvas.focus_set()
 
+        def on_card_double_click(e, p=project, idx=card_index):
+            self.grid_selected_index = idx
+            self.selected_project = p
+            self._open_folder()
+
         card.bind("<Button-1>", on_card_click)
+        card.bind("<Double-1>", on_card_double_click)
         for child in card.winfo_children():
             child.bind("<Button-1>", on_card_click)
+            child.bind("<Double-1>", on_card_double_click)
 
         return card
 

@@ -260,7 +260,12 @@ class FolderStructureCreator:
         
         # Display preview
         base_dir = self.base_dir_var.get()
-        self.preview_text.insert(tk.END, f"Project will be created at:\n{base_dir}/{project_dir}\n\n")
+        # If Personal project, show _Personal subfolder in preview
+        if self.personal_var.get():
+            preview_path = f"{base_dir}/_Personal/{project_dir}"
+        else:
+            preview_path = f"{base_dir}/{project_dir}"
+        self.preview_text.insert(tk.END, f"Project will be created at:\n{preview_path}\n\n")
         self.preview_text.insert(tk.END, f"Template source:\n{template_dir}\n\n")
         self.preview_text.insert(tk.END, "Software Specifications:\n")
         self.preview_text.insert(tk.END, f"Houdini: {houdini}\n")
@@ -358,7 +363,13 @@ class FolderStructureCreator:
             messagebox.showerror("Error", "Please select a valid template directory.")
             return
 
-        # Build the base directory path
+        # Build the project directory path
+        # If Personal project, add _Personal subfolder
+        if self.personal_var.get():
+            base_dir = os.path.join(base_dir, "_Personal")
+            # Create _Personal folder if it doesn't exist
+            os.makedirs(base_dir, exist_ok=True)
+
         project_dir = os.path.join(base_dir, f'{date}_CG_{client_name}_{project_name}')
 
         try:
@@ -382,7 +393,7 @@ class FolderStructureCreator:
                     project_data = {
                         'client_name': client_name,
                         'project_name': project_name,
-                        'project_type': 'VFX',
+                        'project_type': 'Visual-Computer Graphics',
                         'date_created': date,
                         'path': project_dir,
                         'base_directory': base_dir,
@@ -394,7 +405,8 @@ class FolderStructureCreator:
                                 'blender': blender_version,
                                 'fusion': fusion_version
                             },
-                            'include_shots': include_shots
+                            'include_shots': include_shots,
+                            'is_personal': self.personal_var.get()
                         }
                     }
 

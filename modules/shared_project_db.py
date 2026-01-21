@@ -264,7 +264,7 @@ class ProjectDatabase:
             project_data: Dictionary with keys:
                 - client_name: str
                 - project_name: str
-                - project_type: str (GD, VFX, Audio, Physical, Godot, TD, Photo)
+                - project_type: str (Visual-Graphic Design, Visual-Computer Graphics, Visual-VJ, Audio, Physical, RealTime-Godot, RealTime-TD, Photo)
                 - date_created: str (YYYY-MM-DD)
                 - path: str
                 - base_directory: str
