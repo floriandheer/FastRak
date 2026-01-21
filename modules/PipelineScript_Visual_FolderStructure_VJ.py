@@ -250,7 +250,12 @@ class VJFolderStructureCreator:
             folder_name = f"{date}_VJ_{project}"
 
         # Display preview
-        self.preview_text.insert(tk.END, f"Project will be created at:\n{base_dir}/{folder_name}\n\n")
+        # If Personal project, show _Personal subfolder in preview
+        if self.personal_var.get():
+            preview_path = f"{base_dir}/_Personal/{folder_name}"
+        else:
+            preview_path = f"{base_dir}/{folder_name}"
+        self.preview_text.insert(tk.END, f"Project will be created at:\n{preview_path}\n\n")
 
         # Software specs
         self.preview_text.insert(tk.END, "Software Specifications:\n")
@@ -298,6 +303,12 @@ class VJFolderStructureCreator:
             folder_name = f"{date}_VJ_{project_name}"
             client_name = "Personal"
 
+        # If Personal project, add _Personal subfolder
+        if self.personal_var.get():
+            base_dir = os.path.join(base_dir, "_Personal")
+            # Create _Personal folder if it doesn't exist
+            os.makedirs(base_dir, exist_ok=True)
+
         project_dir = os.path.join(base_dir, folder_name)
 
         try:
@@ -318,7 +329,7 @@ class VJFolderStructureCreator:
                     project_data = {
                         'client_name': client_name,
                         'project_name': project_name,
-                        'project_type': 'VFX',  # VJ projects are stored under Visual/VFX type
+                        'project_type': 'Visual-VJ',
                         'date_created': date,
                         'path': project_dir,
                         'base_directory': base_dir,
