@@ -100,6 +100,27 @@ To pin a VBS launcher shortcut to your Windows taskbar:
 
 **Note:** You'll need to reapply the custom icon after adding the `explorer` prefix, as Windows may reset it.
 
+### Keyboard Shortcuts
+
+The Pipeline Manager features a comprehensive keyboard navigation system designed for efficiency. Press **F1** or click the **Help** button to view all shortcuts.
+
+**Quick Reference:**
+| Keys | Action |
+|------|--------|
+| **1/2/3** | Scope: Personal / Work / All |
+| **4/5/6** | Status: Active / Archive / All |
+| **W/S** | Navigate between panels |
+| **A/D** | Switch left panel ↔ Project Tracker |
+| **Arrows** | Navigate within current panel |
+| **Shift+Letter** | Quick select category (V/R/A/P/H/W/B/G) |
+| **Ctrl+N** | Create new project |
+| **G** | Open category folder |
+| **N** | Open category notes |
+| **Ctrl+F** or **/** | Focus search |
+| **F1** | Open keyboard shortcuts documentation |
+
+For the complete shortcut reference and design philosophy, see **[SHORTCUTS.md](SHORTCUTS.md)**.
+
 ### Available Pipeline Scripts
 
 The Pipeline Manager includes 14+ specialized scripts organized by category:
