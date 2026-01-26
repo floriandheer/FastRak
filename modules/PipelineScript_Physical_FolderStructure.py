@@ -14,32 +14,57 @@ sys.path.insert(0, str(MODULES_DIR))
 from shared_path_config import get_path_config
 
 class FolderStructureCreator:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("3D Printing Folder Structure")
-        self.root.geometry("750x850")
-        self.root.minsize(700, 900)
+    def __init__(self, root_or_frame, embedded=False, on_project_created=None, on_cancel=None):
+        """
+        Initialize the Folder Structure Creator.
+
+        Args:
+            root_or_frame: Either a Tk root window (standalone) or a Frame (embedded)
+            embedded: If True, build UI into provided frame without window configuration
+            on_project_created: Callback function called with project_data when project is created
+            on_cancel: Callback function called when user cancels
+        """
+        self.embedded = embedded
+        self.on_project_created = on_project_created
+        self.on_cancel = on_cancel
+
+        if embedded:
+            # Embedded mode: root_or_frame is the parent frame
+            self.root = root_or_frame.winfo_toplevel()
+            self.parent = root_or_frame
+        else:
+            # Standalone mode: root_or_frame is the Tk root
+            self.root = root_or_frame
+            self.parent = root_or_frame
+            self.root.title("3D Printing Folder Structure")
+            self.root.geometry("750x850")
+            self.root.minsize(700, 900)
 
         # Initialize path config
         self.path_config = get_path_config()
 
-        # Configure main window
-        self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(1, weight=1)
-        
-        # Create header
-        header_frame = tk.Frame(self.root, bg="#2c3e50", height=60)
-        header_frame.grid(row=0, column=0, sticky="ew", padx=0, pady=0)
-        header_frame.grid_propagate(False)
-        
-        # Add title to header
-        title_label = tk.Label(header_frame, text="3D Printing Folder Structure", 
-                              font=("Arial", 16, "bold"), fg="white", bg="#2c3e50")
-        title_label.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
-        
+        if not embedded:
+            # Configure main window (standalone only)
+            self.root.columnconfigure(0, weight=1)
+            self.root.rowconfigure(1, weight=1)
+
+            # Create header (standalone only)
+            header_frame = tk.Frame(self.root, bg="#2c3e50", height=60)
+            header_frame.grid(row=0, column=0, sticky="ew", padx=0, pady=0)
+            header_frame.grid_propagate(False)
+
+            # Add title to header
+            title_label = tk.Label(header_frame, text="3D Printing Folder Structure",
+                                  font=("Arial", 16, "bold"), fg="white", bg="#2c3e50")
+            title_label.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
+
         # Create main frame with preview only
-        main_frame = ttk.Frame(self.root)
-        main_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
+        if embedded:
+            main_frame = ttk.Frame(self.parent)
+            main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        else:
+            main_frame = ttk.Frame(self.root)
+            main_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
         main_frame.columnconfigure(0, weight=1)
         main_frame.columnconfigure(1, weight=2)  # Give more weight to preview
         main_frame.rowconfigure(0, weight=1)
@@ -202,10 +227,20 @@ class FolderStructureCreator:
         self.notes_text.grid(row=0, column=0, sticky="nsew", padx=(5, 0), pady=5)
         self.notes_scrollbar.config(command=self.notes_text.yview)
         
+        # Button frame for Create and Cancel buttons
+        button_frame = ttk.Frame(form_frame)
+        button_frame.grid(row=9, column=0, columnspan=3, pady=20)
+
         # Create button with padding to make it larger
-        create_btn = ttk.Button(form_frame, text="Create Project Structure", 
+        create_btn = ttk.Button(button_frame, text="Create Project Structure",
                                command=self.create_structure, padding=(20, 10))
-        create_btn.grid(row=9, column=0, columnspan=3, pady=20)
+        create_btn.pack(side=tk.LEFT, padx=5)
+
+        # Cancel button (shown in embedded mode)
+        if self.embedded:
+            cancel_btn = ttk.Button(button_frame, text="Cancel",
+                                   command=self._handle_cancel, padding=(20, 10))
+            cancel_btn.pack(side=tk.LEFT, padx=5)
         
         # Create preview panel (right side)
         preview_frame = ttk.LabelFrame(main_frame, text="Structure Preview")
@@ -222,12 +257,13 @@ class FolderStructureCreator:
         self.preview_text.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         self.preview_scrollbar.config(command=self.preview_text.yview)
         
-        # Status bar
+        # Status bar (only in standalone mode)
         self.status_var = tk.StringVar()
         self.status_var.set("Ready")
-        self.status_bar = tk.Label(self.root, textvariable=self.status_var, bd=1, 
-                                  relief=tk.SUNKEN, anchor=tk.W)
-        self.status_bar.grid(row=2, column=0, sticky="ew")
+        if not self.embedded:
+            self.status_bar = tk.Label(self.root, textvariable=self.status_var, bd=1,
+                                      relief=tk.SUNKEN, anchor=tk.W)
+            self.status_bar.grid(row=2, column=0, sticky="ew")
         
         # Define template path as constant (hidden from UI)
         self.template_dir_var = tk.StringVar(value='P:\_Structure\YYYY-MM-DD_Physical3DPrint_NameClient_NameProject')
@@ -600,15 +636,44 @@ class FolderStructureCreator:
                                    software_specs, slicer_software, printer_model)
             
             self.status_var.set(f"Created project structure for {project_name}")
-            
-            # Show success message
-            if messagebox.askyesno("Success", f"Project structure created successfully at:\n\n{project_dir}\n\nWould you like to open the folder?"):
-                self.open_folder(project_dir)
-                
+
+            # Build project data for callback
+            project_data = {
+                'client_name': client_name,
+                'project_name': project_name,
+                'project_type': 'Physical',
+                'date_created': date,
+                'path': project_dir,
+                'base_directory': base_dir,
+                'status': 'active',
+                'notes': self.notes_text.get(1.0, tk.END).strip(),
+                'metadata': {
+                    'software_specs': software_specs,
+                    'slicer': slicer_software,
+                    'printer': printer_model,
+                    'is_personal': self.personal_var.get(),
+                    'is_product': self.product_var.get()
+                }
+            }
+
+            # Handle success based on mode
+            if self.embedded and self.on_project_created:
+                # In embedded mode, call the callback with project data
+                self.on_project_created(project_data)
+            else:
+                # Show success message
+                if messagebox.askyesno("Success", f"Project structure created successfully at:\n\n{project_dir}\n\nWould you like to open the folder?"):
+                    self.open_folder(project_dir)
+
         except Exception as e:
             messagebox.showerror("Error", f"Failed to create structure: {str(e)}")
             self.status_var.set("Error creating project structure")
-    
+
+    def _handle_cancel(self):
+        """Handle cancel button click in embedded mode."""
+        if self.on_cancel:
+            self.on_cancel()
+
     def create_folder_structure(self, project_dir, date, software_specs):
         """Create the folder structure dynamically"""
         folders_to_create = []

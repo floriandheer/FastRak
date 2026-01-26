@@ -28,6 +28,11 @@ sys.path.insert(0, str(MODULES_DIR))
 from shared_logging import get_logger, setup_logging
 from shared_project_db import ProjectDatabase
 from shared_path_config import get_path_config
+from shared_creator_registry import (
+    CREATOR_REGISTRY, CREATIVE_CATEGORIES,
+    get_subtypes_for_category, get_subtype_display_name,
+    has_multiple_subtypes, get_creator_class, is_creative_category
+)
 
 # Module name for logging (must match setup_logging call)
 MODULE_NAME = "project_tracker"
@@ -766,15 +771,23 @@ class ProjectTrackerApp:
     Use embedded=True when integrating into another application (like Pipeline Manager).
     """
 
-    def __init__(self, root_or_frame, embedded=False):
+    def __init__(self, root_or_frame, embedded=False, status_callback=None, hint_callback=None, creation_start_callback=None, creation_done_callback=None):
         """
         Initialize the Project Tracker.
 
         Args:
             root_or_frame: Either a Tk root window (standalone) or a Frame (embedded)
             embedded: If True, skip window configuration and header
+            status_callback: Optional callback function for status messages (message, status_type)
+            hint_callback: Optional callback function for showing keyboard hints (hint_text)
+            creation_start_callback: Optional callback when project creation starts (FAB clicked)
+            creation_done_callback: Optional callback when project creation panel is closed
         """
         self.embedded = embedded
+        self.status_callback = status_callback
+        self.hint_callback = hint_callback
+        self.creation_start_callback = creation_start_callback
+        self.creation_done_callback = creation_done_callback
 
         if embedded:
             # Embedded mode: root_or_frame is the parent frame
@@ -832,6 +845,17 @@ class ProjectTrackerApp:
         # Category buttons storage
         self.category_buttons = {}
 
+        # Creation panel state management
+        self.view_state = "PROJECT_LIST"  # "PROJECT_LIST", "SUBTYPE_SELECTION", "CREATION_FORM"
+        self.creation_panel = None  # Frame for creation panel
+        self.active_creator = None  # Current embedded creator instance
+        self.fab_button = None  # Floating action button
+
+        # Subtype selection state (for keyboard navigation)
+        self.subtype_buttons = []
+        self.subtype_selected_index = 0
+        self.subtype_category = None
+
         # Build UI
         self._build_ui()
 
@@ -858,9 +882,6 @@ class ProjectTrackerApp:
 
         # Right panel (details)
         self._build_right_panel(main_frame)
-
-        # Status bar
-        self._build_status_bar()
 
     def _build_header(self):
         """Build header section."""
@@ -991,9 +1012,23 @@ class ProjectTrackerApp:
         search_label = tk.Label(controls_frame, text="Search:", bg="#0d1117", fg="white", font=("Arial", 9))
         search_label.grid(row=0, column=0, sticky=tk.W, pady=5)
 
-        search_entry = tk.Entry(controls_frame, textvariable=self.search_query, bg="#1c2128", fg="white",
+        self.search_entry = tk.Entry(controls_frame, textvariable=self.search_query, bg="#1c2128", fg="white",
                                insertbackground="white", font=("Arial", 10), width=30)
-        search_entry.grid(row=0, column=1, sticky=tk.W, padx=(5, 15), pady=5)
+        self.search_entry.grid(row=0, column=1, sticky=tk.W, padx=(5, 15), pady=5)
+
+        # Search hint on hover
+        def on_search_enter(e):
+            if self.hint_callback:
+                self.hint_callback("Shortcut: Ctrl+F or /")
+
+        def on_search_leave(e):
+            if self.hint_callback:
+                self.hint_callback("")
+
+        search_label.bind("<Enter>", on_search_enter)
+        search_label.bind("<Leave>", on_search_leave)
+        self.search_entry.bind("<Enter>", on_search_enter)
+        self.search_entry.bind("<Leave>", on_search_leave)
 
         # Filter buttons frame
         filter_frame = tk.Frame(controls_frame, bg="#0d1117")
@@ -1002,7 +1037,7 @@ class ProjectTrackerApp:
         # Store filter buttons for styling updates
         self.filter_buttons = {}
 
-        def create_filter_button(parent, text, value):
+        def create_filter_button(parent, text, value, shortcut):
             """Create a filter toggle button."""
             btn = tk.Label(
                 parent,
@@ -1023,10 +1058,16 @@ class ProjectTrackerApp:
             def on_enter(e):
                 if self.filter_status.get() != value:
                     btn.configure(bg="#2d333b")
+                # Show shortcut hint
+                if self.hint_callback:
+                    self.hint_callback(f"Shortcut: {shortcut}")
 
             def on_leave(e):
                 if self.filter_status.get() != value:
                     btn.configure(bg="#1c2128")
+                # Clear shortcut hint
+                if self.hint_callback:
+                    self.hint_callback("")
 
             btn.bind("<Button-1>", on_click)
             btn.bind("<Enter>", on_enter)
@@ -1035,9 +1076,9 @@ class ProjectTrackerApp:
             self.filter_buttons[value] = btn
             return btn
 
-        create_filter_button(filter_frame, "Active", "active")
-        create_filter_button(filter_frame, "Archive", "archived")
-        create_filter_button(filter_frame, "All", "all")
+        create_filter_button(filter_frame, "Active", "active", "4")
+        create_filter_button(filter_frame, "Archive", "archived", "5")
+        create_filter_button(filter_frame, "All", "all", "6")
 
         # Update initial button styling
         self._update_filter_button_styles()
@@ -1094,7 +1135,7 @@ class ProjectTrackerApp:
         grid_scale_label = tk.Label(self.grid_scale_frame, text="Size:", bg="#0d1117", fg="#8b949e",
                                    font=("Arial", 8))
         grid_scale_label.pack(side=tk.LEFT, padx=(0, 2))
-        self.grid_scale_slider = tk.Scale(self.grid_scale_frame, from_=50, to=150, orient=tk.HORIZONTAL,
+        self.grid_scale_slider = tk.Scale(self.grid_scale_frame, from_=100, to=225, orient=tk.HORIZONTAL,
                                          variable=self.grid_scale_value, command=self._on_grid_scale_changed,
                                          bg="#0d1117", fg="white", highlightthickness=0,
                                          troughcolor="#1c2128", activebackground="#58a6ff",
@@ -1215,11 +1256,11 @@ class ProjectTrackerApp:
         # Show list view by default
         self.list_frame.pack(fill=tk.BOTH, expand=True)
 
-        # Bottom: Project details
-        details_frame = tk.Frame(right_frame, bg="#1c2128")
-        details_frame.pack(fill=tk.X, padx=10, pady=10)
+        # Bottom: Project details (store reference for hiding during creation)
+        self.details_frame = tk.Frame(right_frame, bg="#1c2128")
+        self.details_frame.pack(fill=tk.X, padx=10, pady=10)
 
-        details_title = tk.Label(details_frame, text="Selected Project", bg="#1c2128", fg="white",
+        details_title = tk.Label(self.details_frame, text="Selected Project", bg="#1c2128", fg="white",
                                 font=("Arial", 10, "bold"))
         details_title.pack(anchor=tk.W, padx=10, pady=(10, 5))
 
@@ -1232,7 +1273,7 @@ class ProjectTrackerApp:
             ("Date", "date_created"),
         ]
 
-        details_grid = tk.Frame(details_frame, bg="#1c2128")
+        details_grid = tk.Frame(self.details_frame, bg="#1c2128")
         details_grid.pack(fill=tk.X, padx=10, pady=5)
 
         for i, (label, key) in enumerate(detail_fields):
@@ -1246,7 +1287,7 @@ class ProjectTrackerApp:
             self.detail_labels[key] = value_label
 
         # Path section with clickable copy-to-clipboard
-        path_section = tk.Frame(details_frame, bg="#1c2128")
+        path_section = tk.Frame(self.details_frame, bg="#1c2128")
         path_section.pack(fill=tk.X, padx=10, pady=(5, 0))
 
         # Active Path (only shown for active projects)
@@ -1282,7 +1323,7 @@ class ProjectTrackerApp:
         self.raw_path_label.bind("<Leave>", lambda e: self.raw_path_label.configure(fg="#58a6ff"))
 
         # Action buttons
-        button_frame = tk.Frame(details_frame, bg="#1c2128")
+        button_frame = tk.Frame(self.details_frame, bg="#1c2128")
         button_frame.pack(fill=tk.X, padx=10, pady=(10, 10))
 
         self.open_btn = tk.Button(
@@ -1330,28 +1371,364 @@ class ProjectTrackerApp:
         )
         self.unarchive_btn.pack(side=tk.LEFT, padx=5)
 
-    def _build_status_bar(self):
-        """Build status bar."""
-        if self.embedded:
-            # Simpler status bar for embedded mode
-            self.status_bar = tk.Label(
-                self.parent,
-                text="Ready",
-                bg="#161b22",
-                fg="#8b949e",
-                anchor=tk.W,
-                padx=10,
-                pady=5
-            )
+        # Store reference to right frame for FAB positioning
+        self.right_frame = right_frame
+
+        # Create the Floating Action Button (FAB) - positioned over view_container
+        self._create_fab_button()
+
+    def _create_fab_button(self):
+        """Create the floating action button for project creation."""
+        # Create FAB as a fixed-size frame with label for precise control
+        fab_size = 44  # Square size in pixels
+
+        self.fab_button = tk.Frame(
+            self.view_container,
+            width=fab_size,
+            height=fab_size,
+            bg="#3fb950",
+            cursor="hand2"
+        )
+        self.fab_button.pack_propagate(False)  # Prevent resizing based on content
+
+        # Label with big plus sign centered in the frame
+        self.fab_label = tk.Label(
+            self.fab_button,
+            text="+",
+            font=("Arial", 34, "bold"),
+            bg="#3fb950",
+            fg="white",
+            cursor="hand2"
+        )
+        self.fab_label.place(relx=0.5, rely=0.5, anchor="center")
+
+        # Bind click events to both frame and label (use ButtonRelease for reliability)
+        self.fab_button.bind("<ButtonRelease-1>", lambda e: self._on_fab_clicked())
+        self.fab_label.bind("<ButtonRelease-1>", lambda e: self._on_fab_clicked())
+
+        # Hover effects
+        def on_enter(e):
+            self.fab_button.configure(bg="#2ea043")
+            self.fab_label.configure(bg="#2ea043")
+            if self.hint_callback:
+                self.hint_callback("Shortcut: Ctrl+N")
+
+        def on_leave(e):
+            self.fab_button.configure(bg="#3fb950")
+            self.fab_label.configure(bg="#3fb950")
+            if self.hint_callback:
+                self.hint_callback("")
+
+        self.fab_button.bind("<Enter>", on_enter)
+        self.fab_button.bind("<Leave>", on_leave)
+        self.fab_label.bind("<Enter>", on_enter)
+        self.fab_label.bind("<Leave>", on_leave)
+
+        # Position in bottom-right corner of view_container (above details panel)
+        self.fab_button.place(relx=0.97, rely=0.97, anchor="se")
+
+        # Update FAB visibility based on current category
+        self._update_fab_visibility()
+
+    def _update_fab_visibility(self):
+        """Show/hide FAB based on current category and view state."""
+        if self.fab_button is None:
+            return
+
+        # Hide FAB when in creation mode
+        if self.view_state != "PROJECT_LIST":
+            self.fab_button.place_forget()
+            return
+
+        # Show FAB only for creative categories (not Business/Global)
+        if self.selected_category and is_creative_category(self.selected_category):
+            # Position in bottom-right corner of view_container (above details panel)
+            self.fab_button.place(relx=0.97, rely=0.97, anchor="se")
+            self.fab_button.lift()  # Ensure FAB stays on top
+            self.fab_label.lift()   # Also lift the label
+        elif self.selected_category is None:
+            # When no category selected (showing all), hide FAB
+            self.fab_button.place_forget()
         else:
-            # Full status bar for standalone mode
-            self.status_bar = ttk.Label(
-                self.root,
-                text="Ready",
-                relief=tk.SUNKEN,
-                anchor=tk.W
+            self.fab_button.place_forget()
+
+    def _on_fab_clicked(self):
+        """Handle FAB button click."""
+        if not self.selected_category:
+            messagebox.showinfo("Select Category", "Please select a category first.")
+            return
+
+        if not is_creative_category(self.selected_category):
+            return
+
+        # Notify parent that creation is starting
+        if self.creation_start_callback:
+            self.creation_start_callback()
+
+        # Check if category has multiple subtypes
+        if has_multiple_subtypes(self.selected_category):
+            self._show_subtype_selection(self.selected_category)
+        else:
+            # Single subtype - open form directly
+            subtypes = get_subtypes_for_category(self.selected_category)
+            if subtypes:
+                self._open_creation_form(self.selected_category, subtypes[0])
+
+    def _show_subtype_selection(self, category):
+        """Show panel with subtype selection buttons."""
+        self.view_state = "SUBTYPE_SELECTION"
+        self._update_fab_visibility()
+
+        # Hide the view container (list/grid views) and details panel
+        self.view_container.pack_forget()
+        self.details_frame.pack_forget()
+
+        # Create selection panel
+        self.creation_panel = tk.Frame(self.right_frame, bg="#1c2128")
+        self.creation_panel.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Header with back button and category color
+        header_color = CATEGORY_COLORS.get(category, "#1c2128")
+        header = tk.Frame(self.creation_panel, bg=header_color, height=50)
+        header.pack(fill=tk.X)
+        header.pack_propagate(False)
+
+        back_btn = tk.Button(
+            header,
+            text="< Back",
+            font=("Arial", 10),
+            bg=header_color,
+            fg="white",
+            activebackground=header_color,
+            activeforeground="#cccccc",
+            relief=tk.FLAT,
+            cursor="hand2",
+            command=self._close_creation_panel
+        )
+        back_btn.pack(side=tk.LEFT, padx=10, pady=10)
+
+        header_label = tk.Label(
+            header,
+            text=f"Create New {category} Project",
+            font=("Arial", 14, "bold"),
+            fg="white",
+            bg=header_color
+        )
+        header_label.pack(pady=15)
+
+        # Buttons container - horizontal layout
+        buttons_frame = tk.Frame(self.creation_panel, bg="#1c2128")
+        buttons_frame.pack(expand=True, pady=30)
+
+        # Store subtype buttons for keyboard navigation
+        self.subtype_buttons = []
+        self.subtype_selected_index = 0
+        self.subtype_category = category
+
+        # Create buttons for each subtype - horizontally spaced
+        subtypes = get_subtypes_for_category(category)
+        for idx, subtype in enumerate(subtypes):
+            display_name = get_subtype_display_name(subtype)
+            btn = tk.Button(
+                buttons_frame,
+                text=display_name,
+                font=("Arial", 12),
+                bg="#238636",
+                fg="white",
+                activebackground="#2ea043",
+                activeforeground="white",
+                relief=tk.FLAT,
+                cursor="hand2",
+                padx=20,
+                pady=10,
+                command=lambda s=subtype: self._open_creation_form(category, s)
             )
-        self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+            btn.pack(side=tk.LEFT, padx=10)
+            self.subtype_buttons.append({"button": btn, "subtype": subtype})
+
+        # Highlight first button by default
+        self._update_subtype_selection()
+
+        # Bind keyboard navigation to the creation panel
+        self.creation_panel.bind('<Left>', self._on_subtype_left)
+        self.creation_panel.bind('<Right>', self._on_subtype_right)
+        self.creation_panel.bind('<Return>', self._on_subtype_enter)
+        self.creation_panel.focus_set()
+
+    def _update_subtype_selection(self):
+        """Update visual highlighting for subtype selection."""
+        for idx, item in enumerate(self.subtype_buttons):
+            if idx == self.subtype_selected_index:
+                # Highlighted - darker green with border
+                item["button"].configure(bg="#2ea043", highlightbackground="white", highlightthickness=2)
+            else:
+                # Normal green
+                item["button"].configure(bg="#238636", highlightthickness=0)
+
+    def _on_subtype_left(self, event):
+        """Navigate left in subtype selection."""
+        if self.subtype_buttons and self.subtype_selected_index > 0:
+            self.subtype_selected_index -= 1
+            self._update_subtype_selection()
+        return "break"  # Stop event propagation
+
+    def _on_subtype_right(self, event):
+        """Navigate right in subtype selection."""
+        if self.subtype_buttons and self.subtype_selected_index < len(self.subtype_buttons) - 1:
+            self.subtype_selected_index += 1
+            self._update_subtype_selection()
+        return "break"  # Stop event propagation
+
+    def _on_subtype_enter(self, event):
+        """Select current subtype and open creation form."""
+        if self.subtype_buttons and 0 <= self.subtype_selected_index < len(self.subtype_buttons):
+            subtype = self.subtype_buttons[self.subtype_selected_index]["subtype"]
+            self._open_creation_form(self.subtype_category, subtype)
+        return "break"  # Stop event propagation
+
+    def _open_creation_form(self, category, subtype):
+        """Open the embedded creation form for a specific subtype."""
+        self.view_state = "CREATION_FORM"
+        self._update_fab_visibility()
+
+        # Clear any existing creation panel (subtype selection)
+        if self.creation_panel:
+            self.creation_panel.destroy()
+            self.creation_panel = None
+
+        # Hide the view container (list/grid views) and details panel
+        self.view_container.pack_forget()
+        self.details_frame.pack_forget()
+
+        # Create form panel
+        self.creation_panel = tk.Frame(self.right_frame, bg="#1c2128")
+        self.creation_panel.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Header with back button
+        header_color = CATEGORY_COLORS.get(category, "#1c2128")
+        header = tk.Frame(self.creation_panel, bg=header_color, height=50)
+        header.pack(fill=tk.X)
+        header.pack_propagate(False)
+
+        back_btn = tk.Button(
+            header,
+            text="< Back",
+            font=("Arial", 10),
+            bg=header_color,
+            fg="white",
+            activebackground=header_color,
+            activeforeground="#cccccc",
+            relief=tk.FLAT,
+            cursor="hand2",
+            command=self._close_creation_panel
+        )
+        back_btn.pack(side=tk.LEFT, padx=10, pady=10)
+
+        display_name = get_subtype_display_name(subtype)
+        header_label = tk.Label(
+            header,
+            text=f"New {display_name} Project",
+            font=("Arial", 14, "bold"),
+            fg="white",
+            bg=header_color
+        )
+        header_label.pack(pady=15)
+
+        # Form container frame
+        form_container = tk.Frame(self.creation_panel, bg="#0d1117")
+        form_container.pack(fill=tk.BOTH, expand=True)
+
+        # Get the creator class and instantiate it in embedded mode
+        creator_class = get_creator_class(category, subtype)
+        if creator_class:
+            try:
+                self.active_creator = creator_class(
+                    form_container,
+                    embedded=True,
+                    on_project_created=self._on_project_created,
+                    on_cancel=self._close_creation_panel
+                )
+            except Exception as e:
+                logger.error(f"Failed to create embedded form: {e}")
+                messagebox.showerror("Error", f"Failed to open creation form: {e}")
+                self._close_creation_panel()
+        else:
+            logger.error(f"Creator class not found for {category}/{subtype}")
+            messagebox.showerror("Error", f"Creator not found for {category}/{subtype}")
+            self._close_creation_panel()
+
+    def _on_project_created(self, project_data):
+        """Handle successful project creation from embedded form."""
+        logger.info(f"Project created: {project_data.get('project_name')}")
+
+        # Register project in database if not already done
+        if self.db and 'id' not in project_data:
+            try:
+                project_id = self.db.register_project(project_data)
+                logger.info(f"Registered project in database: {project_id}")
+            except Exception as e:
+                logger.error(f"Failed to register project: {e}")
+
+        # Close creation panel and return to project list
+        self._close_creation_panel()
+
+        # Refresh project list to show new project
+        self.refresh_project_list()
+
+        # Show success message
+        self._update_status(f"Created project: {project_data.get('project_name')}")
+
+        # Notify parent that creation is done
+        if self.creation_done_callback:
+            self.creation_done_callback()
+
+    def _close_creation_panel(self):
+        """Close the creation panel and return to project list."""
+        # Clean up creator
+        self.active_creator = None
+
+        # Clean up subtype selection state
+        self.subtype_buttons = []
+        self.subtype_selected_index = 0
+        self.subtype_category = None
+
+        # Destroy creation panel
+        if self.creation_panel:
+            self.creation_panel.destroy()
+            self.creation_panel = None
+
+        # Reset state
+        self.view_state = "PROJECT_LIST"
+
+        # Show the view container and details panel again (in correct order)
+        self.view_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        self.details_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        # Update FAB visibility
+        self._update_fab_visibility()
+
+    def set_category(self, category_name: Optional[str]):
+        """
+        Set the selected category (public method for external use).
+
+        Args:
+            category_name: Category name or None to show all
+        """
+        # If in creation mode, close it first
+        if self.view_state != "PROJECT_LIST":
+            self._close_creation_panel()
+
+        self.selected_category = category_name
+
+        # Update category button styles if in standalone mode
+        for name, btn_info in self.category_buttons.items():
+            self._update_category_card_style(btn_info, name)
+
+        # Update FAB visibility based on new category
+        self._update_fab_visibility()
+
+        # Refresh project list for this category
+        self.refresh_project_list()
 
     def _apply_saved_settings(self):
         """Apply saved settings after UI is built."""
@@ -1383,18 +1760,26 @@ class ProjectTrackerApp:
 
         logger.debug(f"Applied saved settings: view={saved_view_mode}, list_scale={saved_list_scale}, grid_scale={saved_grid_scale}")
 
-    def _update_status(self, message: str):
-        """Update status bar."""
-        self.status_bar.config(text=message)
-        self.root.update_idletasks()
+    def _update_status(self, message: str, status_type: str = "info"):
+        """Log status message to GUI and file logger."""
+        logger.info(message)
+        if self.status_callback:
+            self.status_callback(message, status_type)
 
     def _select_category(self, category_name):
         """Handle category button selection."""
+        # If in creation mode, close it first
+        if self.view_state != "PROJECT_LIST":
+            self._close_creation_panel()
+
         self.selected_category = category_name
 
         # Update all button styles
         for name, btn_info in self.category_buttons.items():
             self._update_category_card_style(btn_info, name)
+
+        # Update FAB visibility based on new category
+        self._update_fab_visibility()
 
         # Refresh project list for this category
         self.refresh_project_list()
@@ -1412,11 +1797,18 @@ class ProjectTrackerApp:
 
     def _clear_category_selection(self):
         """Clear category selection to show all projects."""
+        # If in creation mode, close it first
+        if self.view_state != "PROJECT_LIST":
+            self._close_creation_panel()
+
         self.selected_category = None
 
         # Update all button styles
         for name, btn_info in self.category_buttons.items():
             self._update_category_card_style(btn_info, name)
+
+        # Update FAB visibility (hidden when no category selected)
+        self._update_fab_visibility()
 
         # Refresh project list to show all
         self.refresh_project_list()
@@ -1687,6 +2079,11 @@ class ProjectTrackerApp:
         # Highlight current selection
         if self.grid_selected_index >= 0:
             self._highlight_grid_card(self.grid_selected_index)
+
+        # Ensure FAB stays on top after grid population
+        if self.fab_button and self.view_state == "PROJECT_LIST":
+            self.fab_button.lift()
+            self.fab_label.lift()
 
     def _create_project_card(self, project: Dict, row: int, col: int, card_size: int = 120):
         """Create a single square project card for grid view."""
@@ -2264,41 +2661,62 @@ class ProjectTrackerApp:
             logger.error(f"Failed to save notes: {e}")
             messagebox.showerror("Error", f"Failed to save notes:\n{str(e)}")
 
-    def _import_projects(self):
-        """Import existing projects from filesystem."""
-        response = messagebox.askyesno(
-            "Import Existing Projects",
-            "This will scan your project directories and import any projects\n"
-            "that are not already in the database.\n\n"
-            "Continue?"
-        )
+    def refresh_and_import(self, silent: bool = False):
+        """
+        Delete database and perform fresh import of all projects.
 
-        if not response:
-            return
+        Args:
+            silent: If True, skip confirmation/result dialogs (used for F5 refresh)
+        """
+        if not silent:
+            response = messagebox.askyesno(
+                "Import Projects",
+                "This will delete the existing database and perform a fresh import\n"
+                "of all projects from your project directories.\n\n"
+                "Continue?"
+            )
+            if not response:
+                return
 
-        # Run import directly (simplified approach)
-        self._update_status("Importing projects...")
+        self._update_status("Refreshing projects...")
         self.root.update_idletasks()
 
         try:
-            stats = ProjectImporter.scan_and_import(self.db, None)
+            # Delete existing database file
+            if self.db.db_path.exists():
+                os.remove(self.db.db_path)
+                logger.info(f"Deleted old database: {self.db.db_path}")
 
-            # Show results
-            messagebox.showinfo(
-                "Import Complete",
-                f"Import completed:\n\n"
-                f"Scanned: {stats['scanned']} folders\n"
-                f"Imported: {stats['imported']} new projects\n"
-                f"Skipped: {stats['skipped']} existing projects\n"
-                f"Errors: {stats['errors']}"
-            )
+            # Reinitialize database (creates fresh empty database)
+            self.db = ProjectDatabase()
+
+            # Run fresh import
+            stats = ProjectImporter.scan_and_import(self.db, None)
 
             # Refresh list
             self.refresh_project_list()
-            self._update_status(f"Imported {stats['imported']} projects")
+            self._update_status(f"Imported {stats['imported']} projects", "success")
+
+            # Show results dialog only if not silent
+            if not silent:
+                messagebox.showinfo(
+                    "Import Complete",
+                    f"Fresh import completed:\n\n"
+                    f"Scanned: {stats['scanned']} folders\n"
+                    f"Imported: {stats['imported']} projects\n"
+                    f"Errors: {stats['errors']}"
+                )
 
         except Exception as e:
-            messagebox.showerror("Import Failed", f"Failed to import projects:\n{str(e)}")
+            logger.error(f"Failed to import projects: {e}")
+            if not silent:
+                messagebox.showerror("Import Failed", f"Failed to import projects:\n{str(e)}")
+            else:
+                self._update_status(f"Import failed: {str(e)}", "error")
+
+    def _import_projects(self):
+        """Import existing projects from filesystem (with dialogs)."""
+        self.refresh_and_import(silent=False)
 
 
 def main():

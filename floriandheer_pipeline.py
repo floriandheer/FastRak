@@ -85,38 +85,17 @@ CREATIVE_CATEGORIES = {
             "GD": {
                 "name": "Graphic Design",
                 "icon": "🖼️",
-                "scripts": {
-                    "folder_structure": {
-                        "name": "New Graphic Design Project",
-                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Visual_FolderStructure_GD.py"),
-                        "description": "Create folder structure for graphic design projects",
-                        "icon": "📁"
-                    }
-                }
+                "scripts": {}
             },
             "CG": {
                 "name": "Computer Graphics",
                 "icon": "🎬",
-                "scripts": {
-                    "folder_structure": {
-                        "name": "New VFX Project",
-                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Visual_FolderStructure_VFX.py"),
-                        "description": "Create folder structure for VFX/3D projects",
-                        "icon": "📁"
-                    }
-                }
+                "scripts": {}
             },
             "VJ": {
                 "name": "VJ",
                 "icon": "💫",
-                "scripts": {
-                    "folder_structure": {
-                        "name": "New VJ Project",
-                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Visual_FolderStructure_VJ.py"),
-                        "description": "Create folder structure for VJ projects",
-                        "icon": "📁"
-                    }
-                }
+                "scripts": {}
             }
         }
     },
@@ -130,26 +109,12 @@ CREATIVE_CATEGORIES = {
             "GODOT": {
                 "name": "Godot Engine",
                 "icon": "🔵",
-                "scripts": {
-                    "folder_structure": {
-                        "name": "New Godot Project",
-                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_RealTime_FolderStructure_Godot.py"),
-                        "description": "Create folder structure for Godot game development projects",
-                        "icon": "📁"
-                    }
-                }
+                "scripts": {}
             },
             "TD": {
                 "name": "TouchDesigner",
                 "icon": "🟠",
-                "scripts": {
-                    "folder_structure": {
-                        "name": "New TouchDesigner Project",
-                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_RealTime_FolderStructure_TouchDesigner.py"),
-                        "description": "Create folder structure for TouchDesigner real-time projects",
-                        "icon": "📁"
-                    }
-                }
+                "scripts": {}
             }
         }
     },
@@ -188,14 +153,7 @@ CREATIVE_CATEGORIES = {
             "PROD": {
                 "name": "Production Tools",
                 "icon": "🎛️",
-                "scripts": {
-                    "folder_structure": {
-                        "name": "New Audio Production Project",
-                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Audio_FolderStructure.py"),
-                        "description": "Create folder structure for audio production projects",
-                        "icon": "📁"
-                    }
-                }
+                "scripts": {}
             }
         }
     },
@@ -210,12 +168,6 @@ CREATIVE_CATEGORIES = {
                 "name": "3D Printing",
                 "icon": "🖨️",
                 "scripts": {
-                    "folder_structure": {
-                        "name": "New 3D Printing Project",
-                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Physical_FolderStructure.py"),
-                        "description": "Create folder structure for 3D printing projects",
-                        "icon": "📁"
-                    },
                     "woocommerce_monitor": {
                         "name": "WooCommerce Order Monitor",
                         "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Physical_WooCommerceOrderMonitor.py"),
@@ -232,12 +184,6 @@ CREATIVE_CATEGORIES = {
         "icon": "📷",
         "folder_path": "I:\\Photo",
         "scripts": {
-            "folder_structure": {
-                "name": "New Photo Project",
-                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Photo_FolderStructure.py"),
-                "description": "Create folder structure for photography projects",
-                "icon": "📁"
-            },
             "new_collection": {
                 "name": "New Photo Collection",
                 "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Photo_NewCollection.py"),
@@ -258,12 +204,6 @@ CREATIVE_CATEGORIES = {
                 "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Web_BackupLaragon.py"),
                 "description": "Create a timestamped backup of Laragon installation",
                 "icon": "💾"
-            },
-            "folder_structure": {
-                "name": "New Webdev Project",
-                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Web_FolderStructure.py"),
-                "description": "Create folder structure for web projects",
-                "icon": "📁"
             }
         },
         "subcategories": {}
@@ -975,9 +915,18 @@ class ScrollableFrame(tk.Frame):
         self.scrollbar.pack(side="right", fill="y")
     
     def _configure_canvas_window(self, event):
-        """Update the canvas window to match canvas width."""
+        """Update the canvas window to match canvas width and minimum height."""
         canvas_width = event.width
+        canvas_height = event.height
         self.canvas.itemconfig(self.canvas_window, width=canvas_width)
+
+        # Set minimum height so content fills available space when canvas is taller
+        content_height = self.scrollable_frame.winfo_reqheight()
+        if canvas_height > content_height:
+            self.canvas.itemconfig(self.canvas_window, height=canvas_height)
+        else:
+            # Reset to natural height when content is taller
+            self.canvas.itemconfig(self.canvas_window, height=content_height)
     
     def _bind_mouse_wheel(self):
         """Bind mouse wheel events directly to canvas."""
@@ -1066,15 +1015,34 @@ class ProfessionalPipelineGUI:
         # Load path configuration
         self.path_config = get_path_config()
 
+        # Keyboard navigation state
+        self.focused_panel = "categories"  # "categories", "operations", "tools", "tracker"
+        self.last_left_panel = "categories"  # Remember last left panel for A key from tracker
+        self.panel_before_creation = "categories"  # Remember panel before project creation
+        self.category_focus_index = 0      # 0-5 for 2x3 grid
+        self.operations_focus_index = 0    # 0-1 for BUSINESS, GLOBAL
+        self.tools_focus_index = 0         # Index in current tools+actions list
+        self.tool_buttons = []             # References to tool buttons for navigation
+
+        # Layout constants for keyboard navigation
+        self.CATEGORY_ORDER = ["VISUAL", "REALTIME", "AUDIO", "PHYSICAL", "PHOTO", "WEB"]
+        self.OPERATIONS_ORDER = ["BUSINESS", "GLOBAL"]
+        self.SCOPE_ORDER = ["personal", "client", "all"]
+        self.STATUS_ORDER = ["active", "archived", "all"]
+
+        # Panel order for WASD navigation (left panel only)
+        self.LEFT_PANEL_ORDER = ["categories", "operations", "tools"]
+
+        # Widget references for focus highlighting (set during layout creation)
+        self.cat_grid = None
+        self.ops_grid = None
+        self.action_buttons_frame = None
+
         # Setup custom styles
         self.setup_styles()
 
         # Create main layout
         self.create_layout()
-
-        # Initialize with last used tab
-        self.current_categories = CREATIVE_CATEGORIES
-        self.select_main_tab(self.config_manager.config.get("last_main_tab", "creative"))
     
     def setup_styles(self):
         """Setup custom ttk styles for professional look."""
@@ -1236,130 +1204,176 @@ class ProfessionalPipelineGUI:
                               bg=COLORS["bg_secondary"])
         title_label.pack(anchor="w", pady=(20, 0))
 
-        # Settings button (right side of header)
-        settings_frame = tk.Frame(inner_header, bg=COLORS["bg_secondary"])
-        settings_frame.grid(row=0, column=2, sticky="e", padx=20)
+        # Header buttons (right side of header)
+        buttons_frame = tk.Frame(inner_header, bg=COLORS["bg_secondary"])
+        buttons_frame.grid(row=0, column=2, sticky="e", padx=20)
 
-        settings_btn = tk.Button(
-            settings_frame,
-            text="Settings",
-            command=self.open_settings,
+        # Button style
+        btn_font = font.Font(family="Segoe UI", size=10)
+
+        # Refresh button
+        refresh_btn = tk.Button(
+            buttons_frame,
+            text="Refresh",
+            command=self.refresh_projects,
             bg=COLORS["bg_hover"],
             fg=COLORS["text_primary"],
-            font=font.Font(family="Segoe UI", size=10),
+            font=btn_font,
             relief=tk.FLAT,
             cursor="hand2",
             padx=15,
             pady=8
         )
-        settings_btn.pack(pady=20)
-        
+        refresh_btn.pack(side=tk.LEFT, padx=(0, 5), pady=20)
+        self._add_header_hint(refresh_btn, "Refresh Projects (F5)")
+
+        # Open Logs button
+        logs_btn = tk.Button(
+            buttons_frame,
+            text="Logs",
+            command=self.open_logs_folder,
+            bg=COLORS["bg_hover"],
+            fg=COLORS["text_primary"],
+            font=btn_font,
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=15,
+            pady=8
+        )
+        logs_btn.pack(side=tk.LEFT, padx=5, pady=20)
+        self._add_header_hint(logs_btn, "Open Logs Folder (Ctrl+L)")
+
+        # Settings button
+        settings_btn = tk.Button(
+            buttons_frame,
+            text="Settings",
+            command=self.open_settings,
+            bg=COLORS["bg_hover"],
+            fg=COLORS["text_primary"],
+            font=btn_font,
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=15,
+            pady=8
+        )
+        settings_btn.pack(side=tk.LEFT, padx=5, pady=20)
+        self._add_header_hint(settings_btn, "Settings (Ctrl+,)")
+
+        # Help button
+        help_btn = tk.Button(
+            buttons_frame,
+            text="Help",
+            command=self.open_help,
+            bg=COLORS["bg_hover"],
+            fg=COLORS["text_primary"],
+            font=btn_font,
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=15,
+            pady=8
+        )
+        help_btn.pack(side=tk.LEFT, padx=(0, 0), pady=20)
+        self._add_header_hint(help_btn, "Keyboard Shortcuts (F1)")
+
     
     def create_main_notebook(self):
-        """Create the main notebook with Project Manager and Business tabs."""
-        # Notebook container with padding
-        notebook_container = tk.Frame(self.main_container, bg=COLORS["bg_primary"])
-        notebook_container.pack(fill=tk.BOTH, expand=True, padx=30, pady=(15, 10))
+        """Create the main content area (single unified view, no tabs needed)."""
+        # Main container with padding
+        main_content = tk.Frame(self.main_container, bg=COLORS["bg_primary"])
+        main_content.pack(fill=tk.BOTH, expand=True, padx=30, pady=(15, 10))
 
-        # Try using theme to fix tab colors
-        style = ttk.Style()
-
-        style.configure("Main.TNotebook.Tab",
-                       background=COLORS["bg_secondary"],
-                       foreground=COLORS["text_secondary"],
-                       padding=[30, 15],
-                       borderwidth=2,
-                       relief="flat")
-
-        # Force selected tab to be dark blue with white text
-        style.map("Main.TNotebook.Tab",
-                 background=[('selected', '#1f6feb'), ('!selected', COLORS["bg_secondary"])],
-                 foreground=[('selected', '#ffffff'), ('!selected', COLORS["text_secondary"])],
-                 relief=[('selected', 'flat'), ('!selected', 'flat')],
-                 borderwidth=[('selected', 0), ('!selected', 0)])
-
-        self.main_notebook = ttk.Notebook(notebook_container, style="Main.TNotebook")
-        self.main_notebook.pack(fill=tk.BOTH, expand=True)
-
-        # Project Manager Tab (merged Project Tracker + Project Setup)
-        self.manager_frame = tk.Frame(self.main_notebook, bg=COLORS["bg_primary"])
-        self.main_notebook.add(self.manager_frame, text="Project Manager")
-
-        # Business & Utilities Tab
-        self.business_frame = tk.Frame(self.main_notebook, bg=COLORS["bg_primary"])
-        self.main_notebook.add(self.business_frame, text="Business & Utilities")
-
-        # Setup Project Manager with integrated project tracker and tools
-        self.setup_project_manager(self.manager_frame)
-
-        # Setup Business tab with grid layout
-        self.setup_grid_layout(self.business_frame, BUSINESS_CATEGORIES)
-
-        # Bind tab change event
-        self.main_notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
+        # Setup Project Manager with integrated project tracker, tools, and operations
+        self.setup_project_manager(main_content)
 
     def setup_project_manager(self, parent_frame):
-        """Setup the unified Project Manager with category selection and tools."""
+        """Setup the unified Project Manager with categories, operations, and tools."""
         # Main container with two columns
         main_container = tk.Frame(parent_frame, bg=COLORS["bg_primary"])
         main_container.pack(fill=tk.BOTH, expand=True)
 
-        # Left panel: Categories + Tools
-        left_panel = tk.Frame(main_container, bg=COLORS["bg_card"], width=280)
-        left_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 15), pady=0)
-        left_panel.pack_propagate(False)
+        # Left panel container (fixed width)
+        left_panel_container = tk.Frame(main_container, bg=COLORS["bg_card"], width=280)
+        left_panel_container.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 15), pady=0)
+        left_panel_container.pack_propagate(False)
+
+        # Scrollable left panel (hide scrollbar for cleaner look)
+        self.left_scroll = ScrollableFrame(left_panel_container, bg=COLORS["bg_card"])
+        self.left_scroll.pack(fill=tk.BOTH, expand=True)
+        self.left_scroll.scrollbar.pack_forget()  # Hide scrollbar
+        left_panel = self.left_scroll.get_frame()
 
         # ═══════════════════════════════════════════════════════════
-        # SCOPE TOGGLE (All / Personal / Client)
+        # CATEGORIES SECTION (includes scope toggles)
         # ═══════════════════════════════════════════════════════════
-        scope_section = tk.Frame(left_panel, bg=COLORS["bg_card"])
-        scope_section.pack(fill=tk.X, padx=15, pady=(15, 5))
+        self.categories_section = tk.Frame(left_panel, bg=COLORS["bg_card"])
+        self.categories_section.pack(fill=tk.X, padx=15, pady=(15, 10))
 
-        # Scope toggle buttons
-        scope_frame = tk.Frame(scope_section, bg=COLORS["bg_card"])
-        scope_frame.pack(fill=tk.X)
+        # Categories header (clickable to show all)
+        cat_header = tk.Label(
+            self.categories_section,
+            text="CATEGORIES",
+            font=font.Font(family="Segoe UI", size=9, weight="bold"),
+            fg=COLORS["text_secondary"],
+            bg=COLORS["bg_card"],
+            cursor="hand2"
+        )
+        cat_header.pack(anchor="w", pady=(0, 8))
+        cat_header.bind("<Button-1>", lambda e: self._clear_category_selection())
+        cat_header.bind("<Enter>", lambda e: cat_header.configure(fg=COLORS["accent"]))
+        cat_header.bind("<Leave>", lambda e: cat_header.configure(fg=COLORS["text_secondary"]))
+
+        # Scope toggle buttons (inside categories section, matching category grid width)
+        scope_frame = tk.Frame(self.categories_section, bg=COLORS["bg_card"])
+        scope_frame.pack(fill=tk.X, pady=(0, 10), padx=4)  # Match cat_grid padx
 
         self.scope_buttons = {}
         self.current_scope = "all"
 
         scope_options = [
-            ("personal", "Personal"),
-            ("client", "Work"),
-            ("all", "All"),
+            ("personal", "Personal", "1"),
+            ("client", "Work", "2"),
+            ("all", "All", "3"),
         ]
 
-        for value, text in scope_options:
+        for idx, (value, text, shortcut) in enumerate(scope_options):
             btn = tk.Label(
                 scope_frame,
                 text=text,
                 font=font.Font(family="Segoe UI", size=9),
                 fg="white",
                 bg=COLORS["bg_secondary"],
-                padx=12,
                 pady=6,
                 cursor="hand2"
             )
-            btn.pack(side=tk.LEFT, padx=(0, 2), expand=True, fill=tk.X)
+            # Use grid layout to match category buttons width
+            btn.grid(row=0, column=idx, padx=2, sticky="nsew")
+            scope_frame.columnconfigure(idx, weight=1)
 
             def make_scope_click(v):
                 def on_click(e):
                     self._set_scope(v)
                 return on_click
 
-            def make_scope_enter(v, b):
+            def make_scope_enter(v, b, s):
                 def on_enter(e):
                     if self.current_scope != v:
                         b.configure(bg="#2d333b")
+                    # Show shortcut hint
+                    if hasattr(self, 'header_hint_label'):
+                        self.header_hint_label.config(text=f"Shortcut: {s}")
                 return on_enter
 
             def make_scope_leave(v, b):
                 def on_leave(e):
                     if self.current_scope != v:
                         b.configure(bg=COLORS["bg_secondary"])
+                    # Clear shortcut hint
+                    if hasattr(self, 'header_hint_label'):
+                        self.header_hint_label.config(text="")
                 return on_leave
 
             btn.bind("<Button-1>", make_scope_click(value))
-            btn.bind("<Enter>", make_scope_enter(value, btn))
+            btn.bind("<Enter>", make_scope_enter(value, btn, shortcut))
             btn.bind("<Leave>", make_scope_leave(value, btn))
 
             self.scope_buttons[value] = btn
@@ -1367,31 +1381,11 @@ class ProfessionalPipelineGUI:
         # Set initial scope button styling
         self._update_scope_button_styles()
 
-        # ═══════════════════════════════════════════════════════════
-        # CATEGORIES SECTION
-        # ═══════════════════════════════════════════════════════════
-        categories_section = tk.Frame(left_panel, bg=COLORS["bg_card"])
-        categories_section.pack(fill=tk.X, padx=15, pady=(10, 10))
-
-        # Categories header (clickable to show all)
-        cat_header = tk.Label(
-            categories_section,
-            text="CATEGORIES",
-            font=font.Font(family="Segoe UI", size=9, weight="bold"),
-            fg=COLORS["text_secondary"],
-            bg=COLORS["bg_card"],
-            cursor="hand2"
-        )
-        cat_header.pack(anchor="w", pady=(0, 10))
-        cat_header.bind("<Button-1>", lambda e: self._clear_category_selection())
-        cat_header.bind("<Enter>", lambda e: cat_header.configure(fg=COLORS["accent"]))
-        cat_header.bind("<Leave>", lambda e: cat_header.configure(fg=COLORS["text_secondary"]))
-
         # Category buttons grid (2 columns, 3 rows)
-        cat_grid = tk.Frame(categories_section, bg=COLORS["bg_card"])
-        cat_grid.pack(fill=tk.X)
+        self.cat_grid = tk.Frame(self.categories_section, bg=COLORS["bg_card"])
+        self.cat_grid.pack(fill=tk.X)
 
-        # Store category button references
+        # Store category button references (includes both categories and operations)
         self.category_buttons = {}
         self.selected_category = None
 
@@ -1406,87 +1400,155 @@ class ProfessionalPipelineGUI:
             row = idx // 2
             col = idx % 2
 
-            btn = self._create_category_button(cat_grid, category_key, category_data)
+            btn = self._create_category_button(self.cat_grid, category_key, category_data)
             btn.grid(row=row, column=col, padx=4, pady=4, sticky="nsew")
 
         # Configure grid columns to be equal
-        cat_grid.columnconfigure(0, weight=1)
-        cat_grid.columnconfigure(1, weight=1)
+        self.cat_grid.columnconfigure(0, weight=1)
+        self.cat_grid.columnconfigure(1, weight=1)
 
-        # ═══════════════════════════════════════════════════════════
-        # SEPARATOR
-        # ═══════════════════════════════════════════════════════════
+        # Separator between Categories and Operations
         separator = tk.Frame(left_panel, bg=COLORS["border"], height=1)
-        separator.pack(fill=tk.X, padx=15, pady=15)
+        separator.pack(fill=tk.X, padx=15, pady=(10, 10))
 
         # ═══════════════════════════════════════════════════════════
-        # TOOLS SECTION
+        # OPERATIONS SECTION
         # ═══════════════════════════════════════════════════════════
-        tools_section = tk.Frame(left_panel, bg=COLORS["bg_card"])
-        tools_section.pack(fill=tk.BOTH, expand=True, padx=15, pady=(0, 15))
+        self.operations_section = tk.Frame(left_panel, bg=COLORS["bg_card"])
+        self.operations_section.pack(fill=tk.X, padx=15, pady=(0, 10))
 
-        # Tools header
-        self.tools_header = tk.Label(
-            tools_section,
-            text="TOOLS",
+        # Operations header
+        ops_header = tk.Label(
+            self.operations_section,
+            text="OPERATIONS",
             font=font.Font(family="Segoe UI", size=9, weight="bold"),
             fg=COLORS["text_secondary"],
             bg=COLORS["bg_card"]
         )
-        self.tools_header.pack(anchor="w", pady=(0, 10))
+        ops_header.pack(anchor="w", pady=(0, 10))
 
-        # Scrollable tools container (will be populated when category is selected)
-        self.tools_scroll = ScrollableFrame(tools_section, bg=COLORS["bg_card"])
-        self.tools_scroll.pack(fill=tk.BOTH, expand=True)
-        self.tools_container = self.tools_scroll.get_frame()
+        # Operations buttons grid (2 columns)
+        self.ops_grid = tk.Frame(self.operations_section, bg=COLORS["bg_card"])
+        self.ops_grid.pack(fill=tk.X)
 
-        # Placeholder text when no category selected
-        self.tools_placeholder = tk.Label(
-            self.tools_container,
-            text="Select a category\nto see available tools",
-            font=font.Font(family="Segoe UI", size=10),
-            fg=COLORS["text_secondary"],
-            bg=COLORS["bg_card"],
-            justify="center"
-        )
-        self.tools_placeholder.pack(expand=True)
+        # Operations order and data
+        operations_order = ["BUSINESS", "GLOBAL"]
 
-        # Fixed notes button container at bottom (outside scroll area)
-        self.notes_button_container = tk.Frame(tools_section, bg=COLORS["bg_card"])
-        self.notes_button_container.pack(fill=tk.X, side=tk.BOTTOM)
+        for idx, ops_key in enumerate(operations_order):
+            if ops_key not in BUSINESS_CATEGORIES:
+                continue
 
-        # Create persistent notes button (initially hidden)
+            ops_data = BUSINESS_CATEGORIES[ops_key]
+            row = idx // 2
+            col = idx % 2
+
+            btn = self._create_category_button(self.ops_grid, ops_key, ops_data)
+            btn.grid(row=row, column=col, padx=4, pady=4, sticky="nsew")
+
+        # Configure grid columns to be equal
+        self.ops_grid.columnconfigure(0, weight=1)
+        self.ops_grid.columnconfigure(1, weight=1)
+
+        # ═══════════════════════════════════════════════════════════
+        # SELECTED CATEGORY PANEL (below operations, as separate panel)
+        # ═══════════════════════════════════════════════════════════
+        # Outer frame with border effect
+        self.category_panel_outer = tk.Frame(left_panel, bg=COLORS["border"])
+
+        # Inner panel with padding
+        self.category_panel = tk.Frame(self.category_panel_outer, bg=COLORS["bg_secondary"])
+        self.category_panel.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
+
+        # Directory & Notes buttons container (at bottom, pack first with side=BOTTOM)
+        self.notes_button_container = tk.Frame(self.category_panel, bg=COLORS["bg_secondary"])
+
+        # Create persistent notes button
         self._create_persistent_notes_button()
-        self.notes_button_container.pack_forget()  # Hide until category selected
+
+        # Tools section header
+        self.tools_header = tk.Label(
+            self.category_panel,
+            text="TOOLS",
+            font=font.Font(family="Segoe UI", size=9, weight="bold"),
+            fg=COLORS["text_secondary"],
+            bg=COLORS["bg_secondary"]
+        )
+        self.tools_header.pack(anchor="w", padx=10, pady=(10, 5))
+
+        # Scrollable tools container (takes remaining space)
+        self.tools_section = tk.Frame(self.category_panel, bg=COLORS["bg_secondary"])
+        self.tools_section.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 5))
+
+        # Tools container (no separate scroll - uses left panel scroll)
+        self.tools_container = tk.Frame(self.tools_section, bg=COLORS["bg_secondary"])
+        self.tools_container.pack(fill=tk.BOTH, expand=True)
+
+        # Rebind mousewheel to left panel after all content is created
+        self.left_scroll.rebind_mousewheel()
 
         # ═══════════════════════════════════════════════════════════
         # RIGHT PANEL: Project Tracker
         # ═══════════════════════════════════════════════════════════
-        right_panel = tk.Frame(main_container, bg=COLORS["bg_primary"])
-        right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        self.tracker_panel = tk.Frame(main_container, bg=COLORS["bg_primary"])
+        self.tracker_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
-        # Embed the Project Tracker
-        self.project_tracker = ProjectTrackerApp(right_panel, embedded=True)
+        # Embed the Project Tracker with status and hint callbacks
+        self.project_tracker = ProjectTrackerApp(
+            self.tracker_panel,
+            embedded=True,
+            status_callback=self.update_status,
+            hint_callback=self._show_hint,
+            creation_start_callback=self._on_creation_start,
+            creation_done_callback=self._return_to_last_panel
+        )
 
+        # Restore state from last session (run once at startup)
+        self._restore_session_state()
+
+    def _restore_session_state(self):
+        """Restore saved state from last session (category, scope, etc.)."""
         # Sync scope from project tracker's saved settings
-        if hasattr(self.project_tracker, 'filter_scope'):
+        if hasattr(self, 'project_tracker') and hasattr(self.project_tracker, 'filter_scope'):
             saved_scope = self.project_tracker.filter_scope.get()
             self.current_scope = saved_scope
             self._update_scope_button_styles()
 
         # Restore last selected category from config, or default to None (show all)
         last_category = self.config_manager.config.get("last_selected_category", None)
-        if last_category and last_category in CREATIVE_CATEGORIES:
+        if last_category and last_category in PIPELINE_CATEGORIES:
             self._select_category(last_category)
         else:
             # Show all by default (no category selected)
             self._clear_category_selection()
+
+        # Ensure categories panel is focused by default
+        self.focused_panel = "categories"
+        self.category_focus_index = 0
+        self._update_panel_focus()
+
+    def _show_hint(self, text):
+        """Show a hint in the status bar header."""
+        if hasattr(self, 'header_hint_label'):
+            self.header_hint_label.config(text=text)
 
     def _create_category_button(self, parent, category_key, category_data):
         """Create a square category selection button."""
         color = CATEGORY_COLORS.get(category_key, COLORS["accent"])
         icon = category_data.get("icon", "")
         name = category_data.get("name", category_key)
+
+        # Shortcut mapping for categories
+        shortcut_map = {
+            "VISUAL": "Shift+V",
+            "REALTIME": "Shift+R",
+            "AUDIO": "Shift+A",
+            "PHYSICAL": "Shift+P",
+            "PHOTO": "Shift+H",
+            "WEB": "Shift+W",
+            "BUSINESS": "Shift+B",
+            "GLOBAL": "Shift+G",
+        }
+        shortcut = shortcut_map.get(category_key, "")
 
         # Button container (square)
         btn_size = 115
@@ -1539,6 +1601,9 @@ class ProfessionalPipelineGUI:
                 content.configure(bg=COLORS["bg_hover"])
                 icon_label.configure(bg=COLORS["bg_hover"], fg=color)
                 name_label.configure(bg=COLORS["bg_hover"])
+            # Show shortcut hint
+            if shortcut and hasattr(self, 'header_hint_label'):
+                self.header_hint_label.config(text=f"Shortcut: {shortcut}")
 
         def on_leave(e):
             if self.selected_category != category_key:
@@ -1546,6 +1611,9 @@ class ProfessionalPipelineGUI:
                 content.configure(bg=COLORS["bg_secondary"])
                 icon_label.configure(bg=COLORS["bg_secondary"], fg=color)
                 name_label.configure(bg=COLORS["bg_secondary"])
+            # Clear shortcut hint
+            if hasattr(self, 'header_hint_label'):
+                self.header_hint_label.config(text="")
 
         def on_click(e):
             self._select_category(category_key)
@@ -1558,7 +1626,7 @@ class ProfessionalPipelineGUI:
         return btn_frame
 
     def _select_category(self, category_key):
-        """Select a category and show its tools."""
+        """Select a category or operation and show its tools."""
         # Deselect previous
         if self.selected_category and self.selected_category in self.category_buttons:
             prev = self.category_buttons[self.selected_category]
@@ -1585,12 +1653,20 @@ class ProfessionalPipelineGUI:
         self.config_manager.config["last_selected_category"] = category_key
         self.config_manager._save_config()
 
-        # Also filter project tracker if available
+        # Show/hide project tracker based on category type
         if hasattr(self, 'project_tracker') and self.project_tracker:
-            category_name = CREATIVE_CATEGORIES.get(category_key, {}).get("name", category_key)
-            # Use the project tracker's category selection method
-            if hasattr(self.project_tracker, '_select_category'):
-                self.project_tracker._select_category(category_name)
+            if category_key in CREATIVE_CATEGORIES:
+                # Show project tracker and filter by category
+                if hasattr(self, 'tracker_panel'):
+                    self.tracker_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+                category_name = CREATIVE_CATEGORIES.get(category_key, {}).get("name", category_key)
+                # Use the project tracker's category selection method
+                if hasattr(self.project_tracker, '_select_category'):
+                    self.project_tracker._select_category(category_name)
+            else:
+                # Hide project tracker for operations (Business/Global)
+                if hasattr(self, 'tracker_panel'):
+                    self.tracker_panel.pack_forget()
 
     def _clear_category_selection(self):
         """Clear category selection to show all projects."""
@@ -1605,29 +1681,17 @@ class ProfessionalPipelineGUI:
 
         self.selected_category = None
 
-        # Clear tools panel
-        for widget in self.tools_container.winfo_children():
-            widget.destroy()
-
-        # Hide notes button
-        self.notes_button_container.pack_forget()
-
-        # Show placeholder
-        placeholder = tk.Label(
-            self.tools_container,
-            text="Select a category\nto see available tools",
-            font=font.Font(family="Segoe UI", size=10),
-            fg=COLORS["text_secondary"],
-            bg=COLORS["bg_card"],
-            justify="center"
-        )
-        placeholder.pack(expand=True)
+        # Hide the category panel
+        if hasattr(self, 'category_panel_outer'):
+            self.category_panel_outer.pack_forget()
 
         # Save to config
         self.config_manager.config["last_selected_category"] = None
         self.config_manager._save_config()
 
-        # Clear project tracker filter
+        # Show project tracker and clear filter
+        if hasattr(self, 'tracker_panel'):
+            self.tracker_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
         if hasattr(self, 'project_tracker') and self.project_tracker:
             if hasattr(self.project_tracker, '_clear_category_selection'):
                 self.project_tracker._clear_category_selection()
@@ -1659,16 +1723,23 @@ class ProfessionalPipelineGUI:
                 btn.configure(bg=COLORS["bg_secondary"], fg="white")
 
     def _update_tools_panel(self, category_key):
-        """Update the tools panel to show tools for the selected category."""
+        """Update the tools panel to show tools for the selected category or operation."""
+        # Reset tool buttons list for keyboard navigation
+        self.tool_buttons = []
+        self.tools_focus_index = 0
+
         # Clear current tools from scrollable container
         for widget in self.tools_container.winfo_children():
             widget.destroy()
 
-        if category_key not in CREATIVE_CATEGORIES:
-            self.notes_button_container.pack_forget()
+        if category_key not in PIPELINE_CATEGORIES:
+            self.category_panel_outer.pack_forget()
             return
 
-        category_data = CREATIVE_CATEGORIES[category_key]
+        category_data = PIPELINE_CATEGORIES[category_key]
+
+        # Show the category panel in the left panel (full height)
+        self.category_panel_outer.pack(fill=tk.BOTH, expand=True, padx=15, pady=(15, 15))
 
         # Collect all tools (from category and subcategories)
         all_tools = []
@@ -1710,12 +1781,16 @@ class ProfessionalPipelineGUI:
                     script_data
                 )
 
-        # Update and show the persistent notes button
-        self._update_notes_button(category_key)
-        self.notes_button_container.pack(fill=tk.X, side=tk.BOTTOM)
+        # Update the notes button (hide for GLOBAL since it only has tools)
+        if category_key == "GLOBAL":
+            self.notes_button_container.pack_forget()
+        else:
+            # Pack at bottom first, before tools header gets packed
+            self.notes_button_container.pack(fill=tk.X, side=tk.BOTTOM, padx=10, pady=(5, 10))
+            self._update_notes_button(category_key)
 
         # Rebind mousewheel after adding tools
-        self.tools_scroll.rebind_mousewheel()
+        self.left_scroll.rebind_mousewheel()
 
     def _create_tool_button(self, parent, category_key, script_key, subcat_key, script_data):
         """Create a professional tool button."""
@@ -1789,19 +1864,32 @@ class ProfessionalPipelineGUI:
             widget.bind("<Leave>", on_leave)
             widget.bind("<Button-1>", on_click)
 
+        # Store tool button reference for keyboard navigation
+        self.tool_buttons.append({
+            "frame": btn_frame,
+            "content": content,
+            "icon_label": icon_label,
+            "name_label": name_label,
+            "arrow_label": arrow_label,
+            "category_key": category_key,
+            "script_key": script_key,
+            "subcat_key": subcat_key,
+            "color": color
+        })
+
     def _create_persistent_notes_button(self):
         """Create persistent Open Directory and Open Notes buttons (called once during setup)."""
         parent = self.notes_button_container
 
         # Notepad yellow colors (store for hover effects)
         self._notepad_bg = "#FFF9C4"  # Light yellow (notepad color)
-        self._notepad_hover = "#FFF59D"  # Slightly darker yellow for hover
+        self._notepad_hover = "#E6E0B0"  # Darker yellow for hover (less bright, not more saturated)
         notepad_accent = "#FFD54F"  # Golden accent
         self._notepad_text_color = "#5D4037"  # Brown text for notepad feel
 
         # Folder button colors (blue theme)
         self._folder_bg = "#E3F2FD"  # Light blue
-        self._folder_hover = "#BBDEFB"  # Slightly darker blue for hover
+        self._folder_hover = "#C5D9E8"  # Darker blue for hover (less bright, not more saturated)
         folder_accent = "#2196F3"  # Blue accent
         self._folder_text_color = "#1565C0"  # Dark blue text
 
@@ -1809,10 +1897,6 @@ class ProfessionalPipelineGUI:
         self._notes_category = None
         self._folder_path = None
         self._folder_category = None
-
-        # Separator line above buttons
-        separator = tk.Frame(parent, bg=COLORS["border"], height=1)
-        separator.pack(fill=tk.X, pady=(10, 8))
 
         # === TOP BUTTON: Open Directory ===
         self._folder_btn_frame = tk.Frame(parent, bg=self._folder_bg, cursor="hand2")
@@ -1853,12 +1937,18 @@ class ProfessionalPipelineGUI:
             self._folder_content.configure(bg=self._folder_hover)
             self._folder_icon.configure(bg=self._folder_hover)
             self._folder_label.configure(bg=self._folder_hover)
+            # Show shortcut hint in status bar
+            if hasattr(self, 'header_hint_label'):
+                self.header_hint_label.config(text="Shortcut: G or 0")
 
         def on_folder_leave(e):
             self._folder_btn_frame.configure(bg=self._folder_bg)
             self._folder_content.configure(bg=self._folder_bg)
             self._folder_icon.configure(bg=self._folder_bg)
             self._folder_label.configure(bg=self._folder_bg)
+            # Clear shortcut hint
+            if hasattr(self, 'header_hint_label'):
+                self.header_hint_label.config(text="")
 
         def on_folder_click(e):
             if self._folder_category:
@@ -1920,12 +2010,18 @@ class ProfessionalPipelineGUI:
             self._notes_content.configure(bg=self._notepad_hover)
             self._notes_icon.configure(bg=self._notepad_hover)
             self._notes_label.configure(bg=self._notepad_hover)
+            # Show shortcut hint in status bar
+            if hasattr(self, 'header_hint_label'):
+                self.header_hint_label.config(text="Shortcut: N or .")
 
         def on_notes_leave(e):
             self._notes_btn_frame.configure(bg=self._notepad_bg)
             self._notes_content.configure(bg=self._notepad_bg)
             self._notes_icon.configure(bg=self._notepad_bg)
             self._notes_label.configure(bg=self._notepad_bg)
+            # Clear shortcut hint
+            if hasattr(self, 'header_hint_label'):
+                self.header_hint_label.config(text="")
 
         def on_notes_click(e):
             if self._notes_category:
@@ -2026,6 +2122,55 @@ class ProfessionalPipelineGUI:
         except Exception as e:
             self.update_status(f"Error opening logs folder: {e}", "error")
 
+    def _add_tooltip(self, widget, text):
+        """Add a tooltip to a widget."""
+        tooltip = None
+
+        def show_tooltip(event):
+            nonlocal tooltip
+            x, y, _, _ = widget.bbox("insert") if hasattr(widget, 'bbox') else (0, 0, 0, 0)
+            x += widget.winfo_rootx() + 25
+            y += widget.winfo_rooty() + 25
+
+            tooltip = tk.Toplevel(widget)
+            tooltip.wm_overrideredirect(True)
+            tooltip.wm_geometry(f"+{x}+{y}")
+
+            label = tk.Label(
+                tooltip,
+                text=text,
+                bg="#333333",
+                fg="white",
+                relief=tk.SOLID,
+                borderwidth=1,
+                font=("Segoe UI", 9),
+                padx=8,
+                pady=4
+            )
+            label.pack()
+
+        def hide_tooltip(event):
+            nonlocal tooltip
+            if tooltip:
+                tooltip.destroy()
+                tooltip = None
+
+        widget.bind("<Enter>", show_tooltip)
+        widget.bind("<Leave>", hide_tooltip)
+
+    def _add_header_hint(self, widget, text):
+        """Add a hint that shows in the status bar header when hovering over a widget."""
+        def show_hint(event):
+            if hasattr(self, 'header_hint_label'):
+                self.header_hint_label.config(text=text)
+
+        def hide_hint(event):
+            if hasattr(self, 'header_hint_label'):
+                self.header_hint_label.config(text="")
+
+        widget.bind("<Enter>", show_hint)
+        widget.bind("<Leave>", hide_hint)
+
     def open_settings(self):
         """Open the settings dialog."""
         dialog = SettingsDialog(self.root, self.path_config)
@@ -2034,18 +2179,22 @@ class ProfessionalPipelineGUI:
             # Reload path config to reflect changes
             self.path_config = get_path_config()
 
-    def import_projects(self):
-        """Trigger project import from the embedded Project Tracker."""
-        if hasattr(self, 'project_tracker') and self.project_tracker:
-            self.project_tracker._import_projects()
-        else:
-            self.update_status("Project Tracker not available", "error")
+    def open_help(self):
+        """Open the keyboard shortcuts documentation."""
+        shortcuts_path = os.path.join(SCRIPT_FILE_DIR, "SHORTCUTS.md")
+        try:
+            if os.path.exists(shortcuts_path):
+                os.startfile(shortcuts_path)
+                self.update_status("Opened keyboard shortcuts documentation", "info")
+            else:
+                self.update_status(f"Shortcuts file not found: {shortcuts_path}", "error")
+        except Exception as e:
+            self.update_status(f"Error opening shortcuts: {e}", "error")
 
     def refresh_projects(self):
-        """Trigger project list refresh from the embedded Project Tracker."""
+        """Delete database and perform fresh import of all projects (F5)."""
         if hasattr(self, 'project_tracker') and self.project_tracker:
-            self.project_tracker.refresh_project_list()
-            self.update_status("Projects refreshed", "info")
+            self.project_tracker.refresh_and_import(silent=True)
         else:
             self.update_status("Project Tracker not available", "error")
 
@@ -2504,9 +2653,9 @@ class ProfessionalPipelineGUI:
         """Create professional status bar."""
         status_container = tk.Frame(self.main_container, bg=COLORS["bg_secondary"])
         status_container.pack(fill=tk.X, side=tk.BOTTOM)
-        
-        # Collapsible status area
-        self.status_expanded = True
+
+        # Collapsible status area - load saved state from config
+        self.status_expanded = self.config_manager.config.get("status_log_expanded", True)
         
         # Status header bar
         header_bar = tk.Frame(status_container, bg=COLORS["border"], height=1)
@@ -2525,6 +2674,14 @@ class ProfessionalPipelineGUI:
                                      cursor="hand2")
         self.toggle_button.pack(side=tk.LEFT, padx=30, pady=8)
         self.toggle_button.bind("<Button-1>", self.toggle_status)
+
+        # Hint label for header buttons (right side of status bar)
+        self.header_hint_label = tk.Label(header_frame,
+                                         text="",
+                                         font=font.Font(family="Segoe UI", size=9),
+                                         fg=COLORS["text_secondary"],
+                                         bg=COLORS["bg_secondary"])
+        self.header_hint_label.pack(side=tk.RIGHT, padx=30, pady=8)
         
         # Status text container
         self.status_text_container = tk.Frame(status_container, bg=COLORS["bg_primary"], height=150)
@@ -2557,7 +2714,12 @@ class ProfessionalPipelineGUI:
         
         # Initial message
         self.update_status("Pipeline Manager ready", "info")
-    
+
+        # Apply saved collapse state
+        if not self.status_expanded:
+            self.status_text_container.pack_forget()
+            self.toggle_button.config(text="▶ Status Log")
+
     def toggle_status(self, event=None):
         """Toggle status area visibility."""
         if self.status_expanded:
@@ -2568,6 +2730,10 @@ class ProfessionalPipelineGUI:
             self.status_text_container.pack(fill=tk.X, padx=30, pady=(0, 10))
             self.toggle_button.config(text="▼ Status Log")
             self.status_expanded = True
+
+        # Save state to config
+        self.config_manager.config["status_log_expanded"] = self.status_expanded
+        self.config_manager._save_config()
     
     def update_status(self, message, status_type="info"):
         """Update the status text widget."""
@@ -2579,26 +2745,15 @@ class ProfessionalPipelineGUI:
         
         self.root.update_idletasks()
     
-    def on_tab_changed(self, event):
-        """Handle main tab change event."""
-        selected_index = self.main_notebook.index(self.main_notebook.select())
-        if selected_index == 0:
-            self.current_categories = CREATIVE_CATEGORIES  # Project Manager tab
-            self.config_manager.config["last_main_tab"] = "manager"
-        else:
-            self.current_categories = BUSINESS_CATEGORIES
-            self.config_manager.config["last_main_tab"] = "business"
-        self.config_manager._save_config()
-
-    def select_main_tab(self, tab_name):
-        """Select a main tab by name."""
-        # Handle legacy tab names for backwards compatibility
-        if tab_name in ["tracker", "creative", "manager"]:
-            self.main_notebook.select(0)
-            self.current_categories = CREATIVE_CATEGORIES
-        else:
-            self.main_notebook.select(1)
-            self.current_categories = BUSINESS_CATEGORIES
+    def select_category_by_name(self, category_name):
+        """Select a category or operation by name (for backwards compatibility)."""
+        # Find the category key by name
+        for key, data in PIPELINE_CATEGORIES.items():
+            if data.get("name", "").lower() == category_name.lower() or key.lower() == category_name.lower():
+                self._select_category(key)
+                return
+        # If not found, clear selection
+        self._clear_category_selection()
     
     def run_script(self, category_key, script_key, subcat_key=None):
         """Run a script."""
@@ -2639,6 +2794,391 @@ class ProfessionalPipelineGUI:
             daemon=True
         ).start()
 
+    # ====================================
+    # KEYBOARD NAVIGATION METHODS
+    # ====================================
+
+    def _should_handle_keyboard(self):
+        """Check if keyboard shortcuts should be handled (not when typing in text fields)."""
+        focused = self.root.focus_get()
+        # Don't handle shortcuts when focused on text input widgets
+        return not isinstance(focused, (tk.Entry, tk.Text, ttk.Entry))
+
+    def _nav_panel_up(self):
+        """Navigate up between panels (W key)."""
+        if not self._should_handle_keyboard():
+            return
+        if self.focused_panel == "tracker":
+            # From tracker, W goes to left panel (categories)
+            self.focused_panel = "categories"
+            self._update_panel_focus()
+            self.root.focus_set()
+        elif self.focused_panel in self.LEFT_PANEL_ORDER:
+            idx = self.LEFT_PANEL_ORDER.index(self.focused_panel)
+            if idx > 0:
+                self.focused_panel = self.LEFT_PANEL_ORDER[idx - 1]
+                self._update_panel_focus()
+
+    def _nav_panel_down(self):
+        """Navigate down between panels (S key)."""
+        if not self._should_handle_keyboard():
+            return
+        if self.focused_panel == "tracker":
+            # From tracker, S goes to tools (bottom of left panel)
+            if self.selected_category:
+                self.focused_panel = "tools"
+            else:
+                # No category selected, go to operations (Business/Global)
+                self.focused_panel = "operations"
+            self._update_panel_focus()
+            self.root.focus_set()
+        elif self.focused_panel in self.LEFT_PANEL_ORDER:
+            idx = self.LEFT_PANEL_ORDER.index(self.focused_panel)
+            if idx < len(self.LEFT_PANEL_ORDER) - 1:
+                # Skip tools panel if no category is selected
+                next_panel = self.LEFT_PANEL_ORDER[idx + 1]
+                if next_panel == "tools" and not self.selected_category:
+                    return
+                self.focused_panel = next_panel
+                self._update_panel_focus()
+
+    def _nav_panel_left(self):
+        """Navigate to left panel from tracker (A key)."""
+        if not self._should_handle_keyboard():
+            return
+        if self.focused_panel == "tracker":
+            # Return to last selected left panel
+            self.focused_panel = self.last_left_panel
+            self._update_panel_focus()
+            # Remove focus from tracker's grid canvas so arrow keys work on left panel
+            self.root.focus_set()
+
+    def _nav_panel_right(self):
+        """Navigate to project tracker from left panel (D key)."""
+        if not self._should_handle_keyboard():
+            return
+        if self.focused_panel in self.LEFT_PANEL_ORDER:
+            # Remember current left panel before switching to tracker
+            self.last_left_panel = self.focused_panel
+            self.focused_panel = "tracker"
+            self._update_panel_focus()
+            # Give focus to tracker's grid canvas for arrow key navigation
+            if hasattr(self, 'project_tracker') and hasattr(self.project_tracker, 'grid_canvas'):
+                self.project_tracker.grid_canvas.focus_set()
+
+    def _nav_item_up(self):
+        """Navigate up within current panel (Up arrow)."""
+        if not self._should_handle_keyboard():
+            return
+        if self.focused_panel == "categories":
+            # 2x3 grid: up moves by 2 (one row)
+            if self.category_focus_index >= 2:
+                self.category_focus_index -= 2
+                self._select_focused_category()
+        elif self.focused_panel == "operations":
+            # 2x1 grid: no up movement (single row)
+            pass
+        elif self.focused_panel == "tools":
+            # Vertical list of tools only (not folder/notes)
+            if self.tools_focus_index > 0:
+                self.tools_focus_index -= 1
+                self._update_item_focus()
+        elif self.focused_panel == "tracker":
+            if hasattr(self, 'project_tracker'):
+                self.project_tracker._on_grid_up(None)
+
+    def _nav_item_down(self):
+        """Navigate down within current panel (Down arrow)."""
+        if not self._should_handle_keyboard():
+            return
+        if self.focused_panel == "categories":
+            # 2x3 grid: down moves by 2 (one row)
+            if self.category_focus_index < len(self.CATEGORY_ORDER) - 2:
+                self.category_focus_index += 2
+                self._select_focused_category()
+        elif self.focused_panel == "operations":
+            # 2x1 grid: no down movement (single row)
+            pass
+        elif self.focused_panel == "tools":
+            # Vertical list of tools only (not folder/notes)
+            if self.tools_focus_index < len(self.tool_buttons) - 1:
+                self.tools_focus_index += 1
+                self._update_item_focus()
+        elif self.focused_panel == "tracker":
+            if hasattr(self, 'project_tracker'):
+                self.project_tracker._on_grid_down(None)
+
+    def _nav_item_left(self):
+        """Navigate left within current panel (Left arrow)."""
+        if not self._should_handle_keyboard():
+            return
+        if self.focused_panel == "categories":
+            # 2x3 grid: left moves by 1
+            if self.category_focus_index > 0:
+                self.category_focus_index -= 1
+                self._select_focused_category()
+        elif self.focused_panel == "operations":
+            # 2x1 grid: left moves by 1
+            if self.operations_focus_index > 0:
+                self.operations_focus_index -= 1
+                self._select_focused_operation()
+        elif self.focused_panel == "tracker":
+            if hasattr(self, 'project_tracker'):
+                self.project_tracker._on_grid_left(None)
+
+    def _nav_item_right(self):
+        """Navigate right within current panel (Right arrow)."""
+        if not self._should_handle_keyboard():
+            return
+        if self.focused_panel == "categories":
+            # 2x3 grid: right moves by 1
+            if self.category_focus_index < len(self.CATEGORY_ORDER) - 1:
+                self.category_focus_index += 1
+                self._select_focused_category()
+        elif self.focused_panel == "operations":
+            # 2x1 grid: right moves by 1
+            if self.operations_focus_index < len(self.OPERATIONS_ORDER) - 1:
+                self.operations_focus_index += 1
+                self._select_focused_operation()
+        elif self.focused_panel == "tracker":
+            if hasattr(self, 'project_tracker'):
+                self.project_tracker._on_grid_right(None)
+
+    def _select_focused_category(self):
+        """Select the currently focused category (auto-select on navigation)."""
+        if 0 <= self.category_focus_index < len(self.CATEGORY_ORDER):
+            category_key = self.CATEGORY_ORDER[self.category_focus_index]
+            self._select_category(category_key)
+
+    def _select_focused_operation(self):
+        """Select the currently focused operation (auto-select on navigation)."""
+        if 0 <= self.operations_focus_index < len(self.OPERATIONS_ORDER):
+            ops_key = self.OPERATIONS_ORDER[self.operations_focus_index]
+            self._select_category(ops_key)
+
+    def _on_enter_key(self):
+        """Handle Enter key to activate focused item."""
+        if not self._should_handle_keyboard():
+            return
+        if self.focused_panel == "categories":
+            # Already auto-selected, but Enter can confirm
+            pass
+        elif self.focused_panel == "operations":
+            # Already auto-selected, but Enter can confirm
+            pass
+        elif self.focused_panel == "tools":
+            # Run the focused tool
+            if self.tool_buttons and 0 <= self.tools_focus_index < len(self.tool_buttons):
+                tool = self.tool_buttons[self.tools_focus_index]
+                self.run_script(tool["category_key"], tool["script_key"], tool["subcat_key"])
+        elif self.focused_panel == "tracker":
+            if hasattr(self, 'project_tracker'):
+                self.project_tracker._on_enter_key(None)
+
+    def _quick_select_category(self, category_key):
+        """Quick select a category via Shift+Letter."""
+        if not self._should_handle_keyboard():
+            return
+        if category_key in PIPELINE_CATEGORIES:
+            self._select_category(category_key)
+            # Update focus index
+            if category_key in self.CATEGORY_ORDER:
+                self.focused_panel = "categories"
+                self.category_focus_index = self.CATEGORY_ORDER.index(category_key)
+            elif category_key in self.OPERATIONS_ORDER:
+                self.focused_panel = "operations"
+                self.operations_focus_index = self.OPERATIONS_ORDER.index(category_key)
+            self._update_panel_focus()
+
+    def _quick_open_folder(self):
+        """Quick open current category's folder (G key)."""
+        if not self._should_handle_keyboard():
+            return
+        if self._folder_category and self._folder_path:
+            # Check if project tracker is in archive mode
+            is_archive_mode = False
+            if hasattr(self, 'project_tracker') and self.project_tracker:
+                if hasattr(self.project_tracker, 'filter_status'):
+                    is_archive_mode = self.project_tracker.filter_status.get() == "archived"
+
+            if is_archive_mode:
+                archive_path = self.path_config.get_archive_path(self._folder_category)
+                self.open_folder(archive_path)
+            else:
+                self.open_folder(self._folder_path)
+
+    def _quick_open_notes(self):
+        """Quick open current category's notes (N key)."""
+        if not self._should_handle_keyboard():
+            return
+        if self._notes_category:
+            self.open_note(self._notes_category)
+
+    def _cycle_scope(self):
+        """Cycle through scope options (backtick key)."""
+        if not self._should_handle_keyboard():
+            return
+        current_idx = self.SCOPE_ORDER.index(self.current_scope) if self.current_scope in self.SCOPE_ORDER else 0
+        next_idx = (current_idx + 1) % len(self.SCOPE_ORDER)
+        self._set_scope(self.SCOPE_ORDER[next_idx])
+
+    def _set_status_filter(self, status):
+        """Set project tracker status filter (4/5/6 keys)."""
+        if not self._should_handle_keyboard():
+            return
+        if hasattr(self, 'project_tracker') and self.project_tracker:
+            self.project_tracker.filter_status.set(status)
+            self.project_tracker._on_filter_changed()
+
+    def _focus_tracker_search(self):
+        """Focus the project tracker search field (/ key)."""
+        if not self._should_handle_keyboard():
+            return
+        if hasattr(self, 'project_tracker') and hasattr(self.project_tracker, 'search_entry'):
+            self.project_tracker.search_entry.focus_set()
+
+    def _new_project(self):
+        """Create new project for current category (Ctrl+N)."""
+        if hasattr(self, 'project_tracker') and self.project_tracker:
+            # Launch the creation flow (callback will save current panel state)
+            self.project_tracker._on_fab_clicked()
+            # Switch focus to tracker for arrow key navigation in subtype selection
+            if self.project_tracker.view_state != "PROJECT_LIST":
+                self.focused_panel = "tracker"
+                self._update_panel_focus()
+
+    def _on_escape_key(self):
+        """Handle Escape key - close creation panel if open."""
+        # Check if project tracker is in creation mode - close that
+        if hasattr(self, 'project_tracker') and self.project_tracker:
+            if self.project_tracker.view_state != "PROJECT_LIST":
+                self.project_tracker._close_creation_panel()
+                # Return focus to the panel we came from
+                self._return_to_last_panel()
+
+    def _on_creation_start(self):
+        """Called when project creation starts (FAB clicked or Ctrl+N)."""
+        # Remember current panel before switching to creation mode
+        self.panel_before_creation = self.focused_panel
+        if self.focused_panel in self.LEFT_PANEL_ORDER:
+            self.last_left_panel = self.focused_panel
+
+    def _return_to_last_panel(self):
+        """Return focus to the panel we were on before project creation."""
+        self.focused_panel = self.panel_before_creation
+        self._update_panel_focus()
+        # Set appropriate focus based on panel type
+        if self.focused_panel == "tracker":
+            if hasattr(self, 'project_tracker') and hasattr(self.project_tracker, 'grid_canvas'):
+                self.project_tracker.grid_canvas.focus_set()
+        else:
+            self.root.focus_set()
+
+    def _update_panel_focus(self):
+        """Update visual focus indicator for panels."""
+        # Clear all item focus first
+        self._clear_all_item_focus()
+
+        # Update panel focus indicators (subtle left accent bar)
+        self._update_panel_indicator()
+
+        # Update item focus for current panel
+        self._update_item_focus()
+
+        # Update status bar hint
+        self._update_keyboard_hint()
+
+    def _update_panel_indicator(self):
+        """Update subtle focus indicator for panels (left accent bar on grids only)."""
+        # Create/update focus indicator bars if they don't exist
+        if not hasattr(self, '_panel_indicators'):
+            self._panel_indicators = {}
+
+        # Only show indicators on the actual grids/sections
+        grids = [
+            ("cat_grid", self.cat_grid, "categories", COLORS["bg_card"]),
+            ("ops_grid", self.ops_grid, "operations", COLORS["bg_card"]),
+            ("tools_section", self.tools_section if hasattr(self, 'tools_section') else None, "tools", COLORS["bg_secondary"]),
+            ("tracker_panel", self.tracker_panel if hasattr(self, 'tracker_panel') else None, "tracker", COLORS["bg_primary"]),
+        ]
+
+        for grid_name, grid_widget, panel_name, bg_color in grids:
+            if grid_widget is None:
+                continue
+
+            # Check if indicator exists and is still valid
+            indicator_valid = (
+                grid_name in self._panel_indicators and
+                self._panel_indicators[grid_name].winfo_exists()
+            )
+
+            # Create indicator if it doesn't exist or was destroyed
+            if not indicator_valid:
+                indicator = tk.Frame(grid_widget, bg=bg_color, width=3)
+                indicator.place(x=0, y=0, relheight=1.0)
+                self._panel_indicators[grid_name] = indicator
+
+            # Update indicator color based on focus
+            indicator = self._panel_indicators[grid_name]
+            try:
+                if panel_name == self.focused_panel:
+                    indicator.configure(bg=COLORS["accent"])
+                else:
+                    # Hide by matching background
+                    indicator.configure(bg=bg_color)
+            except tk.TclError:
+                # Widget was destroyed, remove from cache
+                del self._panel_indicators[grid_name]
+
+    def _clear_all_item_focus(self):
+        """Clear focus highlighting from all items (reset to normal background)."""
+        # Clear tool focus - reset to normal background
+        for tool in self.tool_buttons:
+            tool["frame"].configure(bg=COLORS["bg_secondary"])
+            tool["content"].configure(bg=COLORS["bg_secondary"])
+            tool["icon_label"].configure(bg=COLORS["bg_secondary"])
+            tool["name_label"].configure(bg=COLORS["bg_secondary"])
+            tool["arrow_label"].configure(bg=COLORS["bg_secondary"])
+
+    def _update_item_focus(self):
+        """Update visual focus indicator for items within panels (darken focused item)."""
+        if self.focused_panel == "categories":
+            # Categories auto-select, no extra focus needed
+            pass
+
+        elif self.focused_panel == "operations":
+            # Operations auto-select, no extra focus needed
+            pass
+
+        elif self.focused_panel == "tools":
+            # Tools only (not folder/notes) - darken focused item background
+            for idx, tool in enumerate(self.tool_buttons):
+                if idx == self.tools_focus_index:
+                    # Darken the focused tool
+                    tool["frame"].configure(bg=COLORS["bg_hover"])
+                    tool["content"].configure(bg=COLORS["bg_hover"])
+                    tool["icon_label"].configure(bg=COLORS["bg_hover"])
+                    tool["name_label"].configure(bg=COLORS["bg_hover"])
+                    tool["arrow_label"].configure(bg=COLORS["bg_hover"], fg=tool["color"])
+                else:
+                    # Normal background
+                    tool["frame"].configure(bg=COLORS["bg_secondary"])
+                    tool["content"].configure(bg=COLORS["bg_secondary"])
+                    tool["icon_label"].configure(bg=COLORS["bg_secondary"])
+                    tool["name_label"].configure(bg=COLORS["bg_secondary"])
+                    tool["arrow_label"].configure(bg=COLORS["bg_secondary"], fg=COLORS["text_secondary"])
+
+    def _update_keyboard_hint(self):
+        """Update status bar with keyboard hints based on focused panel."""
+        hints = {
+            "categories": "Arrows: navigate | Shift+Letter: quick select | S: operations | D: tracker",
+            "operations": "Left/Right: navigate | W: categories | S: tools | D: tracker",
+            "tools": "Up/Down: navigate | Enter: run | G: folder | N: notes | W/S: panels",
+            "tracker": "Arrows: navigate | Enter: open | A: left panel | /: search",
+        }
+        if hasattr(self, 'header_hint_label'):
+            self.header_hint_label.config(text=hints.get(self.focused_panel, ""))
+
 # ====================================
 # MAIN APPLICATION ENTRY POINT
 # ====================================
@@ -2652,42 +3192,72 @@ def main():
     
     # Create main application
     app = ProfessionalPipelineGUI(root)
-    
-    # Add menu bar
-    menu_bar = tk.Menu(root, bg=COLORS["bg_secondary"], fg=COLORS["text_primary"], 
-                      activebackground=COLORS["accent"], activeforeground="#ffffff")
-    root.config(menu=menu_bar)
-    
-    # File menu
-    file_menu = tk.Menu(menu_bar, tearoff=0, bg=COLORS["bg_secondary"],
-                       fg=COLORS["text_primary"],
-                       activebackground=COLORS["accent"], activeforeground="#ffffff")
-    file_menu.add_command(label="Import Projects", command=app.import_projects)
-    file_menu.add_command(label="Refresh Projects", command=app.refresh_projects, accelerator="F5")
-    file_menu.add_separator()
-    file_menu.add_command(label="Settings...", command=app.open_settings, accelerator="Ctrl+,")
-    file_menu.add_command(label="Open Logs Folder", command=app.open_logs_folder)
-    file_menu.add_separator()
-    file_menu.add_command(label="Exit", command=root.quit, accelerator="Alt+F4")
-    menu_bar.add_cascade(label="File", menu=file_menu)
 
-    # Bind keyboard shortcuts
+    # Bind keyboard shortcuts - existing
     root.bind('<Control-comma>', lambda e: app.open_settings())
+    root.bind('<Control-l>', lambda e: app.open_logs_folder())
     root.bind('<F5>', lambda e: app.refresh_projects())
-
-    # View menu
-    view_menu = tk.Menu(menu_bar, tearoff=0, bg=COLORS["bg_secondary"], 
-                       fg=COLORS["text_primary"],
-                       activebackground=COLORS["accent"], activeforeground="#ffffff")
-    view_menu.add_command(label="Toggle Fullscreen", 
-                         command=lambda: root.attributes('-fullscreen', not root.attributes('-fullscreen')),
-                         accelerator="F11")
-    menu_bar.add_cascade(label="View", menu=view_menu)
-    
-    # Bind F11 to toggle fullscreen
+    root.bind('<F1>', lambda e: app.open_help())
     root.bind('<F11>', lambda e: root.attributes('-fullscreen', not root.attributes('-fullscreen')))
-    root.bind('<Escape>', lambda e: root.attributes('-fullscreen', False))
-    
+
+    # ====================================
+    # RAK KEYBOARD NAVIGATION BINDINGS
+    # ====================================
+
+    # Number keys - Global filters (scope 1/2/3, status 4/5/6)
+    root.bind('1', lambda e: app._set_scope("personal"))
+    root.bind('2', lambda e: app._set_scope("client"))
+    root.bind('3', lambda e: app._set_scope("all"))
+    root.bind('4', lambda e: app._set_status_filter("active"))
+    root.bind('5', lambda e: app._set_status_filter("archived"))
+    root.bind('6', lambda e: app._set_status_filter("all"))
+
+    # Panel navigation (WASD)
+    root.bind('w', lambda e: app._nav_panel_up())
+    root.bind('W', lambda e: app._nav_panel_up())
+    root.bind('s', lambda e: app._nav_panel_down())
+    root.bind('S', lambda e: app._nav_panel_down())
+    root.bind('a', lambda e: app._nav_panel_left())
+    root.bind('A', lambda e: app._nav_panel_left())
+    root.bind('d', lambda e: app._nav_panel_right())
+    root.bind('D', lambda e: app._nav_panel_right())
+
+    # In-panel navigation (Arrows)
+    root.bind('<Up>', lambda e: app._nav_item_up())
+    root.bind('<Down>', lambda e: app._nav_item_down())
+    root.bind('<Left>', lambda e: app._nav_item_left())
+    root.bind('<Right>', lambda e: app._nav_item_right())
+    root.bind('<Return>', lambda e: app._on_enter_key())
+
+    # Quick actions
+    root.bind('g', lambda e: app._quick_open_folder())
+    root.bind('G', lambda e: app._quick_open_folder())
+    root.bind('0', lambda e: app._quick_open_folder())  # Alternative for G
+    root.bind('n', lambda e: app._quick_open_notes())
+    root.bind('N', lambda e: app._quick_open_notes())
+    root.bind('.', lambda e: app._quick_open_notes())   # Alternative for N
+    root.bind('`', lambda e: app._cycle_scope())
+    root.bind('/', lambda e: app._focus_tracker_search())
+    root.bind('<Escape>', lambda e: app._on_escape_key())
+
+    # Category quick select (Shift+Key)
+    root.bind('<Shift-V>', lambda e: app._quick_select_category('VISUAL'))
+    root.bind('<Shift-R>', lambda e: app._quick_select_category('REALTIME'))
+    root.bind('<Shift-A>', lambda e: app._quick_select_category('AUDIO'))
+    root.bind('<Shift-P>', lambda e: app._quick_select_category('PHYSICAL'))
+    root.bind('<Shift-H>', lambda e: app._quick_select_category('PHOTO'))
+    root.bind('<Shift-W>', lambda e: app._quick_select_category('WEB'))
+    root.bind('<Shift-B>', lambda e: app._quick_select_category('BUSINESS'))
+    root.bind('<Shift-G>', lambda e: app._quick_select_category('GLOBAL'))
+
+    # Search shortcut
+    root.bind('<Control-f>', lambda e: app._focus_tracker_search())
+    root.bind('<Control-F>', lambda e: app._focus_tracker_search())
+
+    # New project shortcut
+    root.bind('<Control-n>', lambda e: app._new_project())
+    root.bind('<Control-N>', lambda e: app._new_project())
+
     # Start the main loop
     root.mainloop()
 
