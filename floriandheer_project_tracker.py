@@ -402,46 +402,53 @@ class ProjectImporter:
         "Photo": r'^(\d{4}-\d{2}-\d{2})_([^_]+)_(.+)$'
     }
 
-    # Active project directories (auto-converted for WSL)
-    SCAN_DIRECTORIES_ACTIVE = {
-        # Visual
-        "Visual": _get_platform_path(r"D:\_work\Active\Visual"),
-        "Visual_Personal": _get_platform_path(r"D:\_work\Active\Visual\_Personal"),
-        # Audio
-        "Audio_InProgress": _get_platform_path(r"D:\_work\Active\Audio\01_Prod\01_InProgress"),
-        "Audio_Finished": _get_platform_path(r"D:\_work\Active\Audio\01_Prod\03_Finished"),
-        # Physical
-        "Physical": _get_platform_path(r"D:\_work\Active\Physical\Project"),
-        "Physical_Personal": _get_platform_path(r"D:\_work\Active\Physical\_Personal"),
-        # RealTime
-        "RealTime": _get_platform_path(r"D:\_work\Active\RealTIme"),  # Note: folder has typo "RealTIme"
-        "RealTime_Personal": _get_platform_path(r"D:\_work\Active\RealTIme\_Personal"),
-        # Photo
-        "Photo": _get_platform_path(r"D:\_work\Active\Photo"),
-        "Photo_Personal": _get_platform_path(r"D:\_work\Active\Photo\_Personal"),
-        # Web
-        "Web": _get_platform_path(r"D:\_work\Active\Web"),
-        "Web_Personal": _get_platform_path(r"D:\_work\Active\Web\_Personal"),
-    }
+    @classmethod
+    def _build_scan_directories(cls):
+        """Build scan directories from settings."""
+        settings = get_rak_settings()
+        active_base = settings.get_active_base()
+        archive_base = settings.get_archive_base()
 
-    # Archive directories
-    SCAN_DIRECTORIES_ARCHIVE = {
-        # Visual
-        "Visual": _get_platform_path(r"D:\_work\Archive\Visual"),
-        "Visual_Personal": _get_platform_path(r"D:\_work\Archive\Visual\_Personal"),
-        # Physical
-        "Physical": _get_platform_path(r"D:\_work\Archive\Physical"),
-        "Physical_Personal": _get_platform_path(r"D:\_work\Archive\Physical\_Personal"),
-        # RealTime
-        "RealTime": _get_platform_path(r"D:\_work\Archive\RealTime"),
-        "RealTime_Personal": _get_platform_path(r"D:\_work\Archive\RealTime\_Personal"),
-        # Photo
-        "Photo": _get_platform_path(r"D:\_work\Archive\Photo"),
-        "Photo_Personal": _get_platform_path(r"D:\_work\Archive\Photo\_Personal"),
-        # Web
-        "Web": _get_platform_path(r"D:\_work\Archive\Web"),
-        "Web_Personal": _get_platform_path(r"D:\_work\Archive\Web\_Personal"),
-    }
+        active = {
+            # Visual
+            "Visual": _get_platform_path(active_base + r"\Visual"),
+            "Visual_Personal": _get_platform_path(active_base + r"\Visual\_Personal"),
+            # Audio
+            "Audio_InProgress": _get_platform_path(active_base + r"\Audio\01_Prod\01_InProgress"),
+            "Audio_Finished": _get_platform_path(active_base + r"\Audio\01_Prod\03_Finished"),
+            # Physical
+            "Physical": _get_platform_path(active_base + r"\Physical\Project"),
+            "Physical_Personal": _get_platform_path(active_base + r"\Physical\_Personal"),
+            # RealTime
+            "RealTime": _get_platform_path(active_base + r"\RealTIme"),  # Note: folder has typo "RealTIme"
+            "RealTime_Personal": _get_platform_path(active_base + r"\RealTIme\_Personal"),
+            # Photo
+            "Photo": _get_platform_path(active_base + r"\Photo"),
+            "Photo_Personal": _get_platform_path(active_base + r"\Photo\_Personal"),
+            # Web
+            "Web": _get_platform_path(active_base + r"\Web"),
+            "Web_Personal": _get_platform_path(active_base + r"\Web\_Personal"),
+        }
+
+        archive = {
+            # Visual
+            "Visual": _get_platform_path(archive_base + r"\Visual"),
+            "Visual_Personal": _get_platform_path(archive_base + r"\Visual\_Personal"),
+            # Physical
+            "Physical": _get_platform_path(archive_base + r"\Physical"),
+            "Physical_Personal": _get_platform_path(archive_base + r"\Physical\_Personal"),
+            # RealTime
+            "RealTime": _get_platform_path(archive_base + r"\RealTime"),
+            "RealTime_Personal": _get_platform_path(archive_base + r"\RealTime\_Personal"),
+            # Photo
+            "Photo": _get_platform_path(archive_base + r"\Photo"),
+            "Photo_Personal": _get_platform_path(archive_base + r"\Photo\_Personal"),
+            # Web
+            "Web": _get_platform_path(archive_base + r"\Web"),
+            "Web_Personal": _get_platform_path(archive_base + r"\Web\_Personal"),
+        }
+
+        return active, archive
 
     @classmethod
     def scan_and_import(cls, db: ProjectDatabase, status_callback=None) -> Dict:
@@ -466,8 +473,11 @@ class ProjectImporter:
         # First, collect all folders to import
         folders_to_process = []
 
+        # Build scan directories from settings
+        scan_dirs_active, scan_dirs_archive = cls._build_scan_directories()
+
         # Scan active directories
-        for category, base_dir in cls.SCAN_DIRECTORIES_ACTIVE.items():
+        for category, base_dir in scan_dirs_active.items():
             if not base_dir.exists():
                 continue
 
@@ -501,7 +511,7 @@ class ProjectImporter:
                 pass
 
         # Scan archive directories
-        for category, base_dir in cls.SCAN_DIRECTORIES_ARCHIVE.items():
+        for category, base_dir in scan_dirs_archive.items():
             if not base_dir.exists():
                 continue
 
@@ -2546,8 +2556,10 @@ class ProjectTrackerApp:
 
             # RAW path is the stored D:\ path or derive it from active path
             # If stored path is already the work drive path, convert back to D:\ path
-            if stored_path.upper().startswith("I:"):
-                raw_path = stored_path.replace("I:", "D:\\_work\\Active", 1).replace("I:\\", "D:\\_work\\Active\\")
+            work_drive = settings.get_work_drive().upper()
+            active_base = settings.get_active_base()
+            if stored_path.upper().startswith(work_drive):
+                raw_path = active_base + stored_path[len(work_drive):]
             else:
                 raw_path = stored_path
             self._current_raw_path = raw_path
@@ -2666,7 +2678,7 @@ class ProjectTrackerApp:
             f"Archive this project?\n\n"
             f"Client: {self.selected_project.get('client_name')}\n"
             f"Project: {self.selected_project.get('project_name')}\n\n"
-            f"The folder will be moved to D:\\_work\\Archive"
+            f"The folder will be moved to {get_rak_settings().get_archive_base()}"
         )
 
         if not response:

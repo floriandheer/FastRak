@@ -23,6 +23,7 @@ import base64
 
 # Setup logging using shared utility
 from shared_logging import get_logger, setup_logging as setup_shared_logging
+from rak_settings import get_rak_settings
 
 # Get logger reference (configured in main())
 logger = get_logger("woocommerce_monitor")
@@ -54,7 +55,7 @@ class Config:
             "monitoring": {
                 "poll_interval": 300,
                 "check_orders_since_hours": 48,
-                "base_directory": "I:/Physical/Order",
+                "base_directory": get_rak_settings().get_work_path("Physical").replace('\\', '/') + "/Order",
                 "processed_orders_file": str(self.data_dir / "processed_orders.json"),
                 "download_invoices": True,
                 "download_labels": True
@@ -86,6 +87,15 @@ class Config:
                 with open(self.config_file, 'r') as f:
                     loaded_config = json.load(f)
                     self._merge_config(default_config, loaded_config)
+                    # Reset empty path overrides to defaults so stale values don't persist
+                    mon = default_config.get("monitoring", {})
+                    if not mon.get("base_directory"):
+                        mon["base_directory"] = get_rak_settings().get_work_path("Physical").replace('\\', '/') + "/Order"
+                    if not mon.get("processed_orders_file"):
+                        mon["processed_orders_file"] = str(self.data_dir / "processed_orders.json")
+                    log = default_config.get("logging", {})
+                    if not log.get("log_file"):
+                        log["log_file"] = str(Path.home() / "AppData" / "Local" / "PipelineManager" / "logs" / "woocommerce_monitor.log")
                     return default_config
             except Exception as e:
                 print(f"Error loading config: {e}")

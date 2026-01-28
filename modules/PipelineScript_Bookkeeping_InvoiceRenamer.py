@@ -21,6 +21,7 @@ from pathlib import Path
 
 # Setup logging using shared utility
 from shared_logging import get_logger, setup_logging as setup_shared_logging
+from rak_settings import get_rak_settings
 
 # Get logger reference (configured in main())
 logger = get_logger("invoice_renamer")
@@ -44,7 +45,7 @@ except ImportError:
 SUPPORTED_EXTENSIONS = ['.pdf', '.PDF']
 
 # Default browsing directory
-DEFAULT_BROWSE_DIR = r"I:\_LIBRARY\Boekhouding"
+DEFAULT_BROWSE_DIR = get_rak_settings().get_work_drive() + r"\_LIBRARY\Boekhouding"
 
 # Company name mapping for standardization
 COMPANY_MAPPING = {

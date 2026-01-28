@@ -11,1012 +11,41 @@ Location: P:\\_Scripts\floriandheer_pipeline.py
 import os
 import sys
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog, font
-import subprocess
+from tkinter import ttk, font
 import datetime
-import logging
 import threading
-import json
 
 # ====================================
 # CONSTANTS AND CONFIGURATION
 # ====================================
 
-# Application constants
-APP_NAME = "Pipeline Manager"
-APP_VERSION = "0.5.0"
-APP_ICON = None  # Add path to icon file if available
-
 # Base script directory (relative to this file)
 SCRIPT_FILE_DIR = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS_DIR = os.path.join(SCRIPT_FILE_DIR, "modules")
 
-# Logo path
-LOGO_PATH = os.path.join(SCRIPT_FILE_DIR, "assets", "Logo_FlorianDheer_LogoWhite.png")
-
-# Professional color scheme
-COLORS = {
-    "bg_primary": "#0d1117",      # GitHub dark background
-    "bg_secondary": "#161b22",    # Slightly lighter
-    "bg_card": "#1c2128",         # Card background
-    "bg_hover": "#262c36",        # Hover state
-    "text_primary": "#f0f6fc",    # Main text
-    "text_secondary": "#8b949e",  # Secondary text
-    "accent": "#58a6ff",          # Bright blue accent
-    "accent_hover": "#79c0ff",    # Hover accent
-    "accent_dark": "#1f6feb",     # Darker accent
-    "success": "#3fb950",
-    "warning": "#d29922",
-    "error": "#f85149",
-    "border": "#30363d",
-    "tab_active_bg": "#1f6feb",   # Active tab background
-    "tab_active_fg": "#ffffff"    # Active tab text
-}
-
-# Category colors
-CATEGORY_COLORS = {
-    "AUDIO": "#9333ea",      # Purple
-    "PHOTO": "#10b981",      # Emerald
-    "VISUAL": "#f97316",     # Orange
-    "WEB": "#eab308",        # Yellow
-    "PHYSICAL": "#ec4899",   # Pink
-    "REALTIME": "#06b6d4",   # Cyan
-    "BUSINESS": "#22c55e",   # Green
-    "GLOBAL": "#6b7280"      # Gray
-}
-
-# Pipeline categories organized by main sections
-# Order: Visual, RealTime, Audio, Physical, Photo, Web
-CREATIVE_CATEGORIES = {
-    "VISUAL": {
-        "name": "Visual",
-        "description": "Visual effects, graphics and animation tools",
-        "icon": "🎬",
-        "folder_path": "I:\\Visual",
-        "scripts": {
-            "add_txt_to_metadata": {
-                "name": "Add Text to Image Metadata",
-                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Visual_AddTxtToMetadata.py"),
-                "description": "Add text from matching .txt files to JPEG image metadata",
-                "icon": "🏷"
-            }
-        },
-        "subcategories": {
-            "GD": {
-                "name": "Graphic Design",
-                "icon": "🖼️",
-                "scripts": {}
-            },
-            "FX": {
-                "name": "Visual Effects",
-                "icon": "🎬",
-                "scripts": {}
-            },
-            "VJ": {
-                "name": "Live Video",
-                "icon": "💫",
-                "scripts": {}
-            }
-        }
-    },
-    "REALTIME": {
-        "name": "RealTime",
-        "description": "Real-time processing and performance tools",
-        "icon": "⚡",
-        "folder_path": "I:\\RealTime",
-        "scripts": {},
-        "subcategories": {
-            "GODOT": {
-                "name": "Godot Engine",
-                "icon": "🔵",
-                "scripts": {}
-            },
-            "TD": {
-                "name": "TouchDesigner",
-                "icon": "🟠",
-                "scripts": {}
-            }
-        }
-    },
-    "AUDIO": {
-        "name": "Audio",
-        "description": "Audio processing tools for DJs and producers",
-        "icon": "🎵",
-        "folder_path": "I:\\Audio",
-        "scripts": {
-            "backup_musicbee": {
-                "name": "Backup Music to OneDrive",
-                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Audio_Backup.py"),
-                "description": "Backup MusicBee library to OneDrive, only transferring changed or new files",
-                "icon": "💾"
-            }
-        },
-        "subcategories": {
-            "DJ": {
-                "name": "DJ Tools",
-                "icon": "🎧",
-                "scripts": {
-                    "sync_playlists": {
-                        "name": "Sync Playlists to Traktor",
-                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Audio_TraktorSync.py"),
-                        "description": "Synchronize iTunes playlists to Traktor DJ library with WAV conversion",
-                        "icon": "🔄"
-                    },
-                    "poweramp_sync": {
-                        "name": "Sync Playlists to PowerAmp",
-                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Audio_PowerAmpSync.py"),
-                        "description": "Export MusicBee playlists to M3U8 format for PowerAmp on Android",
-                        "icon": "📱"
-                    }
-                }
-            },
-            "PROD": {
-                "name": "Production Tools",
-                "icon": "🎛️",
-                "scripts": {}
-            }
-        }
-    },
-    "PHYSICAL": {
-        "name": "Physical",
-        "description": "Physical workflow automation",
-        "icon": "🔧",
-        "folder_path": "I:\\Physical",
-        "scripts": {},
-        "subcategories": {
-            "3DPRINTING": {
-                "name": "3D Printing",
-                "icon": "🖨️",
-                "scripts": {
-                    "woocommerce_monitor": {
-                        "name": "WooCommerce Order Monitor",
-                        "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Physical_WooCommerceOrderMonitor.py"),
-                        "description": "Automatically monitor WooCommerce orders and organize folders with invoices, labels, and details",
-                        "icon": "📦"
-                    }
-                }
-            }
-        }
-    },
-    "PHOTO": {
-        "name": "Photo",
-        "description": "Photography workflow automation",
-        "icon": "📷",
-        "folder_path": "I:\\Photo",
-        "scripts": {
-            "new_collection": {
-                "name": "New Photo Collection",
-                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Photo_NewCollection.py"),
-                "description": "Create a photo collection folder in E:/_photo with date, location, and activity",
-                "icon": "📸"
-            }
-        },
-        "subcategories": {}
-    },
-    "WEB": {
-        "name": "Web",
-        "description": "Web development and publishing tools",
-        "icon": "🌐",
-        "folder_path": "I:\\Web",
-        "scripts": {
-            "backup_laragon": {
-                "name": "Backup Laragon",
-                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Web_BackupLaragon.py"),
-                "description": "Create a timestamped backup of Laragon installation",
-                "icon": "💾"
-            }
-        },
-        "subcategories": {}
-    }
-}
-
-BUSINESS_CATEGORIES = {
-    "BUSINESS": {
-        "name": "Business",
-        "description": "Business and financial management tools",
-        "icon": "💼",
-        "folder_path": "I:\\_LIBRARY",
-        "scripts": {
-            "bookkeeping_structure": {
-                "name": "Create Bookkeeping Folder Structure",
-                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Bookkeeping_FolderStructure.py"),
-                "description": "Create folder structure for bookkeeping and financial records",
-                "icon": "📋"
-            },
-            "invoice_renamer": {
-                "name": "Invoice Renamer",
-                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Bookkeeping_InvoiceRenamer.py"),
-                "description": "Automatically rename invoices to standardized format: FAC_YY-MM-DD_CompanyName",
-                "icon": "📄"
-            }
-        },
-        "subcategories": {}
-    },
-    "GLOBAL": {
-        "name": "Global Tools",
-        "description": "General-purpose utilities",
-        "icon": "🛠️",
-        # No folder_path for Global Tools as requested
-        "scripts": {
-            "global_cleanup": {
-                "name": "Global Cleanup",
-                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Global_Cleanup.py"),
-                "description": "Clean up temporary files and folders",
-                "icon": "🧹"
-            }
-        },
-        "subcategories": {}
-    }
-}
-
-# Combine all categories
-PIPELINE_CATEGORIES = {**CREATIVE_CATEGORIES, **BUSINESS_CATEGORIES}
-
-# Default configuration path
-DEFAULT_CONFIG_PATH = os.path.join(os.path.expanduser("~"), "AppData", "Local", "PipelineManager", "config.json")
-
 # ====================================
-# LOGGING AND CONFIG (Simplified)
+# IMPORTS FROM MODULES
 # ====================================
 
-# Import shared logging utility
 sys.path.insert(0, SCRIPTS_DIR)
 from shared_logging import get_logger, setup_logging
-from rak_settings import RakSettings, get_rak_settings
+from rak_settings import get_rak_settings
+
+from ui_theme import COLORS, CATEGORY_COLORS
+from ui_pipeline_categories import (
+    APP_NAME, APP_VERSION, LOGO_PATH,
+    CREATIVE_CATEGORIES, BUSINESS_CATEGORIES, PIPELINE_CATEGORIES
+)
+from ui_config_manager import ConfigManager
+from ui_settings_dialog import SettingsDialog
+from ui_script_runner import ScriptRunner
+from ui_keyboard_navigator import KeyboardNavigatorMixin
 
 # Get logger reference (configured in main())
 logger = get_logger("pipeline")
 
 # Import Project Tracker for embedded use (from top-level file)
 from floriandheer_project_tracker import ProjectTrackerApp
-
-class ConfigManager:
-    """Manages configuration settings for the pipeline manager."""
-    
-    def __init__(self, config_path=DEFAULT_CONFIG_PATH):
-        self.config_path = config_path
-        self.config = self._load_config()
-    
-    def _load_config(self):
-        """Load configuration from file or create default if not exists."""
-        if os.path.exists(self.config_path):
-            try:
-                with open(self.config_path, 'r') as f:
-                    return json.load(f)
-            except Exception as e:
-                logger.error(f"Error loading config: {e}")
-                return self._create_default_config()
-        else:
-            return self._create_default_config()
-    
-    def _create_default_config(self):
-        """Create default configuration."""
-        config = {
-            "version": APP_VERSION,
-            "last_main_tab": "creative",
-            "last_category": "AUDIO",
-            "scripts": {}
-        }
-        
-        self._save_config(config)
-        return config
-    
-    def _save_config(self, config=None):
-        """Save configuration to file."""
-        if config is None:
-            config = self.config
-            
-        try:
-            os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
-            with open(self.config_path, 'w') as f:
-                json.dump(config, f, indent=4)
-            return True
-        except Exception as e:
-            logger.error(f"Error saving config: {e}")
-            return False
-    
-    def get_script_config(self, category_key, script_key):
-        """Get configuration for a specific script."""
-        script_id = f"{category_key}_{script_key}"
-        if script_id not in self.config.get("scripts", {}):
-            self.config.setdefault("scripts", {})[script_id] = {
-                "args": [],
-                "env_vars": {},
-                "last_run": None
-            }
-            self._save_config()
-        return self.config["scripts"][script_id]
-    
-    def update_script_config(self, category_key, script_key, new_config):
-        """Update configuration for a specific script."""
-        script_id = f"{category_key}_{script_key}"
-        self.config.setdefault("scripts", {})[script_id] = new_config
-        return self._save_config()
-
-
-class SettingsDialog:
-    """Settings dialog for configuring pipeline paths and preferences."""
-
-    def __init__(self, parent, settings: RakSettings):
-        """
-        Initialize the settings dialog.
-
-        Args:
-            parent: Parent window
-            settings: RakSettings instance
-        """
-        self.parent = parent
-        self.settings = settings
-        self.result = False  # True if saved
-
-        # Create dialog window
-        self.dialog = tk.Toplevel(parent)
-        self.dialog.title("Rak Settings")
-        self.dialog.geometry("750x750")
-        self.dialog.minsize(700, 600)
-        self.dialog.configure(bg=COLORS["bg_primary"])
-
-        # Make dialog modal
-        self.dialog.transient(parent)
-        self.dialog.grab_set()
-
-        # Center on parent
-        self.dialog.update_idletasks()
-        x = parent.winfo_x() + (parent.winfo_width() - self.dialog.winfo_width()) // 2
-        y = parent.winfo_y() + (parent.winfo_height() - self.dialog.winfo_height()) // 2
-        self.dialog.geometry(f"+{x}+{y}")
-
-        # Store original values for cancel
-        self._original_work_drive = settings.get_work_drive()
-        self._original_archive_base = settings.get_archive_base()
-
-        # Build UI
-        self._build_ui()
-
-        # Validate on open
-        self._validate_paths()
-
-    def _build_ui(self):
-        """Build the settings dialog UI."""
-        # Header
-        header_frame = tk.Frame(self.dialog, bg=COLORS["bg_secondary"], height=60)
-        header_frame.pack(fill=tk.X)
-        header_frame.pack_propagate(False)
-
-        header_label = tk.Label(
-            header_frame,
-            text="Rak Settings",
-            font=font.Font(family="Segoe UI", size=16, weight="bold"),
-            fg=COLORS["text_primary"],
-            bg=COLORS["bg_secondary"]
-        )
-        header_label.pack(side=tk.LEFT, padx=20, pady=15)
-
-        # Notebook for tabs
-        style = ttk.Style()
-        style.configure("Settings.TNotebook", background=COLORS["bg_primary"])
-        style.configure("Settings.TNotebook.Tab",
-                       background=COLORS["bg_secondary"],
-                       foreground=COLORS["text_primary"],
-                       padding=[15, 8],
-                       width=20)
-        style.map("Settings.TNotebook.Tab",
-                 background=[("selected", COLORS["accent_dark"])],
-                 foreground=[("selected", "#ffffff")],
-                 padding=[("selected", [15, 8])])
-
-        self.notebook = ttk.Notebook(self.dialog, style="Settings.TNotebook")
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
-
-        # === PATHS TAB ===
-        paths_tab = tk.Frame(self.notebook, bg=COLORS["bg_primary"])
-        self.notebook.add(paths_tab, text="Paths")
-        self._build_paths_tab(paths_tab)
-
-        # === SOFTWARE TAB ===
-        software_tab = tk.Frame(self.notebook, bg=COLORS["bg_primary"])
-        self.notebook.add(software_tab, text="Software Defaults")
-        self._build_software_tab(software_tab)
-
-        # === BUTTON ROW ===
-        self._build_button_row()
-
-    def _build_paths_tab(self, parent):
-        """Build the Paths settings tab."""
-        content_frame = tk.Frame(parent, bg=COLORS["bg_primary"])
-        content_frame.pack(fill=tk.BOTH, expand=True, pady=10)
-
-        # === DRIVE CONFIGURATION SECTION ===
-        drive_section = tk.LabelFrame(
-            content_frame,
-            text=" Drive Configuration ",
-            font=font.Font(family="Segoe UI", size=11, weight="bold"),
-            fg=COLORS["text_primary"],
-            bg=COLORS["bg_card"],
-            padx=15,
-            pady=10
-        )
-        drive_section.pack(fill=tk.X, pady=(0, 15))
-
-        # Active Drive row
-        work_frame = tk.Frame(drive_section, bg=COLORS["bg_card"])
-        work_frame.pack(fill=tk.X, pady=5)
-
-        tk.Label(
-            work_frame,
-            text="Active Drive:",
-            font=font.Font(family="Segoe UI", size=10),
-            fg=COLORS["text_primary"],
-            bg=COLORS["bg_card"],
-            width=15,
-            anchor="w"
-        ).pack(side=tk.LEFT)
-
-        self.work_drive_var = tk.StringVar(value=self.settings.get_work_drive())
-        work_entry = tk.Entry(
-            work_frame,
-            textvariable=self.work_drive_var,
-            font=font.Font(family="Segoe UI", size=10),
-            bg=COLORS["bg_secondary"],
-            fg=COLORS["text_primary"],
-            insertbackground=COLORS["text_primary"],
-            width=30
-        )
-        work_entry.pack(side=tk.LEFT, padx=(0, 10))
-        work_entry.bind('<KeyRelease>', lambda e: self._validate_paths())
-
-        self.work_status_label = tk.Label(
-            work_frame,
-            text="",
-            font=font.Font(family="Segoe UI", size=9),
-            bg=COLORS["bg_card"],
-            width=25,
-            anchor="w"
-        )
-        self.work_status_label.pack(side=tk.LEFT)
-
-        # Help text for work drive
-        tk.Label(
-            drive_section,
-            text="Mapped via VisualSubst to your active projects directory",
-            font=font.Font(family="Segoe UI", size=9, slant="italic"),
-            fg=COLORS["text_secondary"],
-            bg=COLORS["bg_card"]
-        ).pack(anchor="w", padx=(15 * 10, 0), pady=(0, 5))
-
-        # Archive Base row
-        archive_frame = tk.Frame(drive_section, bg=COLORS["bg_card"])
-        archive_frame.pack(fill=tk.X, pady=5)
-
-        tk.Label(
-            archive_frame,
-            text="Archive Base:",
-            font=font.Font(family="Segoe UI", size=10),
-            fg=COLORS["text_primary"],
-            bg=COLORS["bg_card"],
-            width=15,
-            anchor="w"
-        ).pack(side=tk.LEFT)
-
-        self.archive_base_var = tk.StringVar(value=self.settings.get_archive_base())
-        archive_entry = tk.Entry(
-            archive_frame,
-            textvariable=self.archive_base_var,
-            font=font.Font(family="Segoe UI", size=10),
-            bg=COLORS["bg_secondary"],
-            fg=COLORS["text_primary"],
-            insertbackground=COLORS["text_primary"],
-            width=30
-        )
-        archive_entry.pack(side=tk.LEFT, padx=(0, 10))
-        archive_entry.bind('<KeyRelease>', lambda e: self._validate_paths())
-
-        browse_btn = tk.Button(
-            archive_frame,
-            text="Browse",
-            command=self._browse_archive,
-            bg=COLORS["bg_secondary"],
-            fg=COLORS["text_primary"],
-            font=font.Font(family="Segoe UI", size=9),
-            relief=tk.FLAT,
-            cursor="hand2",
-            padx=10
-        )
-        browse_btn.pack(side=tk.LEFT, padx=(0, 10))
-
-        self.archive_status_label = tk.Label(
-            archive_frame,
-            text="",
-            font=font.Font(family="Segoe UI", size=9),
-            bg=COLORS["bg_card"],
-            width=20,
-            anchor="w"
-        )
-        self.archive_status_label.pack(side=tk.LEFT)
-
-        # === CATEGORY PATHS SECTION ===
-        paths_section = tk.LabelFrame(
-            content_frame,
-            text=" Category Paths ",
-            font=font.Font(family="Segoe UI", size=11, weight="bold"),
-            fg=COLORS["text_primary"],
-            bg=COLORS["bg_card"],
-            padx=15,
-            pady=10
-        )
-        paths_section.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
-
-        # Header row
-        header_row = tk.Frame(paths_section, bg=COLORS["bg_card"])
-        header_row.pack(fill=tk.X, pady=(0, 5))
-
-        tk.Label(
-            header_row,
-            text="Category",
-            font=font.Font(family="Segoe UI", size=9, weight="bold"),
-            fg=COLORS["text_secondary"],
-            bg=COLORS["bg_card"],
-            width=12,
-            anchor="w"
-        ).pack(side=tk.LEFT)
-
-        tk.Label(
-            header_row,
-            text="Active Path",
-            font=font.Font(family="Segoe UI", size=9, weight="bold"),
-            fg=COLORS["text_secondary"],
-            bg=COLORS["bg_card"],
-            width=25,
-            anchor="w"
-        ).pack(side=tk.LEFT, padx=(10, 0))
-
-        tk.Label(
-            header_row,
-            text="Archive Path",
-            font=font.Font(family="Segoe UI", size=9, weight="bold"),
-            fg=COLORS["text_secondary"],
-            bg=COLORS["bg_card"],
-            width=30,
-            anchor="w"
-        ).pack(side=tk.LEFT, padx=(10, 0))
-
-        # Separator
-        sep = tk.Frame(paths_section, bg=COLORS["border"], height=1)
-        sep.pack(fill=tk.X, pady=5)
-
-        # Category rows
-        self.category_labels = {}
-        for category in self.settings.get_ordered_categories():
-            row = tk.Frame(paths_section, bg=COLORS["bg_card"])
-            row.pack(fill=tk.X, pady=2)
-
-            # Category name with color indicator
-            cat_color = CATEGORY_COLORS.get(category.upper(), COLORS["text_primary"])
-            cat_label = tk.Label(
-                row,
-                text=f"  {category}",
-                font=font.Font(family="Segoe UI", size=10),
-                fg=cat_color,
-                bg=COLORS["bg_card"],
-                width=12,
-                anchor="w"
-            )
-            cat_label.pack(side=tk.LEFT)
-
-            # Work path (read-only, computed from drive + subpath)
-            work_path = self.settings.get_work_path(category)
-            work_label = tk.Label(
-                row,
-                text=work_path.replace('\\', '/'),
-                font=font.Font(family="Consolas", size=9),
-                fg=COLORS["text_primary"],
-                bg=COLORS["bg_secondary"],
-                width=25,
-                anchor="w",
-                padx=5
-            )
-            work_label.pack(side=tk.LEFT, padx=(10, 0))
-
-            # Archive path
-            archive_path = self.settings.get_archive_path(category)
-            archive_label = tk.Label(
-                row,
-                text=archive_path.replace('\\', '/'),
-                font=font.Font(family="Consolas", size=9),
-                fg=COLORS["text_primary"],
-                bg=COLORS["bg_secondary"],
-                width=30,
-                anchor="w",
-                padx=5
-            )
-            archive_label.pack(side=tk.LEFT, padx=(10, 0))
-
-            self.category_labels[category] = {
-                "work": work_label,
-                "archive": archive_label
-            }
-
-            # Show subcategories if any
-            cat_config = self.settings.get_category_config(category)
-            subcats = cat_config.get("subcategories", [])
-            if subcats:
-                for subcat in subcats:
-                    sub_row = tk.Frame(paths_section, bg=COLORS["bg_card"])
-                    sub_row.pack(fill=tk.X, pady=1)
-
-                    tk.Label(
-                        sub_row,
-                        text=f"    {subcat}",
-                        font=font.Font(family="Segoe UI", size=9),
-                        fg=COLORS["text_secondary"],
-                        bg=COLORS["bg_card"],
-                        width=12,
-                        anchor="w"
-                    ).pack(side=tk.LEFT)
-
-                    tk.Label(
-                        sub_row,
-                        text="(inherits)",
-                        font=font.Font(family="Segoe UI", size=9, slant="italic"),
-                        fg=COLORS["text_secondary"],
-                        bg=COLORS["bg_card"]
-                    ).pack(side=tk.LEFT, padx=(10, 0))
-
-    def _build_software_tab(self, parent):
-        """Build the Software Defaults settings tab."""
-        # Scrollable frame for software settings
-        canvas = tk.Canvas(parent, bg=COLORS["bg_primary"], highlightthickness=0)
-        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
-        scrollable_frame = tk.Frame(canvas, bg=COLORS["bg_primary"])
-
-        scrollable_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
-
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        # Enable mousewheel scrolling when mouse is over the canvas
-        def _on_mousewheel(event):
-            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-
-        def _bind_mousewheel(event):
-            canvas.bind_all("<MouseWheel>", _on_mousewheel)
-
-        def _unbind_mousewheel(event):
-            canvas.unbind_all("<MouseWheel>")
-
-        canvas.bind("<Enter>", _bind_mousewheel)
-        canvas.bind("<Leave>", _unbind_mousewheel)
-
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        # Store software entry widgets for saving
-        self.software_entries = {}
-
-        # Get current software defaults (flat dict)
-        software_defaults = self.settings.get_software_defaults()
-
-        # Software grouped by section for display (vertical layout)
-        software_sections = [
-            ("3D", ["houdini", "blender", "freecad", "alibre", "slicer", "printer"]),
-            ("2D", ["affinity"]),
-            ("FX", ["fusion", "after_effects"]),
-            ("RealTime", ["godot", "resolume", "touchdesigner", "python", "platform", "renderer", "resolution"]),
-            ("Audio", ["ableton", "reaper", "traktor"]),
-        ]
-
-        for section_label, software_list in software_sections:
-            section = tk.LabelFrame(
-                scrollable_frame,
-                text=f" {section_label} ",
-                font=font.Font(family="Segoe UI", size=11, weight="bold"),
-                fg=COLORS["text_primary"],
-                bg=COLORS["bg_card"],
-                padx=15,
-                pady=10
-            )
-            section.pack(fill=tk.X, padx=10, pady=(0, 10))
-
-            for software in software_list:
-                # Skip if already has an entry (e.g. touchdesigner appears in both)
-                if software in self.software_entries:
-                    continue
-
-                current_value = software_defaults.get(software, "")
-                label_text = software.replace("_", " ").title()
-
-                row = tk.Frame(section, bg=COLORS["bg_card"])
-                row.pack(fill=tk.X, pady=2)
-
-                tk.Label(
-                    row,
-                    text=f"{label_text}:",
-                    font=font.Font(family="Segoe UI", size=10),
-                    fg=COLORS["text_secondary"],
-                    bg=COLORS["bg_card"],
-                    width=18,
-                    anchor="w"
-                ).pack(side=tk.LEFT)
-
-                var = tk.StringVar(value=current_value)
-                entry = tk.Entry(
-                    row,
-                    textvariable=var,
-                    font=font.Font(family="Segoe UI", size=10),
-                    bg=COLORS["bg_secondary"],
-                    fg=COLORS["text_primary"],
-                    insertbackground=COLORS["text_primary"],
-                    width=20
-                )
-                entry.pack(side=tk.LEFT)
-
-                self.software_entries[software] = var
-
-    def _build_button_row(self):
-        """Build the button row at the bottom of the dialog."""
-        button_frame = tk.Frame(self.dialog, bg=COLORS["bg_primary"])
-        button_frame.pack(fill=tk.X, padx=20, pady=15)
-
-        # Reset button (left side)
-        reset_btn = tk.Button(
-            button_frame,
-            text="Reset Defaults",
-            command=self._reset_defaults,
-            bg=COLORS["bg_secondary"],
-            fg=COLORS["text_primary"],
-            font=font.Font(family="Segoe UI", size=10),
-            relief=tk.FLAT,
-            cursor="hand2",
-            padx=15,
-            pady=8
-        )
-        reset_btn.pack(side=tk.LEFT)
-
-        # Cancel button (right side)
-        cancel_btn = tk.Button(
-            button_frame,
-            text="Cancel",
-            command=self._cancel,
-            bg=COLORS["bg_secondary"],
-            fg=COLORS["text_primary"],
-            font=font.Font(family="Segoe UI", size=10),
-            relief=tk.FLAT,
-            cursor="hand2",
-            padx=15,
-            pady=8
-        )
-        cancel_btn.pack(side=tk.RIGHT, padx=(10, 0))
-
-        # Save button (right side)
-        save_btn = tk.Button(
-            button_frame,
-            text="Save",
-            command=self._save,
-            bg=COLORS["accent_dark"],
-            fg="#ffffff",
-            font=font.Font(family="Segoe UI", size=10, weight="bold"),
-            relief=tk.FLAT,
-            cursor="hand2",
-            padx=20,
-            pady=8
-        )
-        save_btn.pack(side=tk.RIGHT)
-
-    def _validate_paths(self):
-        """Validate current path entries and update status labels."""
-        # Validate work drive
-        work_drive = self.work_drive_var.get()
-        work_valid, work_msg = self.settings.validate_drive(work_drive)
-
-        if work_valid:
-            self.work_status_label.config(text=f"OK {work_msg}", fg=COLORS["success"])
-        else:
-            self.work_status_label.config(text=f"! {work_msg}", fg=COLORS["warning"])
-
-        # Validate archive base
-        archive_base = self.archive_base_var.get()
-        archive_valid, archive_msg = self.settings.validate_drive(archive_base)
-
-        if archive_valid:
-            self.archive_status_label.config(text=f"OK {archive_msg}", fg=COLORS["success"])
-        else:
-            self.archive_status_label.config(text=f"! {archive_msg}", fg=COLORS["warning"])
-
-        # Update category path labels
-        self._update_category_paths()
-
-    def _update_category_paths(self):
-        """Update category path labels based on current drive settings."""
-        work_drive = self.work_drive_var.get()
-        archive_base = self.archive_base_var.get()
-
-        for category, labels in self.category_labels.items():
-            cat_config = self.settings.get_category_config(category)
-            work_subpath = cat_config.get("work_subpath", category)
-            archive_subpath = cat_config.get("archive_subpath", category)
-
-            work_path = f"{work_drive}\\{work_subpath}".replace('\\', '/')
-            archive_path = f"{archive_base}\\{archive_subpath}".replace('\\', '/')
-
-            labels["work"].config(text=work_path)
-            labels["archive"].config(text=archive_path)
-
-    def _browse_archive(self):
-        """Open folder browser for archive base."""
-        current = self.archive_base_var.get()
-        initial_dir = current if os.path.isdir(current) else None
-
-        folder = filedialog.askdirectory(
-            parent=self.dialog,
-            title="Select Archive Base Directory",
-            initialdir=initial_dir
-        )
-
-        if folder:
-            # Normalize to Windows path format
-            folder = folder.replace('/', '\\')
-            self.archive_base_var.set(folder)
-            self._validate_paths()
-
-    def _reset_defaults(self):
-        """Reset to default values."""
-        if messagebox.askyesno(
-            "Reset Defaults",
-            "Reset all settings to default values?\n\n"
-            "This will reset:\n"
-            "- Active Drive: I:\n"
-            "- Archive Base: D:\\_work\\Archive\n"
-            "- All software version defaults",
-            parent=self.dialog
-        ):
-            # Reset paths
-            self.work_drive_var.set("I:")
-            self.archive_base_var.set("D:\\_work\\Archive")
-            self._validate_paths()
-
-            # Reset software defaults in UI
-            if hasattr(self, 'software_entries'):
-                defaults = self.settings.DEFAULT_CONFIG.get("software_defaults", {})
-                for software, var in self.software_entries.items():
-                    var.set(defaults.get(software, ""))
-
-    def _save(self):
-        """Save settings and close dialog."""
-        work_drive = self.work_drive_var.get()
-        archive_base = self.archive_base_var.get()
-
-        # Validate before saving
-        work_valid, _ = self.settings.validate_drive(work_drive)
-        archive_valid, _ = self.settings.validate_drive(archive_base)
-
-        if not work_valid or not archive_valid:
-            if not messagebox.askyesno(
-                "Invalid Paths",
-                "Some paths could not be validated.\n\n"
-                "Save anyway? (You can fix this later)",
-                parent=self.dialog
-            ):
-                return
-
-        # Save path config
-        self.settings.set_work_drive(work_drive)
-        self.settings.set_archive_base(archive_base)
-
-        # Save software defaults
-        if hasattr(self, 'software_entries'):
-            versions = {software: var.get() for software, var in self.software_entries.items()}
-            self.settings.set_software_defaults(**versions)
-
-        self.result = True
-        self.dialog.destroy()
-        logger.info("Settings saved")
-
-    def _cancel(self):
-        """Cancel and close dialog."""
-        self.result = False
-        self.dialog.destroy()
-
-    def show(self) -> bool:
-        """
-        Show the dialog and wait for it to close.
-
-        Returns:
-            True if settings were saved, False if cancelled
-        """
-        self.dialog.wait_window()
-        return self.result
-
-
-class ScriptRunner:
-    """Handles running external scripts."""
-    
-    @staticmethod
-    def run_script(script_path, args=None, env_vars=None, callback=None):
-        """Run a Python script as a subprocess."""
-        if not os.path.exists(script_path):
-            error_msg = f"Script not found: {script_path}"
-            logger.error(error_msg)
-            if callback:
-                callback(error_msg, "error")
-            return False
-        
-        cmd = [sys.executable, script_path] + (args or [])
-        env = os.environ.copy()
-        if env_vars:
-            env.update(env_vars)
-        
-        logger.info(f"Running script: {' '.join(cmd)}")
-        if callback:
-            callback(f"Running: {os.path.basename(script_path)}", "info")
-        
-        try:
-            process = subprocess.Popen(
-                cmd,
-                env=env,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1
-            )
-            
-            def monitor_output():
-                for line in iter(process.stdout.readline, ''):
-                    if line.strip():
-                        logger.info(line.strip())
-                        if callback:
-                            callback(line.strip(), "info")
-                
-                # Filter out Python warnings from stderr
-                warning_indicators = ['Warning:', 'SyntaxWarning', 'DeprecationWarning', 'FutureWarning', 'UserWarning']
-                warning_context_lines = 0  # Track lines after a warning (usually code context)
-                
-                for line in iter(process.stderr.readline, ''):
-                    if line.strip():
-                        stripped_line = line.strip()
-                        
-                        # Check if this line contains a Python warning
-                        is_warning_line = any(indicator in stripped_line for indicator in warning_indicators)
-                        
-                        if is_warning_line:
-                            # This is a warning - skip it and the next 2 lines (usually file path + code)
-                            warning_context_lines = 2
-                            continue
-                        
-                        if warning_context_lines > 0:
-                            # Skip context lines after a warning
-                            warning_context_lines -= 1
-                            continue
-                        
-                        # This is a real error - show it
-                        logger.error(stripped_line)
-                        if callback:
-                            callback(stripped_line, "error")
-                
-                exit_code = process.wait()
-                
-                if exit_code == 0:
-                    success_msg = f"✓ Completed: {os.path.basename(script_path)}"
-                    logger.info(success_msg)
-                    if callback:
-                        callback(success_msg, "success")
-                else:
-                    error_msg = f"✗ Failed (exit code {exit_code}): {os.path.basename(script_path)}"
-                    logger.error(error_msg)
-                    if callback:
-                        callback(error_msg, "error")
-            
-            threading.Thread(target=monitor_output, daemon=True).start()
-            return True
-            
-        except Exception as e:
-            error_msg = f"Error running script: {e}"
-            logger.error(error_msg)
-            if callback:
-                callback(error_msg, "error")
-            return False
 
 # ====================================
 # CUSTOM WIDGETS
@@ -1025,33 +54,33 @@ class ScriptRunner:
 
 class ScrollableFrame(tk.Frame):
     """A scrollable frame widget with smooth mouse wheel scrolling."""
-    
+
     def __init__(self, parent, bg=None):
         super().__init__(parent, bg=bg)
-        
+
         # Create canvas and scrollbar
         self.canvas = tk.Canvas(self, bg=bg, highlightthickness=0)
         self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
         self.scrollable_frame = tk.Frame(self.canvas, bg=bg)
-        
+
         self.scrollable_frame.bind(
             "<Configure>",
             lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
         )
-        
+
         self.canvas_window = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
-        
+
         # Bind canvas resize to frame width
         self.canvas.bind('<Configure>', self._configure_canvas_window)
-        
+
         # Bind mouse wheel directly to canvas (simpler approach)
         self._bind_mouse_wheel()
-        
+
         # Pack widgets
         self.canvas.pack(side="left", fill="both", expand=True)
         self.scrollbar.pack(side="right", fill="y")
-    
+
     def _configure_canvas_window(self, event):
         """Update the canvas window to match canvas width and minimum height."""
         canvas_width = event.width
@@ -1065,7 +94,7 @@ class ScrollableFrame(tk.Frame):
         else:
             # Reset to natural height when content is taller
             self.canvas.itemconfig(self.canvas_window, height=content_height)
-    
+
     def _bind_mouse_wheel(self):
         """Bind mouse wheel events directly to canvas."""
         # Windows and MacOS - bind directly to canvas
@@ -1073,26 +102,26 @@ class ScrollableFrame(tk.Frame):
         # Linux
         self.canvas.bind("<Button-4>", self._on_mouse_wheel)
         self.canvas.bind("<Button-5>", self._on_mouse_wheel)
-        
+
         # Also bind to all children recursively
         self._bind_to_mousewheel(self.scrollable_frame)
-    
+
     def _bind_to_mousewheel(self, widget):
         """Recursively bind mousewheel to widget and all its children."""
         # Bind to the widget
         widget.bind("<MouseWheel>", self._on_mouse_wheel, add="+")
         widget.bind("<Button-4>", self._on_mouse_wheel, add="+")
         widget.bind("<Button-5>", self._on_mouse_wheel, add="+")
-        
+
         # Bind to all children
         for child in widget.winfo_children():
             self._bind_to_mousewheel(child)
-    
+
     def rebind_mousewheel(self):
         """Rebind mousewheel to all widgets after content has been added."""
         # Rebind to the scrollable frame and all its children
         self._bind_to_mousewheel(self.scrollable_frame)
-    
+
     def _on_mouse_wheel(self, event):
         """Handle mouse wheel scrolling."""
         # Check if there's actually content to scroll
@@ -1100,15 +129,15 @@ class ScrollableFrame(tk.Frame):
             bbox = self.canvas.bbox("all")
             if bbox is None:
                 return "break"
-            
+
             # Get the current view
             view_height = self.canvas.winfo_height()
             content_height = bbox[3] - bbox[1]
-            
+
             # Only scroll if content is larger than view
             if content_height <= view_height:
                 return "break"
-            
+
             # Determine scroll direction and amount
             if event.num == 4 or event.delta > 0:
                 # Scroll up
@@ -1116,11 +145,11 @@ class ScrollableFrame(tk.Frame):
             elif event.num == 5 or event.delta < 0:
                 # Scroll down
                 self.canvas.yview_scroll(1, "units")
-            
+
             return "break"  # Prevent event from propagating
         except:
             return "break"
-    
+
     def get_frame(self):
         """Get the scrollable frame."""
         return self.scrollable_frame
@@ -1129,9 +158,9 @@ class ScrollableFrame(tk.Frame):
 # PROFESSIONAL GUI IMPLEMENTATION
 # ====================================
 
-class ProfessionalPipelineGUI:
+class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
     """Professional GUI for the Pipeline Manager."""
-    
+
     def __init__(self, root):
         """Initialize the Pipeline Manager GUI."""
         self.root = root
@@ -1181,60 +210,60 @@ class ProfessionalPipelineGUI:
 
         # Create main layout
         self.create_layout()
-    
+
     def setup_styles(self):
         """Setup custom ttk styles for professional look."""
         style = ttk.Style()
-        
+
         # Force a specific theme to avoid system overrides
         try:
             style.theme_use('clam')  # or 'alt', 'default', 'classic'
         except:
             pass  # If theme doesn't exist, continue with default
-    
-        
+
+
         # Configure notebook style with better contrast
-        style.configure("Main.TNotebook", 
+        style.configure("Main.TNotebook",
                        background=COLORS["bg_primary"],
                        borderwidth=0,
                        tabmargins=[2, 5, 2, 0])
-        
+
         # Base tab styling (for unselected tabs - smaller)
-        style.configure("Main.TNotebook.Tab", 
+        style.configure("Main.TNotebook.Tab",
                        background=COLORS["bg_secondary"],
                        foreground=COLORS["text_secondary"],
                        padding=[15, 8],  # Smaller padding for unselected tabs
                        borderwidth=0,
                        focuscolor="none",
                        font=('Segoe UI', 10, 'normal'))
-        
+
         # Dynamic styling with different padding for selected vs unselected
         style.map("Main.TNotebook.Tab",
-                 background=[('selected', COLORS["tab_active_bg"]), 
+                 background=[('selected', COLORS["tab_active_bg"]),
                             ('!selected', COLORS["bg_secondary"]),
                             ('active', COLORS["bg_hover"])],
-                 foreground=[('selected', COLORS["tab_active_fg"]), 
+                 foreground=[('selected', COLORS["tab_active_fg"]),
                             ('!selected', COLORS["text_secondary"])],
                  padding=[('selected', [22, 12]),  # Bigger padding when selected
                          ('!selected', [15, 8])],  # Smaller padding when not selected
                  expand=[("selected", [1, 1, 1, 0])])
-        
+
         # Fix the selected tab text visibility with better styling
         style.map("Main.TNotebook.Tab",
-                 background=[('selected', COLORS["tab_active_bg"]), 
+                 background=[('selected', COLORS["tab_active_bg"]),
                             ('!selected', COLORS["bg_secondary"]),
                             ('active', COLORS["bg_hover"])],  # Added hover state
-                 foreground=[('selected', COLORS["tab_active_fg"]), 
+                 foreground=[('selected', COLORS["tab_active_fg"]),
                             ('!selected', COLORS["text_secondary"])],
                  expand=[("selected", [1, 1, 1, 0])])
-        
+
         # Configure scrollbar style
         style.configure("Vertical.TScrollbar",
                        background=COLORS["bg_secondary"],
                        bordercolor=COLORS["bg_secondary"],
                        arrowcolor=COLORS["text_secondary"],
                        troughcolor=COLORS["bg_primary"])
-        
+
         style.map("Vertical.TScrollbar",
                  background=[("active", COLORS["bg_hover"])])
 
@@ -1243,13 +272,13 @@ class ProfessionalPipelineGUI:
         # Main container
         self.main_container = tk.Frame(self.root, bg=COLORS["bg_primary"])
         self.main_container.pack(fill=tk.BOTH, expand=True)
-        
+
         # Create header
         self.create_header()
-        
+
         # Create main notebook
         self.create_main_notebook()
-        
+
         # Create status bar
         self.create_status_bar()
 
@@ -1258,26 +287,26 @@ class ProfessionalPipelineGUI:
         try:
             from PIL import Image, ImageTk
             image = Image.open(path)
-            
+
             # Calculate dimensions to maintain aspect ratio
             orig_width, orig_height = image.size
             aspect_ratio = orig_width / orig_height
-            
+
             if aspect_ratio > 1:  # Width is greater than height
                 new_width = size[0]
                 new_height = int(size[0] / aspect_ratio)
             else:  # Height is greater than or equal to width
                 new_height = size[1]
                 new_width = int(size[1] * aspect_ratio)
-                
+
             # Make sure we don't exceed our target box
             new_width = min(new_width, size[0])
             new_height = min(new_height, size[1])
-            
+
             # Resize the image while maintaining aspect ratio
             image = image.resize((new_width, new_height), Image.LANCZOS)
             return ImageTk.PhotoImage(image)
-            
+
         except ImportError:
             print("WARNING: PIL/Pillow library not installed. Unable to load logo image.")
             print("Please install the required library using: pip install pillow")
@@ -1285,31 +314,31 @@ class ProfessionalPipelineGUI:
         except Exception as e:
             print(f"Error loading logo image: {str(e)}")
             return None
-    
+
     def create_header(self):
         """Create professional header with logo."""
         header_frame = tk.Frame(self.main_container, bg=COLORS["bg_secondary"], height=90)
         header_frame.pack(fill=tk.X)
         header_frame.pack_propagate(False)
-        
+
         # Inner container for content alignment
         inner_header = tk.Frame(header_frame, bg=COLORS["bg_secondary"])
         inner_header.pack(expand=True, fill=tk.BOTH)
-        
+
         # Configure grid for proper layout
         inner_header.grid_columnconfigure(1, weight=1)
-        
+
         # Logo section (left side)
         logo_frame = tk.Frame(inner_header, bg=COLORS["bg_secondary"], width=100)
         logo_frame.grid(row=0, column=0, padx=20, sticky="w")
         logo_frame.grid_propagate(False)
-        
+
         # Try to load the logo
         try:
             self.logo_image = self.load_logo(LOGO_PATH, size=(80, 50))
             if self.logo_image:
-                logo_label = tk.Label(logo_frame, 
-                                    image=self.logo_image, 
+                logo_label = tk.Label(logo_frame,
+                                    image=self.logo_image,
                                     bg=COLORS["bg_secondary"])
                 logo_label.pack(pady=20)
             else:
@@ -1328,7 +357,7 @@ class ProfessionalPipelineGUI:
                                 fg=COLORS["accent"],
                                 bg=COLORS["bg_secondary"])
             logo_label.pack(pady=20)
-        
+
         # Title section (center-left)
         title_container = tk.Frame(inner_header, bg=COLORS["bg_secondary"])
         title_container.grid(row=0, column=1, sticky="w", padx=20)
@@ -1413,7 +442,7 @@ class ProfessionalPipelineGUI:
         help_btn.pack(side=tk.LEFT, padx=(0, 0), pady=20)
         self._add_header_hint(help_btn, "Keyboard Shortcuts (F1)")
 
-    
+
     def create_main_notebook(self):
         """Create the main content area (single unified view, no tabs needed)."""
         # Main container with padding
@@ -2209,38 +1238,39 @@ class ProfessionalPipelineGUI:
         # Create scrollable frame
         scroll_frame = ScrollableFrame(parent_frame, bg=COLORS["bg_primary"])
         scroll_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        
+
         # Get the actual frame to add content to
         content_frame = scroll_frame.get_frame()
-        
+
         # Create grid of category cards
         columns = 3  # Number of columns in grid
         for i, (category_key, category_data) in enumerate(categories.items()):
             row = i // columns
             col = i % columns
-            
+
             # Create category card
             card = self.create_category_card(content_frame, category_key, category_data)
             card.grid(row=row, column=col, padx=10, pady=10, sticky="nsew")
-            
+
             # Configure grid weights for proper expansion
             content_frame.grid_columnconfigure(col, weight=1)
-        
+
         # IMPORTANT: Rebind mousewheel after all widgets are added
         scroll_frame.rebind_mousewheel()
-    
+
     def open_folder(self, folder_path):
         """Open a folder in Windows File Explorer."""
         try:
             # Special handling for Business category - open current quarter folder
-            if folder_path == "I:\\_LIBRARY":
+            library_path = get_rak_settings().get_work_drive() + "\\_LIBRARY"
+            if folder_path == library_path:
                 # Get current year and quarter
                 now = datetime.datetime.now()
                 current_year = now.year
                 current_quarter = (now.month - 1) // 3 + 1
 
                 # Construct the quarterly folder path
-                folder_path = f"I:\\_LIBRARY\\Boekhouding\\{current_year}\\Q{current_quarter}"
+                folder_path = f"{library_path}\\Boekhouding\\{current_year}\\Q{current_quarter}"
 
             if os.path.exists(folder_path):
                 os.startfile(folder_path)
@@ -2360,13 +1390,13 @@ class ProfessionalPipelineGUI:
 
         except Exception as e:
             self.update_status(f"Error opening note: {e}", "error")
-    
+
     def create_category_card(self, parent, category_key, category_data):
         """Create a professional category card."""
         # Main card frame with border
         card_frame = tk.Frame(parent, bg=COLORS["bg_card"], relief=tk.FLAT, bd=0)
         card_frame.configure(highlightbackground=COLORS["border"], highlightthickness=1)
-        
+
         # Card header with category color
         header_color = CATEGORY_COLORS.get(category_key, COLORS["accent"])
         header_frame = tk.Frame(card_frame, bg=header_color)
@@ -2427,7 +1457,7 @@ class ProfessionalPipelineGUI:
             header_content.bind("<Enter>", lambda e: on_header_enter(e))
             header_content.bind("<Leave>", lambda e: on_header_leave(e))
             header_content.bind("<Button-1>", lambda e: on_header_click(e))
-        
+
         # Icon on the left
         icon_font = font.Font(family="Segoe UI Emoji", size=20)
         icon_label = tk.Label(header_content,
@@ -2436,25 +1466,25 @@ class ProfessionalPipelineGUI:
                              fg="#ffffff",
                              bg=header_color)
         icon_label.pack(side=tk.LEFT, anchor="n")  # Anchor to top
-        
+
         # If clickable, bind events to icon too
         if folder_path:
             icon_label.configure(cursor="hand2")
             icon_label.bind("<Enter>", lambda e: on_header_enter(e))
             icon_label.bind("<Leave>", lambda e: on_header_leave(e))
             icon_label.bind("<Button-1>", lambda e: on_header_click(e))
-        
+
         # Text container for name and description next to icon
         text_container = tk.Frame(header_content, bg=header_color)
         text_container.pack(side=tk.LEFT, padx=(5, 0), fill=tk.X, expand=True)
-        
+
         # If clickable, bind events to text container too
         if folder_path:
             text_container.configure(cursor="hand2")
             text_container.bind("<Enter>", lambda e: on_header_enter(e))
             text_container.bind("<Leave>", lambda e: on_header_leave(e))
             text_container.bind("<Button-1>", lambda e: on_header_click(e))
-        
+
         # Name on top in the text container
         name_font = font.Font(family="Segoe UI", size=13, weight="bold")
         name_label = tk.Label(text_container,
@@ -2464,14 +1494,14 @@ class ProfessionalPipelineGUI:
                              bg=header_color,
                              anchor="w")
         name_label.pack(anchor="w", fill=tk.X)
-        
+
         # If clickable, bind events to name label too
         if folder_path:
             name_label.configure(cursor="hand2")
             name_label.bind("<Enter>", lambda e: on_header_enter(e))
             name_label.bind("<Leave>", lambda e: on_header_leave(e))
             name_label.bind("<Button-1>", lambda e: on_header_click(e))
-        
+
         # Description underneath the name in the same text container
         desc_font = font.Font(family="Segoe UI", size=9)
         desc_label = tk.Label(text_container,
@@ -2483,7 +1513,7 @@ class ProfessionalPipelineGUI:
                              anchor="w",
                              wraplength=280)
         desc_label.pack(anchor="w", fill=tk.X, pady=(2, 0))
-        
+
         # If clickable, bind events to description label too
         if folder_path:
             desc_label.configure(cursor="hand2")
@@ -2593,10 +1623,10 @@ class ProfessionalPipelineGUI:
         # Card body with scrollable content
         body_frame = tk.Frame(card_frame, bg=COLORS["bg_card"])
         body_frame.pack(fill=tk.BOTH, expand=True)
-        
+
         # Collect and organize all scripts
         all_scripts = []
-        
+
         # Direct scripts from category
         scripts = category_data.get("scripts", {})
         for script_key, script_data in scripts.items():
@@ -2607,7 +1637,7 @@ class ProfessionalPipelineGUI:
                 'subcat_key': None,
                 'priority': self._get_script_priority(script_key, script_data['name'])
             })
-        
+
         # Scripts from subcategories
         subcategories = category_data.get("subcategories", {})
         for subcat_key, subcat_data in subcategories.items():
@@ -2622,29 +1652,29 @@ class ProfessionalPipelineGUI:
                     'subcat_icon': subcat_data.get('icon', ''),
                     'priority': self._get_script_priority(script_key, script_data['name'])
                 })
-        
+
         # Sort by priority (folder structure first, then backup, then others)
         all_scripts.sort(key=lambda x: x['priority'])
-        
+
         # Group scripts by type for display
         folder_scripts = [s for s in all_scripts if s['priority'] == 1]
         backup_scripts = [s for s in all_scripts if s['priority'] == 2]
         other_scripts = [s for s in all_scripts if s['priority'] == 3]
-        
+
         # Add folder structure scripts
         if folder_scripts:
             for script in folder_scripts:
                 self.create_full_width_script_button(body_frame, script)
-        
+
         # Add backup scripts
         if backup_scripts:
             for script in backup_scripts:
                 self.create_full_width_script_button(body_frame, script)
-        
+
         # Add other scripts (subcategory headers removed for cleaner UI)
         for script in other_scripts:
             self.create_full_width_script_button(body_frame, script)
-        
+
         # If no scripts available
         if not all_scripts:
             no_scripts_font = font.Font(family="Segoe UI", size=9, slant="italic")
@@ -2654,9 +1684,9 @@ class ProfessionalPipelineGUI:
                                        fg=COLORS["text_secondary"],
                                        bg=COLORS["bg_card"])
             no_scripts_label.pack(pady=20)
-        
+
         return card_frame
-    
+
     def _lighten_color(self, hex_color, factor=0.2):
         """Lighten a hex color by a given factor (0.0 to 1.0)."""
         try:
@@ -2703,13 +1733,13 @@ class ProfessionalPipelineGUI:
             return 2
         else:
             return 3
-    
+
     def add_subcategory_header(self, parent, icon, name):
         """Add a subcategory header."""
         # Section title
         title_frame = tk.Frame(parent, bg=COLORS["bg_card"])
         title_frame.pack(fill=tk.X, padx=15, pady=(10, 2))
-        
+
         title_font = font.Font(family="Segoe UI", size=10, weight="bold")
         title_label = tk.Label(title_frame,
                               text=f"{icon} {name}",
@@ -2717,35 +1747,35 @@ class ProfessionalPipelineGUI:
                               fg=COLORS["accent"],
                               bg=COLORS["bg_card"])
         title_label.pack(anchor=tk.W)
-    
+
     def create_full_width_script_button(self, parent, script):
         """Create a full-width script button with name and description."""
         script_data = script['data']
-        
+
         # Button frame that spans full width
         button_frame = tk.Frame(parent, bg=COLORS["bg_secondary"], cursor="hand2")
         button_frame.pack(fill=tk.X, pady=2, padx=15)
-        
+
         # Inner content frame for proper text alignment
         content_frame = tk.Frame(button_frame, bg=COLORS["bg_secondary"])
         content_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=8)
-        
+
         # Add hover effect
         def on_enter(e):
             button_frame.configure(bg=COLORS["bg_hover"])
             content_frame.configure(bg=COLORS["bg_hover"])
             name_label.configure(bg=COLORS["bg_hover"])
             desc_label.configure(bg=COLORS["bg_hover"])
-        
+
         def on_leave(e):
             button_frame.configure(bg=COLORS["bg_secondary"])
             content_frame.configure(bg=COLORS["bg_secondary"])
             name_label.configure(bg=COLORS["bg_secondary"])
             desc_label.configure(bg=COLORS["bg_secondary"])
-        
+
         button_frame.bind("<Enter>", on_enter)
         button_frame.bind("<Leave>", on_leave)
-        
+
         # Script name (left aligned, bold)
         name_font = font.Font(family="Segoe UI", size=10, weight="bold")
         name_label = tk.Label(content_frame,
@@ -2757,7 +1787,7 @@ class ProfessionalPipelineGUI:
                             anchor="w",
                             justify=tk.LEFT)
         name_label.pack(anchor="w", fill=tk.X)
-        
+
         # Script description (left aligned, smaller, secondary color)
         desc_font = font.Font(family="Segoe UI", size=8)
         desc_label = tk.Label(content_frame,
@@ -2770,16 +1800,16 @@ class ProfessionalPipelineGUI:
                             justify=tk.LEFT,
                             wraplength=280)
         desc_label.pack(anchor="w", fill=tk.X, pady=(2, 0))
-        
+
         # Make the entire frame clickable
         def run_script_wrapper(e=None):
             self.run_script(script['category_key'], script['key'], script.get('subcat_key'))
-        
+
         button_frame.bind("<Button-1>", run_script_wrapper)
         content_frame.bind("<Button-1>", run_script_wrapper)
         name_label.bind("<Button-1>", run_script_wrapper)
         desc_label.bind("<Button-1>", run_script_wrapper)
-        
+
         # Bind hover events to all elements
         content_frame.bind("<Enter>", on_enter)
         content_frame.bind("<Leave>", on_leave)
@@ -2787,7 +1817,7 @@ class ProfessionalPipelineGUI:
         name_label.bind("<Leave>", on_leave)
         desc_label.bind("<Enter>", on_enter)
         desc_label.bind("<Leave>", on_leave)
-    
+
     def create_status_bar(self):
         """Create professional status bar."""
         status_container = tk.Frame(self.main_container, bg=COLORS["bg_secondary"])
@@ -2795,15 +1825,15 @@ class ProfessionalPipelineGUI:
 
         # Collapsible status area - load saved state from config
         self.status_expanded = self.config_manager.config.get("status_log_expanded", True)
-        
+
         # Status header bar
         header_bar = tk.Frame(status_container, bg=COLORS["border"], height=1)
         header_bar.pack(fill=tk.X)
-        
+
         header_frame = tk.Frame(status_container, bg=COLORS["bg_secondary"], height=35)
         header_frame.pack(fill=tk.X)
         header_frame.pack_propagate(False)
-        
+
         # Toggle button
         self.toggle_button = tk.Label(header_frame,
                                      text="▼ Status Log",
@@ -2821,14 +1851,14 @@ class ProfessionalPipelineGUI:
                                          fg=COLORS["text_secondary"],
                                          bg=COLORS["bg_secondary"])
         self.header_hint_label.pack(side=tk.RIGHT, padx=30, pady=8)
-        
+
         # Status text container
         self.status_text_container = tk.Frame(status_container, bg=COLORS["bg_primary"], height=150)
         self.status_text_container.pack(fill=tk.X, padx=30, pady=(0, 10))
         self.status_text_container.pack_propagate(False)
-        
+
         # Status text area
-        self.status_text = tk.Text(self.status_text_container, 
+        self.status_text = tk.Text(self.status_text_container,
                                   bg=COLORS["bg_primary"],
                                   fg=COLORS["text_primary"],
                                   font=font.Font(family="Consolas", size=9),
@@ -2838,19 +1868,19 @@ class ProfessionalPipelineGUI:
                                   padx=10,
                                   pady=10)
         self.status_text.pack(fill=tk.BOTH, expand=True, side=tk.LEFT)
-        
+
         # Scrollbar
         scrollbar = ttk.Scrollbar(self.status_text_container, command=self.status_text.yview)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.status_text.config(yscrollcommand=scrollbar.set)
-        
+
         # Configure tags
         self.status_text.tag_configure("error", foreground=COLORS["error"])
         self.status_text.tag_configure("warning", foreground=COLORS["warning"])
         self.status_text.tag_configure("success", foreground=COLORS["success"])
         self.status_text.tag_configure("info", foreground=COLORS["text_primary"])
         self.status_text.tag_configure("timestamp", foreground=COLORS["text_secondary"])
-        
+
         # Initial message
         self.update_status("Pipeline Manager ready", "info")
 
@@ -2873,17 +1903,17 @@ class ProfessionalPipelineGUI:
         # Save state to config
         self.config_manager.config["status_log_expanded"] = self.status_expanded
         self.config_manager._save_config()
-    
+
     def update_status(self, message, status_type="info"):
         """Update the status text widget."""
         timestamp = datetime.datetime.now().strftime("%H:%M:%S")
-        
+
         self.status_text.insert(tk.END, f"[{timestamp}] ", "timestamp")
         self.status_text.insert(tk.END, f"{message}\n", status_type)
         self.status_text.see(tk.END)
-        
+
         self.root.update_idletasks()
-    
+
     def select_category_by_name(self, category_name):
         """Select a category or operation by name (for backwards compatibility)."""
         # Find the category key by name
@@ -2893,35 +1923,35 @@ class ProfessionalPipelineGUI:
                 return
         # If not found, clear selection
         self._clear_category_selection()
-    
+
     def run_script(self, category_key, script_key, subcat_key=None):
         """Run a script."""
         # Get script data
         category = PIPELINE_CATEGORIES.get(category_key, {})
-        
+
         if subcat_key:
             script_data = category.get("subcategories", {}).get(subcat_key, {}).get("scripts", {}).get(script_key)
             config_key = f"{subcat_key}_{script_key}"
         else:
             script_data = category.get("scripts", {}).get(script_key)
             config_key = script_key
-        
+
         if not script_data or "path" not in script_data:
             self.update_status(f"Script not found: {script_key}", "error")
             return
-        
+
         script_path = script_data["path"]
-        
+
         # Get script configuration
         script_config = self.config_manager.get_script_config(category_key, config_key)
-        
+
         # Update last run timestamp
         script_config["last_run"] = datetime.datetime.now().isoformat()
         self.config_manager.update_script_config(category_key, config_key, script_config)
-        
+
         # Run the script
         self.update_status(f"Starting: {script_data['name']}", "info")
-        
+
         # Run script in a separate thread
         threading.Thread(
             target=lambda: ScriptRunner.run_script(
@@ -2933,440 +1963,6 @@ class ProfessionalPipelineGUI:
             daemon=True
         ).start()
 
-    # ====================================
-    # KEYBOARD NAVIGATION METHODS
-    # ====================================
-
-    def _should_handle_keyboard(self):
-        """Check if keyboard shortcuts should be handled (not when typing in text fields)."""
-        focused = self.root.focus_get()
-        # Don't handle shortcuts when focused on text input widgets
-        return not isinstance(focused, (tk.Entry, tk.Text, ttk.Entry))
-
-    def _nav_panel_up(self):
-        """Navigate up between panels (W key)."""
-        if not self._should_handle_keyboard():
-            return
-        if self.focused_panel == "tracker":
-            # From tracker, W goes to left panel (categories)
-            self.focused_panel = "categories"
-            self._update_panel_focus()
-            self.root.focus_set()
-        elif self.focused_panel in self.LEFT_PANEL_ORDER:
-            idx = self.LEFT_PANEL_ORDER.index(self.focused_panel)
-            if idx > 0:
-                self.focused_panel = self.LEFT_PANEL_ORDER[idx - 1]
-                self._update_panel_focus()
-
-    def _nav_panel_down(self):
-        """Navigate down between panels (S key)."""
-        if not self._should_handle_keyboard():
-            return
-        if self.focused_panel == "tracker":
-            # From tracker, S goes to tools (bottom of left panel)
-            if self.selected_category:
-                self.focused_panel = "tools"
-            else:
-                # No category selected, go to operations (Business/Global)
-                self.focused_panel = "operations"
-            self._update_panel_focus()
-            self.root.focus_set()
-        elif self.focused_panel in self.LEFT_PANEL_ORDER:
-            idx = self.LEFT_PANEL_ORDER.index(self.focused_panel)
-            if idx < len(self.LEFT_PANEL_ORDER) - 1:
-                # Skip tools panel if no category is selected
-                next_panel = self.LEFT_PANEL_ORDER[idx + 1]
-                if next_panel == "tools" and not self.selected_category:
-                    return
-                self.focused_panel = next_panel
-                self._update_panel_focus()
-
-    def _nav_panel_left(self):
-        """Navigate to left panel from tracker (A key)."""
-        if not self._should_handle_keyboard():
-            return
-        if self.focused_panel == "tracker":
-            # Return to last selected left panel
-            self.focused_panel = self.last_left_panel
-            self._update_panel_focus()
-            # Remove focus from tracker's grid canvas so arrow keys work on left panel
-            self.root.focus_set()
-
-    def _nav_panel_right(self):
-        """Navigate to project tracker from left panel (D key)."""
-        if not self._should_handle_keyboard():
-            return
-        if self.focused_panel in self.LEFT_PANEL_ORDER:
-            # Remember current left panel before switching to tracker
-            self.last_left_panel = self.focused_panel
-            self.focused_panel = "tracker"
-            self._update_panel_focus()
-            # Give focus to tracker's grid canvas for arrow key navigation
-            if hasattr(self, 'project_tracker') and hasattr(self.project_tracker, 'grid_canvas'):
-                self.project_tracker.grid_canvas.focus_set()
-
-    def _nav_item_up(self):
-        """Navigate up within current panel (Up arrow)."""
-        if not self._should_handle_keyboard():
-            return
-        if self.focused_panel == "categories":
-            # 2x3 grid: up moves by 2 (one row)
-            if self.category_focus_index >= 2:
-                self.category_focus_index -= 2
-                self._select_focused_category()
-        elif self.focused_panel == "operations":
-            # 2x1 grid: no up movement (single row)
-            pass
-        elif self.focused_panel == "tools":
-            # Vertical list of tools only (not folder/notes)
-            if self.tools_focus_index > 0:
-                self.tools_focus_index -= 1
-                self._update_item_focus()
-        elif self.focused_panel == "tracker":
-            if hasattr(self, 'project_tracker'):
-                self.project_tracker._on_grid_up(None)
-
-    def _nav_item_down(self):
-        """Navigate down within current panel (Down arrow)."""
-        if not self._should_handle_keyboard():
-            return
-        if self.focused_panel == "categories":
-            # 2x3 grid: down moves by 2 (one row)
-            if self.category_focus_index < len(self.CATEGORY_ORDER) - 2:
-                self.category_focus_index += 2
-                self._select_focused_category()
-        elif self.focused_panel == "operations":
-            # 2x1 grid: no down movement (single row)
-            pass
-        elif self.focused_panel == "tools":
-            # Vertical list of tools only (not folder/notes)
-            if self.tools_focus_index < len(self.tool_buttons) - 1:
-                self.tools_focus_index += 1
-                self._update_item_focus()
-        elif self.focused_panel == "tracker":
-            if hasattr(self, 'project_tracker'):
-                self.project_tracker._on_grid_down(None)
-
-    def _nav_item_left(self):
-        """Navigate left within current panel (Left arrow)."""
-        if not self._should_handle_keyboard():
-            return
-        if self.focused_panel == "categories":
-            # 2x3 grid: left moves by 1
-            if self.category_focus_index > 0:
-                self.category_focus_index -= 1
-                self._select_focused_category()
-        elif self.focused_panel == "operations":
-            # 2x1 grid: left moves by 1
-            if self.operations_focus_index > 0:
-                self.operations_focus_index -= 1
-                self._select_focused_operation()
-        elif self.focused_panel == "tracker":
-            if hasattr(self, 'project_tracker'):
-                self.project_tracker._on_grid_left(None)
-
-    def _nav_item_right(self):
-        """Navigate right within current panel (Right arrow)."""
-        if not self._should_handle_keyboard():
-            return
-        if self.focused_panel == "categories":
-            # 2x3 grid: right moves by 1
-            if self.category_focus_index < len(self.CATEGORY_ORDER) - 1:
-                self.category_focus_index += 1
-                self._select_focused_category()
-        elif self.focused_panel == "operations":
-            # 2x1 grid: right moves by 1
-            if self.operations_focus_index < len(self.OPERATIONS_ORDER) - 1:
-                self.operations_focus_index += 1
-                self._select_focused_operation()
-        elif self.focused_panel == "tracker":
-            if hasattr(self, 'project_tracker'):
-                self.project_tracker._on_grid_right(None)
-
-    def _select_focused_category(self):
-        """Select the currently focused category (auto-select on navigation)."""
-        if 0 <= self.category_focus_index < len(self.CATEGORY_ORDER):
-            category_key = self.CATEGORY_ORDER[self.category_focus_index]
-            self._select_category(category_key)
-
-    def _select_focused_operation(self):
-        """Select the currently focused operation (auto-select on navigation)."""
-        if 0 <= self.operations_focus_index < len(self.OPERATIONS_ORDER):
-            ops_key = self.OPERATIONS_ORDER[self.operations_focus_index]
-            self._select_category(ops_key)
-
-    def _on_enter_key(self):
-        """Handle Enter key to activate focused item."""
-        if not self._should_handle_keyboard():
-            return
-        if self.focused_panel == "categories":
-            # Already auto-selected, but Enter can confirm
-            pass
-        elif self.focused_panel == "operations":
-            # Already auto-selected, but Enter can confirm
-            pass
-        elif self.focused_panel == "tools":
-            # Run the focused tool
-            if self.tool_buttons and 0 <= self.tools_focus_index < len(self.tool_buttons):
-                tool = self.tool_buttons[self.tools_focus_index]
-                self.run_script(tool["category_key"], tool["script_key"], tool["subcat_key"])
-        elif self.focused_panel == "tracker":
-            if hasattr(self, 'project_tracker'):
-                self.project_tracker._on_enter_key(None)
-
-    def _quick_select_category(self, category_key):
-        """Quick select a category via Shift+Letter."""
-        if not self._should_handle_keyboard():
-            return
-        if category_key in PIPELINE_CATEGORIES:
-            self._select_category(category_key)
-            # Update focus index
-            if category_key in self.CATEGORY_ORDER:
-                self.focused_panel = "categories"
-                self.category_focus_index = self.CATEGORY_ORDER.index(category_key)
-            elif category_key in self.OPERATIONS_ORDER:
-                self.focused_panel = "operations"
-                self.operations_focus_index = self.OPERATIONS_ORDER.index(category_key)
-            self._update_panel_focus()
-
-    def _quick_open_folder(self):
-        """Quick open current category's folder (G key)."""
-        if not self._should_handle_keyboard():
-            return
-        if self._folder_category and self._folder_path:
-            # Check if project tracker is in archive mode
-            is_archive_mode = False
-            if hasattr(self, 'project_tracker') and self.project_tracker:
-                if hasattr(self.project_tracker, 'filter_status'):
-                    is_archive_mode = self.project_tracker.filter_status.get() == "archived"
-
-            if is_archive_mode:
-                archive_path = self.settings.get_archive_path(self._folder_category)
-                self.open_folder(archive_path)
-            else:
-                self.open_folder(self._folder_path)
-
-    def _quick_open_notes(self):
-        """Quick open current category's notes (N key)."""
-        if not self._should_handle_keyboard():
-            return
-        if self._notes_category:
-            self.open_note(self._notes_category)
-
-    def _cycle_scope(self):
-        """Cycle through scope options (backtick key)."""
-        if not self._should_handle_keyboard():
-            return
-        current_idx = self.SCOPE_ORDER.index(self.current_scope) if self.current_scope in self.SCOPE_ORDER else 0
-        next_idx = (current_idx + 1) % len(self.SCOPE_ORDER)
-        self._set_scope(self.SCOPE_ORDER[next_idx])
-
-    def _set_status_filter(self, status):
-        """Set project tracker status filter (4/5/6 keys)."""
-        if not self._should_handle_keyboard():
-            return
-        if hasattr(self, 'project_tracker') and self.project_tracker:
-            self.project_tracker.filter_status.set(status)
-            self.project_tracker._on_filter_changed()
-
-    def _focus_tracker_search(self):
-        """Focus the project tracker search field (/ key)."""
-        if not self._should_handle_keyboard():
-            return
-        if hasattr(self, 'project_tracker') and hasattr(self.project_tracker, 'search_entry'):
-            self.project_tracker.search_entry.focus_set()
-
-    def _new_project(self):
-        """Create new project for current category (Ctrl+N)."""
-        if hasattr(self, 'project_tracker') and self.project_tracker:
-            # Launch the creation flow (callback will save current panel state)
-            self.project_tracker._on_fab_clicked()
-            # Switch focus to tracker for arrow key navigation in subtype selection
-            if self.project_tracker.view_state != "PROJECT_LIST":
-                self.focused_panel = "tracker"
-                self._update_panel_focus()
-
-    def _on_escape_key(self):
-        """Handle Escape key - close creation panel if open."""
-        # Check if project tracker is in creation mode - close that
-        # The cancel callback (_return_to_last_panel) handles focus restoration
-        if hasattr(self, 'project_tracker') and self.project_tracker:
-            if self.project_tracker.view_state != "PROJECT_LIST":
-                self.project_tracker._close_creation_panel()
-
-    def _on_creation_start(self):
-        """Called when project creation starts (FAB clicked or Ctrl+N)."""
-        # Remember current panel before switching to creation mode
-        self.panel_before_creation = self.focused_panel
-        if self.focused_panel in self.LEFT_PANEL_ORDER:
-            self.last_left_panel = self.focused_panel
-
-    def _return_to_last_panel(self):
-        """Return focus to the panel we were on before project creation."""
-        self.focused_panel = self.panel_before_creation
-        self._update_panel_focus()
-        # Set appropriate focus based on panel type
-        if self.focused_panel == "tracker":
-            if hasattr(self, 'project_tracker') and hasattr(self.project_tracker, 'grid_canvas'):
-                self.project_tracker.grid_canvas.focus_set()
-        else:
-            self.root.focus_set()
-
-    def _on_project_creation_done(self, project_data=None):
-        """Called after successful project creation. Switch filters, refresh, focus tracker, select project."""
-        if not hasattr(self, 'project_tracker') or not self.project_tracker:
-            return
-
-        tracker = self.project_tracker
-
-        # 1. Reload DB to pick up the project registered by the creation form
-        tracker.db.reload()
-
-        # 2. Switch status filter to "active"
-        if tracker.filter_status.get() != "active":
-            tracker.filter_status.set("active")
-            tracker._update_filter_button_styles()
-
-        # 3. Switch scope to match the new project (personal vs work)
-        if project_data:
-            is_personal = (
-                project_data.get('client_name', '').lower() == 'personal' or
-                project_data.get('metadata', {}).get('is_personal', False)
-            )
-            target_scope = "personal" if is_personal else "client"
-            if self.current_scope != target_scope and self.current_scope != "all":
-                self._set_scope(target_scope)
-
-        # 4. Set category filter to match the new project
-        if project_data:
-            project_type = project_data.get('project_type', '')
-            category = tracker._get_category_for_type(project_type)
-            if category and tracker.selected_category and tracker.selected_category != category:
-                tracker.selected_category = category
-                for name, btn_info in tracker.category_buttons.items():
-                    tracker._update_category_card_style(btn_info, name)
-
-        # 5. Force geometry update so grid canvas has valid dimensions
-        self.root.update_idletasks()
-
-        # 6. Refresh project list (populates grid_projects)
-        tracker.refresh_project_list()
-
-        # 6. Focus tracker panel
-        self.focused_panel = "tracker"
-        self._update_panel_focus()
-        if hasattr(tracker, 'grid_canvas'):
-            tracker.grid_canvas.focus_set()
-
-        # 7. Select the newly created project
-        if project_data and project_data.get('path'):
-            tracker._select_project_by_path(project_data['path'])
-
-    def _update_panel_focus(self):
-        """Update visual focus indicator for panels."""
-        # Clear all item focus first
-        self._clear_all_item_focus()
-
-        # Update panel focus indicators (subtle left accent bar)
-        self._update_panel_indicator()
-
-        # Update item focus for current panel
-        self._update_item_focus()
-
-        # Update status bar hint
-        self._update_keyboard_hint()
-
-    def _update_panel_indicator(self):
-        """Update subtle focus indicator for panels (left accent bar on grids only)."""
-        # Create/update focus indicator bars if they don't exist
-        if not hasattr(self, '_panel_indicators'):
-            self._panel_indicators = {}
-
-        # Only show indicators on the actual grids/sections
-        grids = [
-            ("cat_grid", self.cat_grid, "categories", COLORS["bg_card"]),
-            ("ops_grid", self.ops_grid, "operations", COLORS["bg_card"]),
-            ("tools_section", self.tools_section if hasattr(self, 'tools_section') else None, "tools", COLORS["bg_secondary"]),
-            ("tracker_panel", self.tracker_panel if hasattr(self, 'tracker_panel') else None, "tracker", COLORS["bg_primary"]),
-        ]
-
-        for grid_name, grid_widget, panel_name, bg_color in grids:
-            if grid_widget is None:
-                continue
-
-            # Check if indicator exists and is still valid
-            indicator_valid = (
-                grid_name in self._panel_indicators and
-                self._panel_indicators[grid_name].winfo_exists()
-            )
-
-            # Create indicator if it doesn't exist or was destroyed
-            if not indicator_valid:
-                indicator = tk.Frame(grid_widget, bg=bg_color, width=3)
-                indicator.place(x=0, y=0, relheight=1.0)
-                self._panel_indicators[grid_name] = indicator
-
-            # Update indicator color based on focus
-            indicator = self._panel_indicators[grid_name]
-            try:
-                if panel_name == self.focused_panel:
-                    indicator.configure(bg=COLORS["accent"])
-                else:
-                    # Hide by matching background
-                    indicator.configure(bg=bg_color)
-            except tk.TclError:
-                # Widget was destroyed, remove from cache
-                del self._panel_indicators[grid_name]
-
-    def _clear_all_item_focus(self):
-        """Clear focus highlighting from all items (reset to normal background)."""
-        # Clear tool focus - reset to normal background
-        for tool in self.tool_buttons:
-            tool["frame"].configure(bg=COLORS["bg_secondary"])
-            tool["content"].configure(bg=COLORS["bg_secondary"])
-            tool["icon_label"].configure(bg=COLORS["bg_secondary"])
-            tool["name_label"].configure(bg=COLORS["bg_secondary"])
-            tool["arrow_label"].configure(bg=COLORS["bg_secondary"])
-
-    def _update_item_focus(self):
-        """Update visual focus indicator for items within panels (darken focused item)."""
-        if self.focused_panel == "categories":
-            # Categories auto-select, no extra focus needed
-            pass
-
-        elif self.focused_panel == "operations":
-            # Operations auto-select, no extra focus needed
-            pass
-
-        elif self.focused_panel == "tools":
-            # Tools only (not folder/notes) - darken focused item background
-            for idx, tool in enumerate(self.tool_buttons):
-                if idx == self.tools_focus_index:
-                    # Darken the focused tool
-                    tool["frame"].configure(bg=COLORS["bg_hover"])
-                    tool["content"].configure(bg=COLORS["bg_hover"])
-                    tool["icon_label"].configure(bg=COLORS["bg_hover"])
-                    tool["name_label"].configure(bg=COLORS["bg_hover"])
-                    tool["arrow_label"].configure(bg=COLORS["bg_hover"], fg=tool["color"])
-                else:
-                    # Normal background
-                    tool["frame"].configure(bg=COLORS["bg_secondary"])
-                    tool["content"].configure(bg=COLORS["bg_secondary"])
-                    tool["icon_label"].configure(bg=COLORS["bg_secondary"])
-                    tool["name_label"].configure(bg=COLORS["bg_secondary"])
-                    tool["arrow_label"].configure(bg=COLORS["bg_secondary"], fg=COLORS["text_secondary"])
-
-    def _update_keyboard_hint(self):
-        """Update status bar with keyboard hints based on focused panel."""
-        hints = {
-            "categories": "Arrows: navigate | Shift+Letter: quick select | S: operations | D: tracker",
-            "operations": "Left/Right: navigate | W: categories | S: tools | D: tracker",
-            "tools": "Up/Down: navigate | Enter: run | G: folder | N: notes | W/S: panels",
-            "tracker": "Arrows: navigate | Enter: open | A: left panel | /: search",
-        }
-        if hasattr(self, 'header_hint_label'):
-            self.header_hint_label.config(text=hints.get(self.focused_panel, ""))
-
 # ====================================
 # MAIN APPLICATION ENTRY POINT
 # ====================================
@@ -3377,7 +1973,7 @@ def main():
     setup_logging("pipeline")
 
     root = tk.Tk()
-    
+
     # Create main application
     app = ProfessionalPipelineGUI(root)
 

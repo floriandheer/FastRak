@@ -9,7 +9,7 @@
     "monitoring": {
         "poll_interval": 300,
         "check_orders_since_hours": 48,
-        "base_directory": "I:/Physical/Orders",
+        "base_directory": "YOUR_WORK_DRIVE:/Physical/Orders",
         "download_invoices": true,
         "download_labels": true
     },

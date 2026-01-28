@@ -58,6 +58,7 @@ class RakSettings:
         "version": "1.1.0",
         "drives": {
             "work": "I:",
+            "active_base": "D:\\_work\\Active",
             "archive_base": "D:\\_work\\Archive"
         },
         "categories": {
@@ -219,6 +220,10 @@ class RakSettings:
         """Get the work drive letter (e.g., 'I:')."""
         return self.config["drives"]["work"]
 
+    def get_active_base(self) -> str:
+        """Get the active base path (e.g., 'D:\\_work\\Active')."""
+        return self.config["drives"].get("active_base", "D:\\_work\\Active")
+
     def get_archive_base(self) -> str:
         """Get the archive base path (e.g., 'D:\\_work\\Archive')."""
         return self.config["drives"]["archive_base"]
@@ -238,6 +243,22 @@ class RakSettings:
         subpath = cat_config.get("work_subpath", category)
 
         return f"{work_drive}\\{subpath}"
+
+    def get_active_path(self, category: str) -> str:
+        """
+        Get the full active base path for a category (real path, not drive letter).
+
+        Args:
+            category: Category name (e.g., 'Visual', 'Audio')
+
+        Returns:
+            Full path like 'D:\\_work\\Active\\Visual'
+        """
+        active_base = self.get_active_base()
+        cat_config = self.config["categories"].get(category, {})
+        subpath = cat_config.get("work_subpath", category)
+
+        return f"{active_base}\\{subpath}"
 
     def get_archive_path(self, category: str) -> str:
         """
@@ -296,6 +317,19 @@ class RakSettings:
         self.config["drives"]["work"] = drive
         self._save()
         logger.info(f"Work drive set to: {drive}")
+
+    def set_active_base(self, path: str):
+        """
+        Set the active base path.
+
+        Args:
+            path: Active base path (e.g., 'D:\\_work\\Active')
+        """
+        path = path.replace('/', '\\')
+
+        self.config["drives"]["active_base"] = path
+        self._save()
+        logger.info(f"Active base set to: {path}")
 
     def set_archive_base(self, path: str):
         """
@@ -484,7 +518,7 @@ class RakSettings:
             Path with work drive (e.g., 'I:\\Visual\\Project') or original if not applicable
         """
         # The active base path that gets mapped
-        active_base = r"D:\_work\Active"
+        active_base = self.get_active_base()
 
         # Normalize path separators for comparison
         normalized_path = stored_path.replace('/', '\\')

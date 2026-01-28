@@ -19,6 +19,7 @@ import subprocess
 
 # Setup logging using shared utility
 from shared_logging import get_logger, setup_logging as setup_shared_logging
+from rak_settings import get_rak_settings
 
 # Get logger reference (configured in main())
 logger = get_logger("laragon_backup")
@@ -75,7 +76,7 @@ class LaragonBackupUI:
             self.source_dir_var.set(default_source)
         
         # Default destination path
-        default_dest = "I:\\Web\\01_Work\\laragon"
+        default_dest = get_rak_settings().get_work_path("Web") + "\\01_Work\\laragon"
         self.destination_dir_var.set(default_dest)
         
         # Default log file path - use centralized PipelineManager logs folder
@@ -532,8 +533,10 @@ def main():
         # Parse command line arguments
         parser = argparse.ArgumentParser(description="Laragon Backup Tool")
         parser.add_argument("--source", default="C:\\laragon", help="Source Laragon folder path")
-        parser.add_argument("--destination", default="I:\\Web\\01_Work\\laragon", help="Base destination path")
-        parser.add_argument("--log", default="P:\\_Scripts\\_LOGS\\backup_log.txt", help="Log file path")
+        _settings = get_rak_settings()
+        parser.add_argument("--destination", default=_settings.get_work_path("Web") + "\\01_Work\\laragon", help="Base destination path")
+        _log_dir = os.path.join(os.path.expanduser("~"), "AppData", "Local", "PipelineManager", "logs")
+        parser.add_argument("--log", default=os.path.join(_log_dir, "backup_log.txt"), help="Log file path")
         parser.add_argument("--no-timestamp", action="store_true", help="Don't add timestamp to destination folder")
         parser.add_argument("--retry", type=int, default=5, help="Retry count for robocopy")
         parser.add_argument("--wait", type=int, default=5, help="Wait time between retries (seconds)")
