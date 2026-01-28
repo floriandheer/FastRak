@@ -1,8 +1,8 @@
 """
-Shared Path Configuration Module
+Rak Settings Module
 
-Centralized path management for the Pipeline Manager.
-Handles work and archive directory configuration with drive validation.
+Centralized settings for FastRak Pipeline Manager.
+Handles paths, software defaults, and other configuration.
 """
 
 import json
@@ -33,12 +33,12 @@ def _get_appdata_path() -> Path:
         return Path.home() / ".local" / "share" / "PipelineManager"
 
 
-class PathConfig:
+class RakSettings:
     """
-    Manages path configuration for the Pipeline Manager.
+    Manages settings for FastRak Pipeline Manager.
 
-    Provides centralized access to work and archive directories,
-    with support for drive validation and per-category paths.
+    Provides centralized access to paths, software defaults, and settings,
+    with support for drive validation and per-category configuration.
 
     Default configuration:
     - Work drive: I:\\ (mapped via VisualSubst)
@@ -55,7 +55,7 @@ class PathConfig:
 
     # Default configuration
     DEFAULT_CONFIG = {
-        "version": "1.0.0",
+        "version": "1.1.0",
         "drives": {
             "work": "I:",
             "archive_base": "D:\\_work\\Archive"
@@ -91,6 +91,28 @@ class PathConfig:
                 "archive_subpath": "Web",
                 "subcategories": []
             }
+        },
+        # Global software version defaults (one version per software, used everywhere)
+        "software_defaults": {
+            "houdini": "20.5",
+            "blender": "4.4",
+            "fusion": "19",
+            "resolume": "Arena 7",
+            "after_effects": "2024",
+            "touchdesigner": "2023.11760",
+            "godot": "4.3",
+            "ableton": "12",
+            "reaper": "7",
+            "traktor": "",
+            "freecad": "",
+            "alibre": "",
+            "affinity": "",
+            "python": "3.11",
+            "slicer": "Bambu Studio",
+            "printer": "Bambu Lab X1 Carbon",
+            "platform": "PC/Desktop",
+            "renderer": "Forward+",
+            "resolution": "1920x1080"
         }
     }
 
@@ -99,7 +121,7 @@ class PathConfig:
 
     def __init__(self, config_path: Optional[str] = None):
         """
-        Initialize the path configuration.
+        Initialize the pipeline configuration.
 
         Args:
             config_path: Path to config file. If None, uses default location.
@@ -107,12 +129,12 @@ class PathConfig:
         if config_path is None:
             app_data = _get_appdata_path()
             app_data.mkdir(parents=True, exist_ok=True)
-            self.config_path = app_data / "path_config.json"
+            self.config_path = app_data / "rak_config.json"
         else:
             self.config_path = Path(config_path)
 
         self.config = self._load_or_create()
-        logger.info(f"Path configuration loaded: {self.config_path}")
+        logger.info(f"Configuration loaded: {self.config_path}")
 
     def _load_or_create(self) -> Dict:
         """Load configuration from file or create default."""
@@ -123,16 +145,17 @@ class PathConfig:
                     # Merge with defaults to handle new fields
                     return self._merge_with_defaults(loaded)
             else:
-                logger.info("Path config not found, creating default")
+                logger.info("Config not found, creating default")
                 self._save(self.DEFAULT_CONFIG)
                 return self.DEFAULT_CONFIG.copy()
         except Exception as e:
-            logger.error(f"Error loading path config: {e}")
+            logger.error(f"Error loading config: {e}")
             return self.DEFAULT_CONFIG.copy()
 
     def _merge_with_defaults(self, loaded: Dict) -> Dict:
         """Merge loaded config with defaults to ensure all keys exist."""
-        result = self.DEFAULT_CONFIG.copy()
+        import copy
+        result = copy.deepcopy(self.DEFAULT_CONFIG)
 
         # Update drives
         if "drives" in loaded:
@@ -145,6 +168,26 @@ class PathConfig:
                     result["categories"][cat].update(cat_config)
                 else:
                     result["categories"][cat] = cat_config
+
+        # Update software_defaults (preserve user customizations)
+        if "software_defaults" in loaded:
+            loaded_sw = loaded["software_defaults"]
+            # Handle flat structure (current format)
+            if loaded_sw and not any(isinstance(v, dict) for v in loaded_sw.values()):
+                result["software_defaults"].update(loaded_sw)
+            else:
+                # Legacy nested format: extract values and flatten
+                for key, value in loaded_sw.items():
+                    if isinstance(value, dict):
+                        # Could be a category with subcategories or a flat category
+                        for subkey, subvalue in value.items():
+                            if isinstance(subvalue, dict):
+                                # Nested subcategory - extract software versions
+                                result["software_defaults"].update(subvalue)
+                            else:
+                                result["software_defaults"][subkey] = subvalue
+                    else:
+                        result["software_defaults"][key] = value
 
         # Preserve version from loaded if newer
         if "version" in loaded:
@@ -161,9 +204,9 @@ class PathConfig:
             self.config_path.parent.mkdir(parents=True, exist_ok=True)
             with open(self.config_path, 'w', encoding='utf-8') as f:
                 json.dump(config, f, indent=2, ensure_ascii=False)
-            logger.debug("Path configuration saved")
+            logger.debug("Configuration saved")
         except Exception as e:
-            logger.error(f"Failed to save path config: {e}")
+            logger.error(f"Failed to save config: {e}")
             raise
 
     def save(self):
@@ -224,6 +267,18 @@ class PathConfig:
         """Get categories in the defined display order."""
         return self.CATEGORY_ORDER.copy()
 
+    def get_software_defaults(self, category: str = None, subcategory: str = None) -> Dict[str, str]:
+        """
+        Get software version defaults.
+
+        The category and subcategory parameters are accepted for backwards
+        compatibility but ignored - all software versions are global.
+
+        Returns:
+            Dict of software names to default versions
+        """
+        return self.config.get("software_defaults", {})
+
     # ==================== SETTERS ====================
 
     def set_work_drive(self, drive: str):
@@ -277,6 +332,20 @@ class PathConfig:
 
         self._save()
         logger.info(f"Updated paths for category: {category}")
+
+    def set_software_defaults(self, **software_versions):
+        """
+        Set software version defaults.
+
+        Args:
+            **software_versions: Software name=version pairs (e.g., houdini="20.5")
+        """
+        if "software_defaults" not in self.config:
+            self.config["software_defaults"] = {}
+
+        self.config["software_defaults"].update(software_versions)
+        self._save()
+        logger.info(f"Updated software defaults: {list(software_versions.keys())}")
 
     # ==================== VALIDATION ====================
 
@@ -442,7 +511,7 @@ class PathConfig:
         """Reset configuration to defaults."""
         self.config = self.DEFAULT_CONFIG.copy()
         self._save()
-        logger.info("Path configuration reset to defaults")
+        logger.info("Configuration reset to defaults")
 
     def get_platform_path(self, windows_path: str) -> Path:
         """
@@ -474,45 +543,52 @@ class PathConfig:
 
 
 # Singleton instance for easy access
-_instance: Optional[PathConfig] = None
+_instance: Optional[RakSettings] = None
 
 
-def get_path_config() -> PathConfig:
+def get_rak_settings() -> RakSettings:
     """
-    Get the singleton PathConfig instance.
+    Get the singleton RakSettings instance.
 
-    This provides a convenient way for modules to access path configuration
+    This provides a convenient way for modules to access settings
     without needing to create their own instance.
 
     Returns:
-        PathConfig singleton instance
+        RakSettings singleton instance
     """
     global _instance
     if _instance is None:
-        _instance = PathConfig()
+        _instance = RakSettings()
     return _instance
+
+
+# Backwards compatibility aliases
+get_path_config = get_rak_settings
+get_config = get_rak_settings
+PathConfig = RakSettings
+PipelineConfig = RakSettings
 
 
 # Example usage and testing
 if __name__ == "__main__":
-    config = PathConfig()
+    settings = RakSettings()
 
-    print("=== Path Configuration ===")
-    print(f"Work Drive: {config.get_work_drive()}")
-    print(f"Archive Base: {config.get_archive_base()}")
+    print("=== Rak Settings ===")
+    print(f"Work Drive: {settings.get_work_drive()}")
+    print(f"Archive Base: {settings.get_archive_base()}")
     print()
 
     print("=== Category Paths ===")
-    for category in config.get_ordered_categories():
-        work = config.get_work_path(category)
-        archive = config.get_archive_path(category)
+    for category in settings.get_ordered_categories():
+        work = settings.get_work_path(category)
+        archive = settings.get_archive_path(category)
         print(f"{category}:")
         print(f"  Work: {work}")
         print(f"  Archive: {archive}")
     print()
 
     print("=== Validation ===")
-    work_valid, work_msg = config.validate_work_drive()
-    archive_valid, archive_msg = config.validate_archive_base()
+    work_valid, work_msg = settings.validate_work_drive()
+    archive_valid, archive_msg = settings.validate_archive_base()
     print(f"Work Drive: {'OK' if work_valid else 'FAIL'} - {work_msg}")
     print(f"Archive Base: {'OK' if archive_valid else 'FAIL'} - {archive_msg}")
