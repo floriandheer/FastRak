@@ -15,6 +15,7 @@ from typing import List, Dict, Optional
 import shutil
 
 from shared_logging import get_logger
+from rak_settings import get_rak_settings
 
 logger = get_logger(__name__)
 
@@ -160,21 +161,22 @@ class ProjectDatabase:
         # Normalize slashes
         path = path.replace('/', '\\')
 
-        # Handle I:/ and P:/ drive mappings (mapped network drives)
-        if path.upper().startswith('I:\\'):
-            path = 'D:\\_work\\Active\\' + path[3:]
-        elif path.upper().startswith('P:\\'):
-            path = 'D:\\_work\\Active\\' + path[3:]
+        # Handle mapped drive letters (e.g. I:\ -> D:\_work\Active\)
+        settings = get_rak_settings()
+        work_drive = settings.get_work_drive().upper()
+        active_base = settings.get_active_base()
+        if path.upper().startswith(work_drive + '\\'):
+            path = active_base + '\\' + path[len(work_drive) + 1:]
 
         return path
 
-    def translate_to_drive_letter(self, path: str, drive: str = "I") -> str:
+    def translate_to_drive_letter(self, path: str, drive: str = None) -> str:
         """
-        Translate D:\\_work path back to drive letter (I: or P:).
+        Translate active base path back to work drive letter.
 
         Args:
-            path: Normalized path (e.g., "D:\\\_work\\Visual")
-            drive: Drive letter to use (I or P)
+            path: Normalized path (e.g., "D:\\_work\\Active\\Visual")
+            drive: Drive letter to use (default: from settings)
 
         Returns:
             Path with drive letter (e.g., "I:\\Visual")
@@ -182,10 +184,17 @@ class ProjectDatabase:
         if not path:
             return path
 
+        settings = get_rak_settings()
+        if drive is None:
+            drive = settings.get_work_drive().rstrip(':')
+
         path = path.replace('/', '\\')
 
-        if path.upper().startswith('D:\\_WORK\\'):
-            return f'{drive}:\\{path[9:]}'
+        active_base = settings.get_active_base().replace('/', '\\')
+        if path.upper().startswith(active_base.upper() + '\\'):
+            return f'{drive}:\\{path[len(active_base) + 1:]}'
+        elif path.upper().startswith(active_base.upper()):
+            return f'{drive}:'
 
         return path
 

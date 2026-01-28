@@ -33,6 +33,8 @@ from shared_form_keyboard import (
     create_software_chip_row, get_active_software
 )
 
+TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates")
+
 
 class PhysicalFolderStructureCreator(FormKeyboardMixin):
     """Creates folder structure for 3D printing projects with keyboard-first navigation."""
@@ -260,7 +262,7 @@ class PhysicalFolderStructureCreator(FormKeyboardMixin):
         self.status_var.set("Ready")
 
         # Template path (hidden)
-        self.template_dir_var = tk.StringVar(value='P:\\_Structure\\YYYY-MM-DD_Physical3DPrint_NameClient_NameProject')
+        self.template_dir_var = tk.StringVar(value=os.path.join(TEMPLATES_DIR, 'YYYY-MM-DD_Physical3DPrint_NameClient_NameProject'))
 
         # Initialize preview
         self.update_preview()
@@ -354,12 +356,15 @@ class PhysicalFolderStructureCreator(FormKeyboardMixin):
         # Set appropriate values based on project type
         if self.personal_var.get():
             self.client_name_var.set("Personal")
-            self.base_dir_var.set("I:/Physical/_personal")
+            physical_base = self.settings.get_work_path("Physical").replace('\\', '/')
+            self.base_dir_var.set(physical_base + "/_personal")
         elif self.product_var.get():
+            physical_base = self.settings.get_work_path("Physical").replace('\\', '/')
             self.client_name_var.set("alles3d")
-            self.base_dir_var.set("I:/Physical/Product")
+            self.base_dir_var.set(physical_base + "/Product")
         elif self.project_var.get():
-            self.base_dir_var.set("I:/Physical/Project")
+            physical_base = self.settings.get_work_path("Physical").replace('\\', '/')
+            self.base_dir_var.set(physical_base + "/Project")
             if hasattr(self, 'client_name_backup'):
                 self.client_name_var.set(self.client_name_backup)
         else:
@@ -370,7 +375,7 @@ class PhysicalFolderStructureCreator(FormKeyboardMixin):
             if hasattr(self, 'base_dir_backup'):
                 self.base_dir_var.set(self.base_dir_backup)
             else:
-                self.base_dir_var.set("I:/Physical")
+                self.base_dir_var.set(self.settings.get_work_path("Physical").replace('\\', '/'))
 
         self.update_preview()
 

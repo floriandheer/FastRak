@@ -16,6 +16,7 @@ import datetime
 
 # Setup logging using shared utility
 from shared_logging import get_logger, setup_logging as setup_shared_logging
+from rak_settings import get_rak_settings
 
 # Get logger reference (configured in main())
 logger = get_logger("bookkeeping_folders")
@@ -25,7 +26,7 @@ logger = get_logger("bookkeeping_folders")
 # ====================================
 
 # Base bookkeeping directory
-BOOKKEEPING_BASE_DIR = "I:\\_LIBRARY\\Boekhouding"
+BOOKKEEPING_BASE_DIR = get_rak_settings().get_work_drive() + "\\_LIBRARY\\Boekhouding"
 
 # Folder names
 INCOMING_FOLDER = "Binnenkomend"

@@ -39,6 +39,8 @@ from shared_form_keyboard import (
 
 logger = get_logger(__name__)
 
+TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates")
+
 
 class FolderStructureCreator(FormKeyboardMixin):
     """Creates folder structure for graphic design projects with keyboard-first navigation."""
@@ -202,7 +204,7 @@ class FolderStructureCreator(FormKeyboardMixin):
         self.base_dir_var = tk.StringVar(value=default_base)
 
         # Template directory (hidden)
-        self.template_dir_var = tk.StringVar(value='P:\\_Structure\\YYYY-MM-DD_VisualGD_NameClient_NameProject')
+        self.template_dir_var = tk.StringVar(value=os.path.join(TEMPLATES_DIR, 'YYYY-MM-DD_VisualGD_NameClient_NameProject'))
 
         # Browse button
         self.browse_btn = create_styled_button(row4, text="Browse...", command=self.browse_base_dir)
