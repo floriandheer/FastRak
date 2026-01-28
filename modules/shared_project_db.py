@@ -113,6 +113,10 @@ class ProjectDatabase:
             logger.error(f"Error loading database: {e}")
             return self._create_empty_db()
 
+    def reload(self):
+        """Reload database from disk (picks up changes made by other instances)."""
+        self.data = self._load_or_create()
+
     def _save(self):
         """Save database to file."""
         try:
@@ -241,6 +245,31 @@ class ProjectDatabase:
             self._save()
 
         return client_id
+
+    def get_clients_for_category(self, category: str, exclude_personal: bool = False) -> List[Dict]:
+        """Get clients that have projects in a specific category."""
+        category_types = {
+            "Visual": lambda t: t in ("GD", "FX", "VFX", "VJ") or t.startswith("Visual-"),
+            "Audio": lambda t: t == "Audio",
+            "Physical": lambda t: t == "Physical",
+            "RealTime": lambda t: t in ("Godot", "TD", "RealTime"),
+            "Photo": lambda t: t == "Photo",
+            "Web": lambda t: t == "Web",
+        }
+        type_check = category_types.get(category)
+        if not type_check:
+            return self.get_all_clients(exclude_personal=exclude_personal)
+
+        client_ids = set()
+        for project in self.data.get("projects", []):
+            if type_check(project.get("project_type", "")):
+                if project.get("client_id"):
+                    client_ids.add(project["client_id"])
+
+        clients = [c for c in self.data.get("clients", []) if c["id"] in client_ids]
+        if exclude_personal:
+            clients = [c for c in clients if c.get("name", "").lower() != "personal"]
+        return sorted(clients, key=lambda x: x.get("name", "").lower())
 
     def get_client_projects(self, client_id: str) -> List[Dict]:
         """

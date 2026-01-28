@@ -27,7 +27,7 @@ sys.path.insert(0, str(MODULES_DIR))
 
 from shared_logging import get_logger, setup_logging
 from shared_project_db import ProjectDatabase
-from shared_path_config import get_path_config
+from rak_settings import get_rak_settings
 from shared_creator_registry import (
     CREATOR_REGISTRY, CREATIVE_CATEGORIES,
     get_subtypes_for_category, get_subtype_display_name,
@@ -78,12 +78,16 @@ CATEGORY_COLORS = {
 PROJECT_TYPES = {
     # New Visual types
     "Visual-Graphic Design": {"icon": "🖼️", "name": "Visual-Graphic Design", "color": "#f97316"},
-    "Visual-Computer Graphics": {"icon": "🎬", "name": "Visual-Computer Graphics", "color": "#f97316"},
-    "Visual-VJ": {"icon": "💫", "name": "Visual-VJ", "color": "#f97316"},
+    "Visual-Visual Effects": {"icon": "🎬", "name": "Visual-Visual Effects", "color": "#f97316"},
+    "Visual-Live Video": {"icon": "💫", "name": "Visual-Live Video", "color": "#f97316"},
     # Legacy Visual types (for backwards compatibility)
     "GD": {"icon": "🖼️", "name": "Visual-Graphic Design", "color": "#f97316"},
-    "VFX": {"icon": "🎬", "name": "Visual-Computer Graphics", "color": "#f97316"},
-    "VJ": {"icon": "💫", "name": "Visual-VJ", "color": "#f97316"},
+    "FX": {"icon": "🎬", "name": "Visual-Visual Effects", "color": "#f97316"},
+    "VFX": {"icon": "🎬", "name": "Visual-Visual Effects", "color": "#f97316"},
+    "VJ": {"icon": "💫", "name": "Visual-Live Video", "color": "#f97316"},
+    # Old legacy types (backwards compatibility)
+    "Visual-Computer Graphics": {"icon": "🎬", "name": "Visual-Visual Effects", "color": "#f97316"},
+    "Visual-VJ": {"icon": "💫", "name": "Visual-Live Video", "color": "#f97316"},
     # Other types
     "Audio": {"icon": "🎵", "name": "Audio", "color": "#9333ea"},
     "Physical": {"icon": "🔧", "name": "3D Print", "color": "#ec4899"},
@@ -98,12 +102,16 @@ PROJECT_TYPES = {
 ARCHIVE_CATEGORIES = {
     # New Visual types
     "Visual-Graphic Design": "Visual",
-    "Visual-Computer Graphics": "Visual",
-    "Visual-VJ": "Visual",
+    "Visual-Visual Effects": "Visual",
+    "Visual-Live Video": "Visual",
     # Legacy Visual types (for backwards compatibility)
     "GD": "Visual",
+    "FX": "Visual",
     "VFX": "Visual",
     "VJ": "Visual",
+    # Old legacy types (backwards compatibility)
+    "Visual-Computer Graphics": "Visual",
+    "Visual-VJ": "Visual",
     # Other types
     "Audio": "Audio",
     "Physical": "Physical",
@@ -184,9 +192,9 @@ class ArchiveManager:
     @staticmethod
     def _get_archive_dir(project_type: str, is_personal: bool) -> Path:
         """Get the archive directory for a project type."""
-        path_config = get_path_config()
+        settings = get_rak_settings()
         archive_category = ARCHIVE_CATEGORIES.get(project_type, "Other")
-        archive_path_str = path_config.get_archive_path(archive_category)
+        archive_path_str = settings.get_archive_path(archive_category)
         archive_dir = _get_platform_path(archive_path_str)
 
         if is_personal:
@@ -197,9 +205,9 @@ class ArchiveManager:
     @staticmethod
     def _get_active_dir(project_type: str, is_personal: bool) -> Path:
         """Get the active directory for a project type."""
-        path_config = get_path_config()
+        settings = get_rak_settings()
         archive_category = ARCHIVE_CATEGORIES.get(project_type, "Other")
-        work_path_str = path_config.get_work_path(archive_category)
+        work_path_str = settings.get_work_path(archive_category)
         active_dir = _get_platform_path(work_path_str)
 
         if is_personal:
@@ -236,7 +244,7 @@ class ArchiveManager:
             metadata = project.get("metadata", {})
             is_personal = metadata.get("is_personal", False)
 
-            # Build archive path using PathConfig
+            # Build archive path using RakSettings
             archive_dir = ArchiveManager._get_archive_dir(project_type, is_personal)
             archive_dir.mkdir(parents=True, exist_ok=True)
 
@@ -386,7 +394,7 @@ class ProjectImporter:
     # Regex patterns for parsing folder names
     PATTERNS = {
         "GD": r'^(\d{4}-\d{2}-\d{2})_([^_]+)_(.+)$',
-        "VFX": r'^(\d{4}-\d{2}-\d{2})_CG_([^_]+)_(.+)$',
+        "FX": r'^(\d{4}-\d{2}-\d{2})_(?:FX|CG)_([^_]+)_(.+)$',
         "Physical": r'^(\d{4}-\d{2}-\d{2})_3DPrint_([^_]+)_(.+)$',
         "Godot": r'^(\d{4}-\d{2}-\d{2})_Godot_([^_]+)_(.+)$',
         "TD": r'^(\d{4}-\d{2}-\d{2})_TD_([^_]+)_(.+)$',
@@ -451,9 +459,9 @@ class ProjectImporter:
 
         # Get path config for converting active paths to work drive
         try:
-            path_config = get_path_config()
+            settings = get_rak_settings()
         except Exception:
-            path_config = None
+            settings = None
 
         # First, collect all folders to import
         folders_to_process = []
@@ -478,9 +486,9 @@ class ProjectImporter:
                         # Convert to work drive path for active projects
                         stored_path = str(item)
                         stored_base = str(base_dir)
-                        if path_config:
-                            stored_path = path_config.convert_to_work_drive_path(stored_path)
-                            stored_base = path_config.convert_to_work_drive_path(stored_base)
+                        if settings:
+                            stored_path = settings.convert_to_work_drive_path(stored_path)
+                            stored_base = settings.convert_to_work_drive_path(stored_base)
 
                         folders_to_process.append({
                             "path": stored_path,
@@ -596,24 +604,24 @@ class ProjectImporter:
                     "type": "VJ",
                     "is_personal": True
                 }
-            # VFX/CG pattern: YYYY-MM-DD_CG_Client_Project
-            match = re.match(cls.PATTERNS["VFX"], folder_name)
+            # FX pattern: YYYY-MM-DD_FX_Client_Project (also matches legacy _CG_)
+            match = re.match(cls.PATTERNS["FX"], folder_name)
             if match:
                 return {
                     "date": match.group(1),
                     "client": "Personal" if is_personal else match.group(2),
                     "project": match.group(3),
-                    "type": "VFX",
+                    "type": "FX",
                     "is_personal": is_personal
                 }
-            # CG pattern without client: YYYY-MM-DD_CG_Project (for personal projects)
-            match = re.match(r'^(\d{4}-\d{2}-\d{2})_CG_(.+)$', folder_name)
+            # FX/CG pattern without client: YYYY-MM-DD_FX_Project (for personal projects)
+            match = re.match(r'^(\d{4}-\d{2}-\d{2})_(?:FX|CG)_(.+)$', folder_name)
             if match:
                 return {
                     "date": match.group(1),
                     "client": "Personal",
                     "project": match.group(2),
-                    "type": "VFX",
+                    "type": "FX",
                     "is_personal": True
                 }
             # GD pattern: YYYY-MM-DD_Client_Project
@@ -652,8 +660,8 @@ class ProjectImporter:
 
         # RealTime: Try various patterns
         elif base_category == "RealTime":
-            # Full CG_ pattern: YYYY-MM-DD_CG_Client_Project
-            match = re.match(cls.PATTERNS["VFX"], folder_name)
+            # Full FX/CG pattern: YYYY-MM-DD_FX_Client_Project (also matches legacy _CG_)
+            match = re.match(cls.PATTERNS["FX"], folder_name)
             if match:
                 return {
                     "date": match.group(1),
@@ -662,8 +670,8 @@ class ProjectImporter:
                     "type": "RealTime",
                     "is_personal": is_personal
                 }
-            # Simple CG_ pattern: YYYY-MM-DD_CG_ProjectName (no client)
-            match = re.match(r'^(\d{4}-\d{2}-\d{2})_CG_(.+)$', folder_name)
+            # Simple FX/CG pattern: YYYY-MM-DD_FX_ProjectName (no client)
+            match = re.match(r'^(\d{4}-\d{2}-\d{2})_(?:FX|CG)_(.+)$', folder_name)
             if match:
                 return {
                     "date": match.group(1),
@@ -771,7 +779,7 @@ class ProjectTrackerApp:
     Use embedded=True when integrating into another application (like Pipeline Manager).
     """
 
-    def __init__(self, root_or_frame, embedded=False, status_callback=None, hint_callback=None, creation_start_callback=None, creation_done_callback=None):
+    def __init__(self, root_or_frame, embedded=False, status_callback=None, hint_callback=None, creation_start_callback=None, creation_done_callback=None, creation_cancel_callback=None):
         """
         Initialize the Project Tracker.
 
@@ -781,13 +789,15 @@ class ProjectTrackerApp:
             status_callback: Optional callback function for status messages (message, status_type)
             hint_callback: Optional callback function for showing keyboard hints (hint_text)
             creation_start_callback: Optional callback when project creation starts (FAB clicked)
-            creation_done_callback: Optional callback when project creation panel is closed
+            creation_done_callback: Optional callback when project creation completes successfully
+            creation_cancel_callback: Optional callback when project creation is cancelled
         """
         self.embedded = embedded
         self.status_callback = status_callback
         self.hint_callback = hint_callback
         self.creation_start_callback = creation_start_callback
         self.creation_done_callback = creation_done_callback
+        self.creation_cancel_callback = creation_cancel_callback
 
         if embedded:
             # Embedded mode: root_or_frame is the parent frame
@@ -1454,6 +1464,10 @@ class ProjectTrackerApp:
 
     def _on_fab_clicked(self):
         """Handle FAB button click."""
+        # Prevent opening multiple panels - only allow one structure panel at a time
+        if self.view_state != "PROJECT_LIST":
+            return
+
         if not self.selected_category:
             messagebox.showinfo("Select Category", "Please select a category first.")
             return
@@ -1646,7 +1660,8 @@ class ProjectTrackerApp:
                     form_container,
                     embedded=True,
                     on_project_created=self._on_project_created,
-                    on_cancel=self._close_creation_panel
+                    on_cancel=self._close_creation_panel,
+                    project_db=self.db
                 )
             except Exception as e:
                 logger.error(f"Failed to create embedded form: {e}")
@@ -1661,29 +1676,79 @@ class ProjectTrackerApp:
         """Handle successful project creation from embedded form."""
         logger.info(f"Project created: {project_data.get('project_name')}")
 
-        # Register project in database if not already done
-        if self.db and 'id' not in project_data:
-            try:
-                project_id = self.db.register_project(project_data)
-                logger.info(f"Registered project in database: {project_id}")
-            except Exception as e:
-                logger.error(f"Failed to register project: {e}")
-
-        # Close creation panel and return to project list
-        self._close_creation_panel()
-
-        # Refresh project list to show new project
-        self.refresh_project_list()
+        # Close creation panel without notifying cancel
+        self._close_creation_panel(notify_cancel=False)
 
         # Show success message
         self._update_status(f"Created project: {project_data.get('project_name')}")
 
-        # Notify parent that creation is done
-        if self.creation_done_callback:
-            self.creation_done_callback()
+        # Register project in database (centralized for all categories)
+        if self.db and project_data:
+            try:
+                project_id = self.db.register_project(project_data)
+                logger.info(f"Registered project in database: {project_id}")
+            except Exception as e:
+                logger.error(f"Failed to register project in database: {e}")
 
-    def _close_creation_panel(self):
-        """Close the creation panel and return to project list."""
+        # Notify parent that creation is done — parent handles
+        # filter switching, refresh, and project selection
+        if self.creation_done_callback:
+            self.creation_done_callback(project_data)
+
+    def _get_category_for_type(self, project_type: str) -> Optional[str]:
+        """Map a project_type string to its tracker category."""
+        if project_type in ("GD", "FX", "VFX", "VJ") or project_type.startswith("Visual-"):
+            return "Visual"
+        elif project_type == "Audio":
+            return "Audio"
+        elif project_type == "Physical":
+            return "Physical"
+        elif project_type in ("Godot", "TD", "RealTime"):
+            return "RealTime"
+        elif project_type == "Photo":
+            return "Photo"
+        elif project_type == "Web":
+            return "Web"
+        return None
+
+    def _select_project_by_path(self, path: str):
+        """Select a project by its path in whichever view is active.
+
+        Matches by folder name (basename) since paths may differ in format
+        between WSL (/mnt/d/...) and Windows (D:\\...) representations.
+        """
+        if not path:
+            return
+        # Match by folder name to avoid WSL vs Windows path format issues
+        target_basename = os.path.basename(path.replace('\\', '/').rstrip('/'))
+        logger.debug(f"_select_project_by_path: looking for basename '{target_basename}'")
+
+        if self.view_mode.get() == "grid":
+            for idx, project in enumerate(self.grid_projects):
+                project_path = project.get('path', '').replace('\\', '/')
+                if os.path.basename(project_path.rstrip('/')) == target_basename:
+                    logger.debug(f"_select_project_by_path: found at grid index {idx}")
+                    self.grid_selected_index = idx
+                    self._select_grid_card(idx)
+                    return
+            logger.debug(f"_select_project_by_path: not found in {len(self.grid_projects)} grid projects")
+        else:
+            for item_id, project in self.tree_item_to_project.items():
+                project_path = project.get('path', '').replace('\\', '/')
+                if os.path.basename(project_path.rstrip('/')) == target_basename:
+                    self.project_tree.selection_set(item_id)
+                    self.project_tree.see(item_id)
+                    self.selected_project = project
+                    self._display_project_details(project)
+                    return
+
+    def _close_creation_panel(self, notify_cancel=True):
+        """Close the creation panel and return to project list.
+
+        Args:
+            notify_cancel: If True, notify parent that creation was cancelled.
+                          Set to False when called after successful creation.
+        """
         # Clean up creator
         self.active_creator = None
 
@@ -1707,6 +1772,10 @@ class ProjectTrackerApp:
         # Update FAB visibility
         self._update_fab_visibility()
 
+        # Notify parent of cancellation
+        if notify_cancel and self.creation_cancel_callback:
+            self.creation_cancel_callback()
+
     def set_category(self, category_name: Optional[str]):
         """
         Set the selected category (public method for external use).
@@ -1716,7 +1785,7 @@ class ProjectTrackerApp:
         """
         # If in creation mode, close it first
         if self.view_state != "PROJECT_LIST":
-            self._close_creation_panel()
+            self._close_creation_panel(notify_cancel=False)
 
         self.selected_category = category_name
 
@@ -1770,7 +1839,7 @@ class ProjectTrackerApp:
         """Handle category button selection."""
         # If in creation mode, close it first
         if self.view_state != "PROJECT_LIST":
-            self._close_creation_panel()
+            self._close_creation_panel(notify_cancel=False)
 
         self.selected_category = category_name
 
@@ -1799,7 +1868,7 @@ class ProjectTrackerApp:
         """Clear category selection to show all projects."""
         # If in creation mode, close it first
         if self.view_state != "PROJECT_LIST":
-            self._close_creation_panel()
+            self._close_creation_panel(notify_cancel=False)
 
         self.selected_category = None
 
@@ -1862,7 +1931,7 @@ class ProjectTrackerApp:
             project_type = project.get("project_type", "")
 
             # Map project types to categories
-            if project_type in ["GD", "VFX", "VJ"] or project_type.startswith("Visual-"):
+            if project_type in ["GD", "FX", "VFX", "VJ"] or project_type.startswith("Visual-"):
                 categories["Visual"]["projects"].append(project)
             elif project_type == "Audio":
                 categories["Audio"]["projects"].append(project)
@@ -2467,8 +2536,8 @@ class ProjectTrackerApp:
 
             # Get the active path (work drive version)
             try:
-                path_config = get_path_config()
-                active_path = path_config.convert_to_work_drive_path(stored_path)
+                settings = get_rak_settings()
+                active_path = settings.convert_to_work_drive_path(stored_path)
                 self._current_active_path = active_path
                 self.active_path_label.config(text=active_path)
             except Exception:
@@ -2531,8 +2600,8 @@ class ProjectTrackerApp:
         # For active projects, convert to configured work drive path
         if status == "active":
             try:
-                path_config = get_path_config()
-                open_path = path_config.convert_to_work_drive_path(stored_path)
+                settings = get_rak_settings()
+                open_path = settings.convert_to_work_drive_path(stored_path)
                 path = Path(open_path)
 
                 # If converted path doesn't exist, fall back to stored path

@@ -1,7 +1,8 @@
 """
-TouchDesigner Project Folder Structure Creator
+VFX Project Folder Structure Creator
 
-Creates standardized folder structure for TouchDesigner projects.
+Creates standardized folder structure for VFX/CG projects.
+Registers projects in the central database for tracking.
 
 Keyboard Navigation:
 - Tab/Enter: Move to next field
@@ -16,14 +17,18 @@ import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from datetime import datetime
+import shutil
+import re
 from pathlib import Path
 
 # Add modules to path
 MODULES_DIR = Path(__file__).parent
 sys.path.insert(0, str(MODULES_DIR))
 
-from rak_settings import get_rak_settings
+from shared_logging import get_logger
+from shared_project_db import ProjectDatabase
 from shared_autocomplete_widget import AutocompleteEntry
+from rak_settings import get_rak_settings
 from shared_form_keyboard import (
     FormKeyboardMixin, FORM_COLORS,
     create_styled_entry, create_styled_text, create_styled_button,
@@ -32,17 +37,18 @@ from shared_form_keyboard import (
     create_software_chip_row, get_active_software
 )
 
+logger = get_logger(__name__)
 
-class TouchDesignerFolderStructureCreator(FormKeyboardMixin):
-    """Creates folder structure for TouchDesigner projects with keyboard-first navigation."""
+
+class FolderStructureCreator(FormKeyboardMixin):
+    """Creates folder structure for VFX/CG projects with keyboard-first navigation."""
 
     def __init__(self, root_or_frame, embedded=False, on_project_created=None, on_cancel=None, project_db=None):
-        """Initialize the TouchDesigner Folder Structure Creator."""
+        """Initialize the Folder Structure Creator."""
         self.embedded = embedded
         self.on_project_created = on_project_created
         self.on_cancel = on_cancel
         self._in_text_field = False
-        self.project_db = project_db
 
         if embedded:
             self.root = root_or_frame.winfo_toplevel()
@@ -50,12 +56,20 @@ class TouchDesignerFolderStructureCreator(FormKeyboardMixin):
         else:
             self.root = root_or_frame
             self.parent = root_or_frame
-            self.root.title("TouchDesigner Folder Structure")
+            self.root.title("FX Folder Structure")
             self.root.geometry("900x550")
             self.root.minsize(800, 450)
 
-        # Initialize path config
         self.settings = get_rak_settings()
+
+        if project_db:
+            self.project_db = project_db
+        else:
+            try:
+                self.project_db = ProjectDatabase()
+            except Exception as e:
+                logger.error(f"Failed to initialize database: {e}")
+                self.project_db = None
 
         self._build_form()
         self._collect_focusable_widgets()
@@ -78,9 +92,9 @@ class TouchDesignerFolderStructureCreator(FormKeyboardMixin):
             main_frame.grid(row=0, column=0, sticky="nsew", padx=15, pady=15)
 
         main_frame.columnconfigure(0, weight=1)
-        main_frame.rowconfigure(2, weight=1)  # Notes/Preview row expands
+        main_frame.rowconfigure(2, weight=1)
 
-        # ==================== ROW 1: Client and Project ====================
+        # ==================== ROW 1: Main inputs ====================
         row1 = create_styled_frame(main_frame)
         row1.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         row1.columnconfigure(1, weight=1)
@@ -90,7 +104,7 @@ class TouchDesignerFolderStructureCreator(FormKeyboardMixin):
         self.client_name_var = tk.StringVar()
         if self.project_db:
             self.client_entry = AutocompleteEntry(
-                row1, db=self.project_db, category="RealTime",
+                row1, db=self.project_db, category="Visual",
                 textvariable=self.client_name_var, width=25,
                 bg=FORM_COLORS["bg"]
             )
@@ -103,47 +117,41 @@ class TouchDesignerFolderStructureCreator(FormKeyboardMixin):
         self.project_entry = create_styled_entry(row1, textvariable=self.project_name_var, width=25)
         self.project_entry.grid(row=0, column=3, sticky="ew")
 
-        # ==================== ROW 2: Personal, Date, Software Specs ====================
+        # ==================== ROW 2: Secondary inputs ====================
         row2 = create_styled_frame(main_frame)
         row2.grid(row=1, column=0, sticky="ew", pady=(0, 10))
 
-        # Personal checkbox
         self.personal_var = tk.BooleanVar(value=False)
         self.personal_check = create_styled_checkbox(
             row2, text="Personal (P)", variable=self.personal_var, command=self.toggle_personal
         )
         self.personal_check.pack(side=tk.LEFT, padx=(0, 20))
 
-        # Date
         create_styled_label(row2, "Date:").pack(side=tk.LEFT, padx=(0, 5))
         self.date_var = tk.StringVar(value=datetime.now().strftime('%Y-%m-%d'))
         self.date_entry = create_styled_entry(row2, textvariable=self.date_var, width=12)
         self.date_entry.pack(side=tk.LEFT, padx=(0, 20))
 
-        # Get software defaults from config
-        sw_defaults = self.settings.get_software_defaults("RealTime", "TD")
+        # Shot folders checkbox
+        self.include_shots_var = tk.BooleanVar(value=True)
+        self.shots_check = create_styled_checkbox(
+            row2, text="Shot folders", variable=self.include_shots_var
+        )
+        self.shots_check.pack(side=tk.LEFT, padx=(0, 20))
 
-        # Software chips for TD and Python
+        # Software chips
+        sw_defaults = self.settings.get_software_defaults("Visual", "FX")
         self.software_chip_frame, self.software_chips = create_software_chip_row(
             row2,
-            ["TouchDesigner", "Python"],
+            ["Houdini", "Blender", "Fusion"],
             defaults={
-                "TouchDesigner": sw_defaults.get("touchdesigner", "2023.11760"),
-                "Python": sw_defaults.get("python", "3.11"),
+                "Houdini": sw_defaults.get("houdini", "20.5"),
+                "Blender": sw_defaults.get("blender", "4.4"),
+                "Fusion": sw_defaults.get("fusion", "19"),
             },
             on_change=lambda *args: self.update_preview()
         )
-        self.software_chip_frame.pack(side=tk.LEFT, padx=(0, 20))
-
-        # Resolution
-        create_styled_label(row2, "Resolution:").pack(side=tk.LEFT, padx=(0, 5))
-        self.resolution_var = tk.StringVar(value=sw_defaults.get("resolution", "1920x1080"))
-        self.resolution_entry = create_styled_entry(row2, textvariable=self.resolution_var, width=12)
-        self.resolution_entry.pack(side=tk.LEFT)
-
-        # Base directory (hidden from main UI, use Browse button)
-        default_base = self.settings.get_work_path("RealTime").replace('\\', '/')
-        self.base_dir_var = tk.StringVar(value=default_base)
+        self.software_chip_frame.pack(side=tk.LEFT)
 
         # ==================== ROW 3: Notes and Preview ====================
         row3 = create_styled_frame(main_frame)
@@ -152,18 +160,14 @@ class TouchDesignerFolderStructureCreator(FormKeyboardMixin):
         row3.columnconfigure(1, weight=2)
         row3.rowconfigure(0, weight=1)
 
-        # Notes (left)
-        notes_frame = create_styled_labelframe(row3, text="Notes (N to focus)")
+        notes_frame = create_styled_labelframe(row3, text="Notes (optional)")
         notes_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
         notes_frame.columnconfigure(0, weight=1)
         notes_frame.rowconfigure(0, weight=1)
 
-        self.notes_text = create_styled_text(notes_frame, height=8)
+        self.notes_text = create_styled_text(notes_frame, height=6)
         self.notes_text.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
-        self.notes_text.bind("<FocusIn>", lambda e: setattr(self, '_in_text_field', True))
-        self.notes_text.bind("<FocusOut>", lambda e: setattr(self, '_in_text_field', False))
 
-        # Preview (right)
         preview_frame = create_styled_labelframe(row3, text="Preview")
         preview_frame.grid(row=0, column=1, sticky="nsew")
         preview_frame.columnconfigure(0, weight=1)
@@ -172,13 +176,17 @@ class TouchDesignerFolderStructureCreator(FormKeyboardMixin):
         self.preview_text = tk.Text(
             preview_frame, bg=FORM_COLORS["bg_input"], fg=FORM_COLORS["text_dim"],
             font=("Consolas", 9), wrap=tk.WORD, state=tk.DISABLED,
-            highlightthickness=0, relief=tk.FLAT, height=12
+            highlightthickness=0, relief=tk.FLAT
         )
         self.preview_text.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
 
         # ==================== ROW 4: Action buttons ====================
         row4 = create_styled_frame(main_frame)
         row4.grid(row=3, column=0, sticky="e", pady=(10, 0))
+
+        default_base = self.settings.get_work_path("Visual").replace('\\', '/')
+        self.base_dir_var = tk.StringVar(value=default_base)
+        self.template_dir_var = tk.StringVar(value='P:\\_Structure\\YYYY-MM-DD_VisualFX_NameClient_NameProject')
 
         self.browse_btn = create_styled_button(row4, text="Browse...", command=self.browse_base_dir)
         self.browse_btn.pack(side=tk.LEFT, padx=(0, 10))
@@ -192,21 +200,18 @@ class TouchDesignerFolderStructureCreator(FormKeyboardMixin):
         self.status_var = tk.StringVar()
         self.status_var.set("Ready")
 
-        # Initialize preview
         self.update_preview()
-
-        # Set up event bindings for live preview updates
         self.client_name_var.trace_add("write", lambda *args: self.update_preview())
         self.project_name_var.trace_add("write", lambda *args: self.update_preview())
         self.date_var.trace_add("write", lambda *args: self.update_preview())
         self.personal_var.trace_add("write", lambda *args: self.update_preview())
-        self.resolution_var.trace_add("write", lambda *args: self.update_preview())
+        self.include_shots_var.trace_add("write", lambda *args: self.update_preview())
 
     def _collect_focusable_widgets(self):
         """Collect widgets for keyboard navigation."""
         self._focusable_widgets = [
             self.client_entry, self.project_entry, self.personal_check,
-            self.date_entry, self.resolution_entry, self.notes_text,
+            self.date_entry, self.shots_check, self.notes_text,
         ]
         self._create_btn = self.create_btn
         self._browse_btn = self.browse_btn
@@ -214,8 +219,9 @@ class TouchDesignerFolderStructureCreator(FormKeyboardMixin):
         self._personal_checkbox = self.personal_check
         self._personal_var = self.personal_var
 
-        # Add Enter binding for personal checkbox to toggle it
+        # Add Enter binding for checkboxes to toggle them
         self.personal_check.bind("<Return>", lambda e: self._toggle_personal_checkbox())
+        self.shots_check.bind("<Return>", lambda e: self._toggle_shots_checkbox())
 
     def _toggle_personal_checkbox(self):
         """Toggle personal checkbox when Enter is pressed."""
@@ -223,8 +229,14 @@ class TouchDesignerFolderStructureCreator(FormKeyboardMixin):
         self.toggle_personal()
         return "break"
 
+    def _toggle_shots_checkbox(self):
+        """Toggle shots checkbox when Enter is pressed."""
+        self.include_shots_var.set(not self.include_shots_var.get())
+        self.update_preview()
+        return "break"
+
     def toggle_personal(self):
-        """Toggle the Personal checkbox to auto-fill client name."""
+        """Toggle the Personal checkbox."""
         if self.personal_var.get():
             self.client_name_backup = self.client_name_var.get()
             self.client_name_var.set("Personal")
@@ -242,189 +254,140 @@ class TouchDesignerFolderStructureCreator(FormKeyboardMixin):
             self.base_dir_var.set(directory)
             self.update_preview()
 
-    def get_folder_structure(self):
-        """Define the TouchDesigner folder structure."""
-        return {
-            'Production': {
-                'Projects': {},
-                'Components': {},
-                'Assets': {
-                    '3D': {
-                        'Source': {},
-                        'Optimized': {},
-                        'References': {}
-                    },
-                    'Textures': {
-                        'Source': {},
-                        'Optimized': {}
-                    },
-                    'Images': {},
-                    'Videos': {},
-                    'Audio': {},
-                    'Fonts': {}
-                },
-                'Preparation': {
-                    'Blender': {},
-                    'Substance': {},
-                    'Houdini': {},
-                    'Tests': {}
-                },
-                'Data': {
-                    'JSON': {},
-                    'CSV': {},
-                    'XML': {}
-                },
-                'Scripts': {
-                    'Extensions': {},
-                    'Modules': {}
-                },
-                'Shaders': {
-                    'GLSL': {},
-                    'MAT': {}
-                },
-                'Palettes': {},
-                'MIDI': {},
-                'OSC': {},
-                'DMX': {},
-                'Exports': {
-                    'Movies': {},
-                    'Images': {},
-                    'TOE': {}
-                }
-            },
-            '_Library': {
-                'Documents': {},
-                'References': {},
-                'Backup': {
-                    'YYY-MM-DD': {}
-                }
-            },
-            '_Delivery': {
-                'YYY-MM-DD': {}
-            }
-        }
+    def get_template_structure(self, template_dir, include_shots=True):
+        """Get directory structure from template folder."""
+        if not os.path.isdir(template_dir):
+            return None
+        structure = []
+        for root, dirs, files in os.walk(template_dir):
+            if not include_shots and "Shot" in os.path.basename(root):
+                dirs[:] = []
+                continue
+            rel_path = os.path.relpath(root, template_dir)
+            if rel_path != '.':
+                structure.append(rel_path)
+            for file in files:
+                file_path = os.path.join(rel_path, file)
+                if file_path != '.':
+                    structure.append(file_path)
+        return sorted(structure)
 
     def update_preview(self):
-        """Update the preview of the folder structure."""
+        """Update the preview."""
         self.preview_text.configure(state=tk.NORMAL)
         self.preview_text.delete(1.0, tk.END)
 
         client = self.client_name_var.get() or "[Client]"
         project = self.project_name_var.get() or "[Project]"
         date = self.date_var.get() or datetime.now().strftime('%Y-%m-%d')
-
-        software_specs = get_active_software(self.software_chips)
-        touchdesigner = software_specs.get("TouchDesigner", "2023.11760")
-        python = software_specs.get("Python", "3.11")
-        resolution = self.resolution_var.get()
+        include_shots = self.include_shots_var.get()
 
         if client and client != "Personal":
-            project_dir = f"{date}_TD_{client}_{project}"
+            project_dir = f"{date}_FX_{client}_{project}"
         else:
-            project_dir = f"{date}_TD_{project}"
-
+            project_dir = f"{date}_FX_{project}"
         base_dir = self.base_dir_var.get()
+
         if self.personal_var.get():
             preview_path = f"{base_dir}/_Personal/{project_dir}"
         else:
             preview_path = f"{base_dir}/{project_dir}"
 
         self.preview_text.insert(tk.END, f"Path: {preview_path}\n\n")
-        self.preview_text.insert(tk.END, f"TD: {touchdesigner}  |  Python: {python}  |  Res: {resolution}\n\n")
-        self.preview_text.insert(tk.END, "Structure:\n")
 
-        structure = self.get_folder_structure()
+        # Software specs from chips
+        active_software = get_active_software(self.software_chips)
+        if active_software:
+            software_str = "  |  ".join([f"{name}: {ver}" for name, ver in active_software.items()])
+            self.preview_text.insert(tk.END, f"{software_str}\n")
+        self.preview_text.insert(tk.END, f"Shot folders: {'Yes' if include_shots else 'No'}\n\n")
 
-        def print_tree(tree, prefix="", max_depth=3, current_depth=0):
-            if current_depth >= max_depth:
-                return
-            items = list(tree.items())
-            for i, (name, subtree) in enumerate(items):
-                is_last = i == len(items) - 1
-                display_name = date if name == "YYY-MM-DD" else name
-                self.preview_text.insert(tk.END, f"{prefix}{'└── ' if is_last else '├── '}{display_name}\n")
-                if subtree:
-                    extension = "    " if is_last else "│   "
-                    print_tree(subtree, prefix + extension, max_depth, current_depth + 1)
-
-        print_tree(structure)
+        template_structure = self.get_template_structure(self.template_dir_var.get(), include_shots)
+        if template_structure:
+            self.preview_text.insert(tk.END, "Structure:\n")
+            for path in template_structure[:10]:
+                depth = path.count(os.sep)
+                name = path.split(os.sep)[-1]
+                if name == "YYY-MM-DD":
+                    name = date
+                self.preview_text.insert(tk.END, f"{'  ' * depth}{name}/\n")
+            if len(template_structure) > 10:
+                self.preview_text.insert(tk.END, "  ...\n")
+        else:
+            self.preview_text.insert(tk.END, "Template not found.\n")
 
         self.preview_text.configure(state=tk.DISABLED)
 
-    def validate_inputs(self):
-        """Validate all required inputs."""
-        base_dir = self.base_dir_var.get()
-        client_name = self.client_name_var.get().strip()
-        project_name = self.project_name_var.get().strip()
-
-        if not base_dir or not os.path.isdir(base_dir):
-            messagebox.showerror("Error", "Please select a valid base directory.")
-            return False
-
-        if not client_name:
-            if self.personal_var.get():
-                self.client_name_var.set("Personal")
-            else:
-                messagebox.showerror("Error", "Please enter a client name.")
-                return False
-
-        if not project_name:
-            messagebox.showerror("Error", "Please enter a project name.")
-            return False
-
-        return True
-
     def create_structure(self):
         """Create the folder structure."""
-        if not self.validate_inputs():
-            return
-
         base_dir = self.base_dir_var.get()
         client_name = self.client_name_var.get()
         project_name = self.project_name_var.get()
-        date = self.date_var.get() or datetime.now().strftime('%Y-%m-%d')
+        date = self.date_var.get()
+        template_dir = self.template_dir_var.get()
+        include_shots = self.include_shots_var.get()
 
         software_specs = get_active_software(self.software_chips)
-        touchdesigner_version = software_specs.get("TouchDesigner", "2023.11760")
-        python_version = software_specs.get("Python", "3.11")
-        resolution = self.resolution_var.get()
+
+        if not base_dir or not os.path.isdir(base_dir):
+            messagebox.showerror("Error", "Please select a valid base directory.")
+            return
+
+        if not client_name:
+            if self.personal_var.get():
+                client_name = "Personal"
+            else:
+                messagebox.showerror("Error", "Please enter a client name.")
+                return
+
+        if not project_name:
+            messagebox.showerror("Error", "Please enter a project name.")
+            return
+
+        if not date:
+            date = datetime.now().strftime('%Y-%m-%d')
+
+        if not template_dir or not os.path.isdir(template_dir):
+            messagebox.showerror("Error", "Template directory not found.")
+            return
 
         if self.personal_var.get():
             base_dir = os.path.join(base_dir, "_Personal")
             os.makedirs(base_dir, exist_ok=True)
 
         if client_name and client_name != "Personal":
-            folder_name = f'{date}_TD_{client_name}_{project_name}'
+            folder_name = f'{date}_FX_{client_name}_{project_name}'
         else:
-            folder_name = f'{date}_TD_{project_name}'
+            folder_name = f'{date}_FX_{project_name}'
             client_name = "Personal"
         project_dir = os.path.join(base_dir, folder_name)
 
         try:
-            self.create_folders(project_dir, self.get_folder_structure(), date)
-            self.create_specs_file(project_dir, client_name, project_name, date,
-                                   touchdesigner_version, python_version, resolution)
+            os.makedirs(project_dir, exist_ok=True)
+            self.copy_template(template_dir, project_dir, include_shots, date)
 
-            self.status_var.set(f"Created project structure for {client_name}_{project_name}")
+            docs_dir = os.path.join(project_dir, '_Library/Documents')
+            os.makedirs(docs_dir, exist_ok=True)
+
+            self.create_specs_file(project_dir, client_name, project_name, date, software_specs)
 
             project_data = {
                 'client_name': client_name,
                 'project_name': project_name,
-                'project_type': 'TD',
+                'project_type': 'Visual-Visual Effects',
                 'date_created': date,
                 'path': project_dir,
                 'base_directory': base_dir,
                 'status': 'active',
                 'notes': self.notes_text.get(1.0, tk.END).strip(),
                 'metadata': {
-                    'software_specs': {
-                        'touchdesigner': touchdesigner_version,
-                        'python': python_version,
-                        'resolution': resolution
-                    },
+                    'software_specs': software_specs,
+                    'include_shots': include_shots,
                     'is_personal': self.personal_var.get()
                 }
             }
+
+            self.status_var.set(f"Created project structure for {client_name}_{project_name}")
 
             if self.embedded and self.on_project_created:
                 self.on_project_created(project_data)
@@ -441,29 +404,32 @@ class TouchDesignerFolderStructureCreator(FormKeyboardMixin):
         if self.on_cancel:
             self.on_cancel()
 
-    def create_folders(self, base_path, structure, date):
-        """Recursively create folder structure."""
-        for folder_name, subfolders in structure.items():
-            if folder_name == "YYY-MM-DD":
-                folder_name = date
+    def copy_template(self, src, dst, include_shots, date):
+        """Copy template structure."""
+        for item in os.listdir(src):
+            s = os.path.join(src, item)
+            d = os.path.join(dst, item)
 
-            folder_path = os.path.join(base_path, folder_name)
-            os.makedirs(folder_path, exist_ok=True)
+            if not include_shots and "Shot" in item and os.path.isdir(s):
+                continue
 
-            if subfolders:
-                self.create_folders(folder_path, subfolders, date)
+            if os.path.isdir(s):
+                if item == "YYY-MM-DD":
+                    d = os.path.join(os.path.dirname(d), date)
+                os.makedirs(d, exist_ok=True)
+                self.copy_template(s, d, include_shots, date)
+            else:
+                if not os.path.exists(d) or not os.path.samefile(s, d):
+                    shutil.copy2(s, d)
 
-    def create_specs_file(self, project_dir, client_name, project_name, date,
-                          touchdesigner_version, python_version, resolution):
-        """Create a specifications text file."""
+    def create_specs_file(self, project_dir, client_name, project_name, date, software_specs):
+        """Create specifications file."""
         try:
             docs_dir = os.path.join(project_dir, '_Library/Documents')
             spec_file_path = os.path.join(docs_dir, 'project_specifications.txt')
-
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            notes = self.notes_text.get(1.0, tk.END).strip()
-            if not notes:
-                notes = "No notes provided."
+            notes = self.notes_text.get(1.0, tk.END).strip() or "No notes provided."
+            software_lines = "\n".join([f"{name}: {ver}" for name, ver in software_specs.items()]) or "None selected"
 
             content = f"""PROJECT SPECIFICATIONS
 ======================
@@ -475,39 +441,21 @@ Date: {date}
 
 SOFTWARE VERSIONS
 ======================
-TouchDesigner: {touchdesigner_version}
-Python: {python_version}
-Resolution: {resolution}
+{software_lines}
 
-PROJECT STRUCTURE
+SHOT FOLDERS
 ======================
-Production/
-├── Projects/           # Main .toe project files
-├── Components/         # Reusable component .tox files
-├── Assets/            # Media assets organized by type
-├── Preparation/       # Asset preparation workspace
-├── Data/              # External data files (JSON, CSV, XML)
-├── Scripts/           # Python scripts and extensions
-├── Shaders/           # Custom GLSL shaders
-├── Palettes/          # Color palettes
-├── MIDI/              # MIDI mapping files
-├── OSC/               # OSC configuration files
-├── DMX/               # DMX configurations
-└── Exports/           # Output files (Movies, Images, TOE)
+{"Included" if self.include_shots_var.get() else "Excluded"}
 
 NOTES
 ======================
 {notes}
 """
-
-            with open(spec_file_path, 'w', encoding='utf-8') as file:
+            with open(spec_file_path, 'w') as file:
                 file.write(content)
 
-            self.status_var.set(f"Created project structure and specifications file")
-
         except Exception as e:
-            messagebox.showwarning("Warning", f"Created folder structure but failed to create specifications file: {str(e)}")
-            self.status_var.set("Warning: Failed to create specifications file")
+            messagebox.showwarning("Warning", f"Failed to create specifications file: {str(e)}")
 
     def open_folder(self, path):
         """Open the folder in file explorer."""
@@ -525,11 +473,7 @@ NOTES
                 print(f"Could not open folder: {str(e)}")
 
 
-# Backwards compatibility alias
-FolderStructureCreator = TouchDesignerFolderStructureCreator
-
-
 if __name__ == "__main__":
     root = tk.Tk()
-    app = TouchDesignerFolderStructureCreator(root)
+    app = FolderStructureCreator(root)
     root.mainloop()

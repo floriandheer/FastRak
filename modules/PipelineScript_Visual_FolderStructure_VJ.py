@@ -1,8 +1,15 @@
 """
-VJ / Resolume Project Folder Structure Creator
+Live Video Project Folder Structure Creator
 
-Creates standardized folder structure for VJ and Resolume projects.
+Creates standardized folder structure for Live Video (VJ/performance) projects.
 Registers projects in the central database for tracking.
+
+Keyboard Navigation:
+- Tab/Enter: Move to next field
+- Shift+Tab: Move to previous field
+- Ctrl+Enter: Create project (from anywhere)
+- Escape: Close form
+- P: Toggle Personal checkbox (when not typing)
 """
 
 import os
@@ -20,15 +27,22 @@ sys.path.insert(0, str(MODULES_DIR))
 from shared_logging import get_logger
 from shared_project_db import ProjectDatabase
 from shared_autocomplete_widget import AutocompleteEntry
-from shared_path_config import get_path_config
+from rak_settings import get_rak_settings
+from shared_form_keyboard import (
+    FormKeyboardMixin, FORM_COLORS,
+    create_styled_entry, create_styled_text, create_styled_button,
+    create_styled_label, create_styled_checkbox, create_styled_frame,
+    create_styled_labelframe, format_button_with_shortcut,
+    create_software_chip_row, get_active_software
+)
 
 logger = get_logger(__name__)
 
 
-class VJFolderStructureCreator:
-    """Creates folder structure for VJ and Resolume projects."""
+class VJFolderStructureCreator(FormKeyboardMixin):
+    """Creates folder structure for Live Video projects with keyboard-first navigation."""
 
-    # Default folder structure for VJ projects
+    # Default folder structure for Live Video projects
     DEFAULT_STRUCTURE = [
         "_Library",
         "_Library/Documents",
@@ -49,7 +63,7 @@ class VJFolderStructureCreator:
         "_Renders/Final",
     ]
 
-    def __init__(self, root_or_frame, embedded=False, on_project_created=None, on_cancel=None):
+    def __init__(self, root_or_frame, embedded=False, on_project_created=None, on_cancel=None, project_db=None):
         """
         Initialize the VJ Folder Structure Creator.
 
@@ -62,6 +76,7 @@ class VJFolderStructureCreator:
         self.embedded = embedded
         self.on_project_created = on_project_created
         self.on_cancel = on_cancel
+        self._in_text_field = False
 
         if embedded:
             # Embedded mode: root_or_frame is the parent frame
@@ -71,175 +86,172 @@ class VJFolderStructureCreator:
             # Standalone mode: root_or_frame is the Tk root
             self.root = root_or_frame
             self.parent = root_or_frame
-            self.root.title("VJ / Resolume Folder Structure")
-            self.root.geometry("750x650")
-            self.root.minsize(700, 550)
+            self.root.title("Live Video Folder Structure")
+            self.root.geometry("900x550")
+            self.root.minsize(800, 450)
 
         # Initialize path config
-        self.path_config = get_path_config()
+        self.settings = get_rak_settings()
 
         # Initialize project database
-        try:
-            self.project_db = ProjectDatabase()
-        except Exception as e:
-            logger.error(f"Failed to initialize database: {e}")
-            self.project_db = None
-
-        if not embedded:
-            # Configure main window (standalone only)
-            self.root.columnconfigure(0, weight=1)
-            self.root.rowconfigure(1, weight=1)
-
-            # Create header (standalone only)
-            header_frame = tk.Frame(self.root, bg="#2c3e50", height=60)
-            header_frame.grid(row=0, column=0, sticky="ew", padx=0, pady=0)
-            header_frame.grid_propagate(False)
-
-            # Add title to header
-            title_label = tk.Label(
-                header_frame,
-                text="VJ / Resolume Folder Structure",
-                font=("Arial", 16, "bold"),
-                fg="white",
-                bg="#2c3e50"
-            )
-            title_label.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
-
-        # Create main frame
-        if embedded:
-            main_frame = ttk.Frame(self.parent)
-            main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        if project_db:
+            self.project_db = project_db
         else:
-            main_frame = ttk.Frame(self.root)
-            main_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
+            try:
+                self.project_db = ProjectDatabase()
+            except Exception as e:
+                logger.error(f"Failed to initialize database: {e}")
+                self.project_db = None
+
+        # Build the form
+        self._build_form()
+
+        # Set up keyboard navigation (from mixin)
+        self._collect_focusable_widgets()
+        self._setup_keyboard_navigation()
+
+    def _build_form(self):
+        """Build the keyboard-optimized form layout."""
+        # Configure dark background for embedded mode
+        if self.embedded:
+            self.parent.configure(bg=FORM_COLORS["bg"])
+
+        if not self.embedded:
+            # Configure main window (standalone only)
+            self.root.configure(bg=FORM_COLORS["bg"])
+            self.root.columnconfigure(0, weight=1)
+            self.root.rowconfigure(0, weight=1)
+
+        # Main container
+        if self.embedded:
+            main_frame = create_styled_frame(self.parent)
+            main_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
+        else:
+            main_frame = create_styled_frame(self.root)
+            main_frame.grid(row=0, column=0, sticky="nsew", padx=15, pady=15)
+
         main_frame.columnconfigure(0, weight=1)
-        main_frame.columnconfigure(1, weight=2)
-        main_frame.rowconfigure(0, weight=1)
+        main_frame.rowconfigure(2, weight=1)  # Preview row expands
 
-        # Create form panel (left side)
-        form_frame = ttk.LabelFrame(main_frame, text="Project Settings")
-        form_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
-        form_frame.columnconfigure(1, weight=1)
+        # ==================== ROW 1: Main inputs ====================
+        row1 = create_styled_frame(main_frame)
+        row1.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        row1.columnconfigure(1, weight=1)
+        row1.columnconfigure(3, weight=1)
 
-        # Base directory (from path config)
-        ttk.Label(form_frame, text="Base Directory:").grid(row=0, column=0, sticky="w", padx=10, pady=10)
-        default_base = self.path_config.get_work_path("Visual").replace('\\', '/')
-        self.base_dir_var = tk.StringVar(value=default_base)
-        base_dir_entry = ttk.Entry(form_frame, textvariable=self.base_dir_var, width=40)
-        base_dir_entry.grid(row=0, column=1, sticky="ew", padx=5, pady=10)
-        ttk.Button(form_frame, text="Browse", command=self.browse_base_dir).grid(row=0, column=2, padx=5, pady=10)
-
-        # Project Name
-        ttk.Label(form_frame, text="Project Name:").grid(row=1, column=0, sticky="w", padx=10, pady=10)
-        self.project_name_var = tk.StringVar()
-        ttk.Entry(form_frame, textvariable=self.project_name_var, width=40).grid(
-            row=1, column=1, columnspan=2, sticky="ew", padx=5, pady=10
-        )
-
-        # Client Name (with autocomplete) - optional for VJ projects
-        ttk.Label(form_frame, text="Client (optional):").grid(row=2, column=0, sticky="w", padx=10, pady=(10, 2))
+        # Client Name
+        create_styled_label(row1, "Client:").grid(row=0, column=0, sticky="e", padx=(0, 5))
         self.client_name_var = tk.StringVar()
         if self.project_db:
             self.client_entry = AutocompleteEntry(
-                form_frame,
+                row1,
                 db=self.project_db,
+                category="Visual",
                 textvariable=self.client_name_var,
-                width=40
+                width=25,
+                bg=FORM_COLORS["bg"]
             )
-            self.client_entry.grid(row=2, column=1, columnspan=2, sticky="ew", padx=5, pady=(10, 2))
         else:
-            ttk.Entry(form_frame, textvariable=self.client_name_var, width=40).grid(
-                row=2, column=1, columnspan=2, sticky="ew", padx=5, pady=(10, 2)
-            )
+            self.client_entry = create_styled_entry(row1, textvariable=self.client_name_var, width=25)
+        self.client_entry.grid(row=0, column=1, sticky="ew", padx=(0, 20))
+
+        # Project Name
+        create_styled_label(row1, "Project:").grid(row=0, column=2, sticky="e", padx=(0, 5))
+        self.project_name_var = tk.StringVar()
+        self.project_entry = create_styled_entry(row1, textvariable=self.project_name_var, width=25)
+        self.project_entry.grid(row=0, column=3, sticky="ew")
+
+        # ==================== ROW 2: Secondary inputs ====================
+        row2 = create_styled_frame(main_frame)
+        row2.grid(row=1, column=0, sticky="ew", pady=(0, 10))
 
         # Personal checkbox
-        ttk.Label(form_frame, text="Personal:").grid(row=3, column=0, sticky="w", padx=10, pady=(0, 10))
-        self.personal_var = tk.BooleanVar(value=True)  # Default to personal for VJ
-        personal_check = ttk.Checkbutton(
-            form_frame, text="", variable=self.personal_var, command=self.toggle_personal
+        self.personal_var = tk.BooleanVar(value=False)
+        self.personal_check = create_styled_checkbox(
+            row2, text="Personal (P)", variable=self.personal_var, command=self.toggle_personal
         )
-        personal_check.grid(row=3, column=1, sticky="w", padx=5, pady=(0, 10))
+        self.personal_check.pack(side=tk.LEFT, padx=(0, 20))
 
-        # Project date
-        ttk.Label(form_frame, text="Date:").grid(row=4, column=0, sticky="w", padx=10, pady=10)
+        # Date
+        create_styled_label(row2, "Date:").pack(side=tk.LEFT, padx=(0, 5))
         self.date_var = tk.StringVar(value=datetime.now().strftime('%Y-%m-%d'))
-        date_entry = ttk.Entry(form_frame, textvariable=self.date_var, width=40)
-        date_entry.grid(row=4, column=1, columnspan=2, sticky="ew", padx=5, pady=10)
+        self.date_entry = create_styled_entry(row2, textvariable=self.date_var, width=12)
+        self.date_entry.pack(side=tk.LEFT, padx=(0, 20))
 
-        # Software specifications
-        spec_frame = ttk.LabelFrame(form_frame, text="Software Specs")
-        spec_frame.grid(row=5, column=0, columnspan=3, sticky="ew", padx=5, pady=10)
-        spec_frame.columnconfigure(1, weight=1)
+        # Software chips
+        sw_defaults = self.settings.get_software_defaults("Visual", "VJ")
+        self.software_chip_frame, self.software_chips = create_software_chip_row(
+            row2,
+            ["Resolume", "After Effects", "TouchDesigner"],
+            defaults={
+                "Resolume": sw_defaults.get("resolume", "Arena 7"),
+                "After Effects": sw_defaults.get("after_effects", "2024"),
+                "TouchDesigner": sw_defaults.get("touchdesigner", ""),
+            },
+            on_change=lambda *args: self.update_preview()
+        )
+        self.software_chip_frame.pack(side=tk.LEFT)
 
-        # Resolume version
-        ttk.Label(spec_frame, text="Resolume:").grid(row=0, column=0, sticky="w", padx=10, pady=5)
-        self.resolume_var = tk.StringVar(value="Arena 7")
-        ttk.Entry(spec_frame, textvariable=self.resolume_var, width=15).grid(row=0, column=1, sticky="w", padx=5, pady=5)
+        # ==================== ROW 3: Notes and Preview ====================
+        row3 = create_styled_frame(main_frame)
+        row3.grid(row=2, column=0, sticky="nsew", pady=(0, 10))
+        row3.columnconfigure(0, weight=1)
+        row3.columnconfigure(1, weight=2)
+        row3.rowconfigure(0, weight=1)
 
-        # After Effects version
-        ttk.Label(spec_frame, text="After Effects:").grid(row=1, column=0, sticky="w", padx=10, pady=5)
-        self.ae_var = tk.StringVar(value="2024")
-        ttk.Entry(spec_frame, textvariable=self.ae_var, width=15).grid(row=1, column=1, sticky="w", padx=5, pady=5)
-
-        # TouchDesigner version (optional)
-        ttk.Label(spec_frame, text="TouchDesigner:").grid(row=2, column=0, sticky="w", padx=10, pady=5)
-        self.td_var = tk.StringVar(value="")
-        ttk.Entry(spec_frame, textvariable=self.td_var, width=15).grid(row=2, column=1, sticky="w", padx=5, pady=5)
-
-        # Notes section
-        notes_frame = ttk.LabelFrame(form_frame, text="Project Notes")
-        notes_frame.grid(row=6, column=0, columnspan=3, sticky="nsew", padx=5, pady=10)
+        # Notes (left side, compact)
+        notes_frame = create_styled_labelframe(row3, text="Notes (optional)")
+        notes_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
         notes_frame.columnconfigure(0, weight=1)
         notes_frame.rowconfigure(0, weight=1)
 
-        self.notes_scrollbar = ttk.Scrollbar(notes_frame)
-        self.notes_scrollbar.grid(row=0, column=1, sticky="ns", padx=(0, 5), pady=5)
+        self.notes_text = create_styled_text(notes_frame, height=6)
+        self.notes_text.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
 
-        self.notes_text = tk.Text(
-            notes_frame, wrap=tk.WORD, height=5, yscrollcommand=self.notes_scrollbar.set
-        )
-        self.notes_text.grid(row=0, column=0, sticky="nsew", padx=(5, 0), pady=5)
-        self.notes_scrollbar.config(command=self.notes_text.yview)
-
-        # Button frame for Create and Cancel buttons
-        button_frame = ttk.Frame(form_frame)
-        button_frame.grid(row=7, column=0, columnspan=3, pady=20)
-
-        # Create button
-        create_btn = ttk.Button(
-            button_frame, text="Create Project Structure", command=self.create_structure, padding=(20, 10)
-        )
-        create_btn.pack(side=tk.LEFT, padx=5)
-
-        # Cancel button (shown in embedded mode)
-        if self.embedded:
-            cancel_btn = ttk.Button(button_frame, text="Cancel",
-                                   command=self._handle_cancel, padding=(20, 10))
-            cancel_btn.pack(side=tk.LEFT, padx=5)
-
-        # Create preview panel (right side)
-        preview_frame = ttk.LabelFrame(main_frame, text="Structure Preview")
-        preview_frame.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
-        preview_frame.rowconfigure(0, weight=1)
+        # Preview (right side)
+        preview_frame = create_styled_labelframe(row3, text="Preview")
+        preview_frame.grid(row=0, column=1, sticky="nsew")
         preview_frame.columnconfigure(0, weight=1)
-
-        self.preview_scrollbar = ttk.Scrollbar(preview_frame)
-        self.preview_scrollbar.grid(row=0, column=1, sticky="ns")
+        preview_frame.rowconfigure(0, weight=1)
 
         self.preview_text = tk.Text(
-            preview_frame, wrap=tk.WORD, yscrollcommand=self.preview_scrollbar.set
+            preview_frame,
+            bg=FORM_COLORS["bg_input"],
+            fg=FORM_COLORS["text_dim"],
+            font=("Consolas", 9),
+            wrap=tk.WORD,
+            state=tk.DISABLED,
+            highlightthickness=0,
+            relief=tk.FLAT
         )
         self.preview_text.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
-        self.preview_scrollbar.config(command=self.preview_text.yview)
 
-        # Status bar (only in standalone mode)
+        # ==================== ROW 4: Action buttons ====================
+        row4 = create_styled_frame(main_frame)
+        row4.grid(row=3, column=0, sticky="e", pady=(10, 0))
+
+        # Base directory (hidden from main view, accessible via browse)
+        default_base = self.settings.get_work_path("Visual").replace('\\', '/')
+        self.base_dir_var = tk.StringVar(value=default_base)
+
+        # Browse button (secondary)
+        self.browse_btn = create_styled_button(
+            row4, text="Browse...", command=self.browse_base_dir
+        )
+        self.browse_btn.pack(side=tk.LEFT, padx=(0, 10))
+
+        # Create button (primary)
+        self.create_btn = create_styled_button(
+            row4,
+            text=format_button_with_shortcut("Create Project", "create"),
+            command=self.create_structure,
+            primary=True
+        )
+        self.create_btn.pack(side=tk.LEFT)
+
+        # Status variable (for compatibility)
         self.status_var = tk.StringVar()
         self.status_var.set("Ready")
-        if not self.embedded:
-            self.status_bar = tk.Label(
-                self.root, textvariable=self.status_var, bd=1, relief=tk.SUNKEN, anchor=tk.W
-            )
-            self.status_bar.grid(row=2, column=0, sticky="ew")
 
         # Initialize preview
         self.update_preview()
@@ -249,6 +261,30 @@ class VJFolderStructureCreator:
         self.client_name_var.trace_add("write", lambda *args: self.update_preview())
         self.date_var.trace_add("write", lambda *args: self.update_preview())
         self.personal_var.trace_add("write", lambda *args: self.update_preview())
+
+    def _collect_focusable_widgets(self):
+        """Collect widgets for keyboard navigation."""
+        self._focusable_widgets = [
+            self.client_entry,
+            self.project_entry,
+            self.personal_check,
+            self.date_entry,
+            self.notes_text,
+        ]
+        self._create_btn = self.create_btn
+        self._browse_btn = self.browse_btn
+        self._notes_widget = self.notes_text
+        self._personal_checkbox = self.personal_check
+        self._personal_var = self.personal_var
+
+        # Add Enter binding for personal checkbox to toggle it
+        self.personal_check.bind("<Return>", lambda e: self._toggle_personal_checkbox())
+
+    def _toggle_personal_checkbox(self):
+        """Toggle personal checkbox when Enter is pressed."""
+        self.personal_var.set(not self.personal_var.get())
+        self.toggle_personal()
+        return "break"
 
     def toggle_personal(self):
         """Toggle the Personal checkbox to auto-fill client name."""
@@ -271,6 +307,7 @@ class VJFolderStructureCreator:
 
     def update_preview(self):
         """Update the preview of the folder structure to be created."""
+        self.preview_text.configure(state=tk.NORMAL)
         self.preview_text.delete(1.0, tk.END)
 
         # Get values
@@ -286,34 +323,31 @@ class VJFolderStructureCreator:
             folder_name = f"{date}_VJ_{project}"
 
         # Display preview
-        # If Personal project, show _Personal subfolder in preview
         if self.personal_var.get():
             preview_path = f"{base_dir}/_Personal/{folder_name}"
         else:
             preview_path = f"{base_dir}/{folder_name}"
-        self.preview_text.insert(tk.END, f"Project will be created at:\n{preview_path}\n\n")
 
-        # Software specs
-        self.preview_text.insert(tk.END, "Software Specifications:\n")
-        self.preview_text.insert(tk.END, f"  Resolume: {self.resolume_var.get()}\n")
-        self.preview_text.insert(tk.END, f"  After Effects: {self.ae_var.get()}\n")
-        if self.td_var.get():
-            self.preview_text.insert(tk.END, f"  TouchDesigner: {self.td_var.get()}\n")
-        self.preview_text.insert(tk.END, "\n")
+        self.preview_text.insert(tk.END, f"Path: {preview_path}\n\n")
 
-        # Folder structure preview
-        self.preview_text.insert(tk.END, "Folder structure:\n\n")
-        self.preview_text.insert(tk.END, f"{folder_name}/\n")
+        # Software specs from chips
+        active_software = get_active_software(self.software_chips)
+        if active_software:
+            software_str = "  |  ".join([f"{name}: {ver}" for name, ver in active_software.items()])
+            self.preview_text.insert(tk.END, f"{software_str}\n\n")
+        else:
+            self.preview_text.insert(tk.END, "No software selected\n\n")
 
-        # Build tree view of structure
-        for path in self.DEFAULT_STRUCTURE:
+        # Folder structure (abbreviated)
+        self.preview_text.insert(tk.END, "Structure:\n")
+        for path in self.DEFAULT_STRUCTURE[:8]:  # Show first 8
             depth = path.count('/')
             name = path.split('/')[-1]
-            indent = "    " * depth
+            indent = "  " * depth
             self.preview_text.insert(tk.END, f"{indent}{name}/\n")
+        self.preview_text.insert(tk.END, "  ...\n")
 
-        # Preview specs file
-        self.preview_text.insert(tk.END, "\n    project_specifications.txt\n")
+        self.preview_text.configure(state=tk.DISABLED)
 
     def create_structure(self):
         """Create the folder structure."""
@@ -342,7 +376,6 @@ class VJFolderStructureCreator:
         # If Personal project, add _Personal subfolder
         if self.personal_var.get():
             base_dir = os.path.join(base_dir, "_Personal")
-            # Create _Personal folder if it doesn't exist
             os.makedirs(base_dir, exist_ok=True)
 
         project_dir = os.path.join(base_dir, folder_name)
@@ -359,34 +392,24 @@ class VJFolderStructureCreator:
             # Create specifications file
             self.create_specs_file(project_dir, project_name, client_name, date)
 
-            # Register in database
-            if self.project_db:
-                try:
-                    project_data = {
-                        'client_name': client_name,
-                        'project_name': project_name,
-                        'project_type': 'Visual-VJ',
-                        'date_created': date,
-                        'path': project_dir,
-                        'base_directory': base_dir,
-                        'status': 'active',
-                        'notes': self.notes_text.get(1.0, tk.END).strip(),
-                        'metadata': {
-                            'subtype': 'VJ',
-                            'software_specs': {
-                                'resolume': self.resolume_var.get(),
-                                'after_effects': self.ae_var.get(),
-                                'touchdesigner': self.td_var.get()
-                            },
-                            'is_personal': self.personal_var.get()
-                        }
-                    }
-                    project_id = self.project_db.register_project(project_data)
-                    logger.info(f"Registered VJ project: {project_id}")
-                except Exception as e:
-                    logger.error(f"Failed to register project: {e}")
+            software_specs = get_active_software(self.software_chips)
+            project_data = {
+                'client_name': client_name,
+                'project_name': project_name,
+                'project_type': 'Visual-Live Video',
+                'date_created': date,
+                'path': project_dir,
+                'base_directory': base_dir,
+                'status': 'active',
+                'notes': self.notes_text.get(1.0, tk.END).strip(),
+                'metadata': {
+                    'subtype': 'VJ',
+                    'software_specs': software_specs,
+                    'is_personal': self.personal_var.get()
+                }
+            }
 
-            self.status_var.set(f"Created VJ project: {folder_name}")
+            self.status_var.set(f"Created Live Video project: {folder_name}")
 
             # Handle success based on mode
             if self.embedded and self.on_project_created:
@@ -417,20 +440,21 @@ class VJFolderStructureCreator:
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             notes = self.notes_text.get(1.0, tk.END).strip() or "No notes provided."
 
-            content = f"""VJ PROJECT SPECIFICATIONS
-=========================
+            software_specs = get_active_software(self.software_chips)
+            software_lines = "\n".join([f"{name}: {ver}" for name, ver in software_specs.items()]) or "None selected"
+
+            content = f"""LIVE VIDEO PROJECT SPECIFICATIONS
+==================================
 Generated: {timestamp}
 
 Project: {project_name}
 Client: {client_name}
 Date: {date}
-Type: VJ / Resolume
+Type: Live Video
 
 SOFTWARE VERSIONS
 =========================
-Resolume: {self.resolume_var.get()}
-After Effects: {self.ae_var.get()}
-TouchDesigner: {self.td_var.get() or 'N/A'}
+{software_lines}
 
 NOTES
 =========================

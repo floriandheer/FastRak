@@ -18,16 +18,16 @@ CREATOR_REGISTRY: Dict[str, Dict[str, Dict[str, Any]]] = {
             "display_name": "Graphic Design",
             "icon": "GD",
         },
-        "VFX": {
-            "module": "PipelineScript_Visual_FolderStructure_VFX",
+        "FX": {
+            "module": "PipelineScript_Visual_FolderStructure_FX",
             "class": "FolderStructureCreator",
-            "display_name": "VFX / CG",
-            "icon": "VFX",
+            "display_name": "Visual Effects",
+            "icon": "FX",
         },
         "VJ": {
             "module": "PipelineScript_Visual_FolderStructure_VJ",
             "class": "VJFolderStructureCreator",
-            "display_name": "VJ / Resolume",
+            "display_name": "Live Video",
             "icon": "VJ",
         },
     },
@@ -82,8 +82,8 @@ CREATOR_REGISTRY: Dict[str, Dict[str, Dict[str, Any]]] = {
 # Human-readable display names for subtypes (used in buttons)
 SUBTYPE_DISPLAY_NAMES: Dict[str, str] = {
     "GD": "Graphic Design",
-    "VFX": "VFX / CG",
-    "VJ": "VJ / Resolume",
+    "FX": "Visual Effects",
+    "VJ": "Live Video",
     "Godot": "Godot",
     "TD": "TouchDesigner",
     "Audio": "Audio",

@@ -31,7 +31,8 @@ class AutocompleteComboEntry(tk.Frame):
     """
 
     def __init__(self, parent, db: 'ProjectDatabase', exclude_personal: bool = False,
-                 textvariable: tk.StringVar = None, width: int = 20, **kwargs):
+                 category: str = None, textvariable: tk.StringVar = None,
+                 width: int = 20, **kwargs):
         """
         Initialize autocomplete entry with dropdown arrow.
 
@@ -39,6 +40,7 @@ class AutocompleteComboEntry(tk.Frame):
             parent: Parent widget
             db: ProjectDatabase instance
             exclude_personal: If True, exclude "Personal" from suggestions
+            category: If set, only show clients with projects in this category
             textvariable: StringVar to bind to entry
             width: Entry width in characters
             **kwargs: Additional arguments passed to Frame
@@ -47,6 +49,7 @@ class AutocompleteComboEntry(tk.Frame):
 
         self.db = db
         self.exclude_personal = exclude_personal
+        self.category = category
         self.textvariable = textvariable or tk.StringVar()
 
         # Create entry and arrow button side by side
@@ -97,7 +100,10 @@ class AutocompleteComboEntry(tk.Frame):
     def _load_clients(self):
         """Load client names from database."""
         try:
-            clients = self.db.get_all_clients(exclude_personal=self.exclude_personal)
+            if self.category:
+                clients = self.db.get_clients_for_category(self.category, exclude_personal=self.exclude_personal)
+            else:
+                clients = self.db.get_all_clients(exclude_personal=self.exclude_personal)
             self.all_clients = [c["name"] for c in clients]
             logger.debug(f"Loaded {len(self.all_clients)} clients for autocomplete")
         except Exception as e:

@@ -1,9 +1,21 @@
+"""
+Physical (3D Printing) Project Folder Structure Creator
+
+Creates standardized folder structure for 3D printing projects.
+
+Keyboard Navigation:
+- Tab/Enter: Move to next field
+- Shift+Tab: Move to previous field
+- Ctrl+Enter: Create project (from anywhere)
+- Escape: Close form
+- P: Toggle Personal checkbox (when not typing)
+"""
+
 import os
 import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from datetime import datetime
-import shutil
 import re
 from pathlib import Path
 
@@ -11,269 +23,248 @@ from pathlib import Path
 MODULES_DIR = Path(__file__).parent
 sys.path.insert(0, str(MODULES_DIR))
 
-from shared_path_config import get_path_config
+from rak_settings import get_rak_settings
+from shared_autocomplete_widget import AutocompleteEntry
+from shared_form_keyboard import (
+    FormKeyboardMixin, FORM_COLORS,
+    create_styled_entry, create_styled_text, create_styled_button,
+    create_styled_label, create_styled_checkbox, create_styled_frame,
+    create_styled_labelframe, create_styled_combobox, format_button_with_shortcut,
+    create_software_chip_row, get_active_software
+)
 
-class FolderStructureCreator:
-    def __init__(self, root_or_frame, embedded=False, on_project_created=None, on_cancel=None):
-        """
-        Initialize the Folder Structure Creator.
 
-        Args:
-            root_or_frame: Either a Tk root window (standalone) or a Frame (embedded)
-            embedded: If True, build UI into provided frame without window configuration
-            on_project_created: Callback function called with project_data when project is created
-            on_cancel: Callback function called when user cancels
-        """
+class PhysicalFolderStructureCreator(FormKeyboardMixin):
+    """Creates folder structure for 3D printing projects with keyboard-first navigation."""
+
+    def __init__(self, root_or_frame, embedded=False, on_project_created=None, on_cancel=None, project_db=None):
+        """Initialize the Physical Folder Structure Creator."""
         self.embedded = embedded
         self.on_project_created = on_project_created
         self.on_cancel = on_cancel
+        self._in_text_field = False
+        self.project_db = project_db
 
         if embedded:
-            # Embedded mode: root_or_frame is the parent frame
             self.root = root_or_frame.winfo_toplevel()
             self.parent = root_or_frame
         else:
-            # Standalone mode: root_or_frame is the Tk root
             self.root = root_or_frame
             self.parent = root_or_frame
             self.root.title("3D Printing Folder Structure")
-            self.root.geometry("750x850")
-            self.root.minsize(700, 900)
+            self.root.geometry("900x550")
+            self.root.minsize(800, 450)
 
         # Initialize path config
-        self.path_config = get_path_config()
+        self.settings = get_rak_settings()
 
-        if not embedded:
-            # Configure main window (standalone only)
-            self.root.columnconfigure(0, weight=1)
-            self.root.rowconfigure(1, weight=1)
+        self._build_form()
+        self._collect_focusable_widgets()
+        self._setup_keyboard_navigation()
+        self._setup_project_type_shortcuts()
 
-            # Create header (standalone only)
-            header_frame = tk.Frame(self.root, bg="#2c3e50", height=60)
-            header_frame.grid(row=0, column=0, sticky="ew", padx=0, pady=0)
-            header_frame.grid_propagate(False)
-
-            # Add title to header
-            title_label = tk.Label(header_frame, text="3D Printing Folder Structure",
-                                  font=("Arial", 16, "bold"), fg="white", bg="#2c3e50")
-            title_label.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
-
-        # Create main frame with preview only
-        if embedded:
-            main_frame = ttk.Frame(self.parent)
-            main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+    def _build_form(self):
+        """Build the keyboard-optimized form layout."""
+        if self.embedded:
+            self.parent.configure(bg=FORM_COLORS["bg"])
         else:
-            main_frame = ttk.Frame(self.root)
-            main_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
+            self.root.configure(bg=FORM_COLORS["bg"])
+            self.root.columnconfigure(0, weight=1)
+            self.root.rowconfigure(0, weight=1)
+
+        if self.embedded:
+            main_frame = create_styled_frame(self.parent)
+            main_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
+        else:
+            main_frame = create_styled_frame(self.root)
+            main_frame.grid(row=0, column=0, sticky="nsew", padx=15, pady=15)
+
         main_frame.columnconfigure(0, weight=1)
-        main_frame.columnconfigure(1, weight=2)  # Give more weight to preview
-        main_frame.rowconfigure(0, weight=1)
-        
-        # Create form panel (left side)
-        form_frame = ttk.LabelFrame(main_frame, text="Project Settings")
-        form_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
-        form_frame.columnconfigure(1, weight=1)
+        main_frame.rowconfigure(3, weight=1)  # Notes/Preview row expands
 
-        # Base directory (from path config)
-        ttk.Label(form_frame, text="Base Directory:").grid(row=0, column=0, sticky="w", padx=10, pady=10)
-        default_base = self.path_config.get_work_path("Physical").replace('\\', '/')
-        self.base_dir_var = tk.StringVar(value=default_base)
-        base_dir_entry = ttk.Entry(form_frame, textvariable=self.base_dir_var, width=40)
-        base_dir_entry.grid(row=0, column=1, sticky="ew", padx=5, pady=10)
-        ttk.Button(form_frame, text="Browse", command=self.browse_base_dir).grid(row=0, column=2, padx=5, pady=10)
-        
-        # Name Client (formerly Client Name)
-        ttk.Label(form_frame, text="Name Client:").grid(row=1, column=0, sticky="w", padx=10, pady=(10, 2))
+        # ==================== ROW 1: Client and Project ====================
+        row1 = create_styled_frame(main_frame)
+        row1.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        row1.columnconfigure(1, weight=1)
+        row1.columnconfigure(3, weight=1)
+
+        create_styled_label(row1, "Client:").grid(row=0, column=0, sticky="e", padx=(0, 5))
         self.client_name_var = tk.StringVar()
-        ttk.Entry(form_frame, textvariable=self.client_name_var, width=40).grid(row=1, column=1, columnspan=2, sticky="ew", padx=5, pady=(10, 2))
-        
-        # Project type checkboxes (Personal, Product, Project)
-        project_type_frame = ttk.Frame(form_frame)
-        project_type_frame.grid(row=2, column=0, columnspan=3, sticky="w", padx=5, pady=(0, 10))
+        if self.project_db:
+            self.client_entry = AutocompleteEntry(
+                row1, db=self.project_db, category="Physical",
+                textvariable=self.client_name_var, width=25,
+                bg=FORM_COLORS["bg"]
+            )
+        else:
+            self.client_entry = create_styled_entry(row1, textvariable=self.client_name_var, width=25)
+        self.client_entry.grid(row=0, column=1, sticky="ew", padx=(0, 20))
 
-        # Personal checkbox
-        ttk.Label(project_type_frame, text="Project Type:").grid(row=0, column=0, sticky="w", padx=10, pady=(0, 10))
+        create_styled_label(row1, "Project:").grid(row=0, column=2, sticky="e", padx=(0, 5))
+        self.project_name_var = tk.StringVar()
+        self.project_entry = create_styled_entry(row1, textvariable=self.project_name_var, width=25)
+        self.project_entry.grid(row=0, column=3, sticky="ew")
+
+        # ==================== ROW 2: Project Type, Date, Structure Options ====================
+        row2 = create_styled_frame(main_frame)
+        row2.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+
+        # Project type checkboxes
+        type_frame = create_styled_frame(row2)
+        type_frame.pack(side=tk.LEFT, padx=(0, 20))
 
         self.personal_var = tk.BooleanVar(value=False)
-        personal_check = ttk.Checkbutton(project_type_frame, text="Personal", variable=self.personal_var,
-                                       command=lambda: self.toggle_project_type('personal'))
-        personal_check.grid(row=0, column=1, sticky="w", padx=5, pady=(0, 10))
+        self.personal_check = create_styled_checkbox(
+            type_frame, text="Personal (P)", variable=self.personal_var,
+            command=lambda: self.toggle_project_type('personal')
+        )
+        self.personal_check.pack(side=tk.LEFT, padx=(0, 10))
 
-        # Product checkbox
         self.product_var = tk.BooleanVar(value=False)
-        product_check = ttk.Checkbutton(project_type_frame, text="Product", variable=self.product_var,
-                                      command=lambda: self.toggle_project_type('product'))
-        product_check.grid(row=0, column=2, sticky="w", padx=20, pady=(0, 10))
+        self.product_check = create_styled_checkbox(
+            type_frame, text="Product (O)", variable=self.product_var,
+            command=lambda: self.toggle_project_type('product')
+        )
+        self.product_check.pack(side=tk.LEFT, padx=(0, 10))
 
-        # Project checkbox
         self.project_var = tk.BooleanVar(value=False)
-        project_check = ttk.Checkbutton(project_type_frame, text="Project", variable=self.project_var,
-                                       command=lambda: self.toggle_project_type('project'))
-        project_check.grid(row=0, column=3, sticky="w", padx=20, pady=(0, 10))
-        
-        # Name Project (formerly Project Name)
-        ttk.Label(form_frame, text="Name Project:").grid(row=3, column=0, sticky="w", padx=10, pady=10)
-        self.project_name_var = tk.StringVar()
-        ttk.Entry(form_frame, textvariable=self.project_name_var, width=40).grid(row=3, column=1, columnspan=2, sticky="ew", padx=5, pady=10)
-        
-        # Project date
-        ttk.Label(form_frame, text="Date:").grid(row=4, column=0, sticky="w", padx=10, pady=10)
+        self.project_check = create_styled_checkbox(
+            type_frame, text="Project (J)", variable=self.project_var,
+            command=lambda: self.toggle_project_type('project')
+        )
+        self.project_check.pack(side=tk.LEFT)
+
+        # Date
+        date_frame = create_styled_frame(row2)
+        date_frame.pack(side=tk.LEFT, padx=(0, 20))
+        create_styled_label(date_frame, "Date:").pack(side=tk.LEFT, padx=(0, 5))
         self.date_var = tk.StringVar(value=datetime.now().strftime('%Y-%m-%d'))
-        date_entry = ttk.Entry(form_frame, textvariable=self.date_var, width=40)
-        date_entry.grid(row=4, column=1, columnspan=2, sticky="ew", padx=5, pady=10)
-        
-        # Production Tools section
-        production_frame = ttk.LabelFrame(form_frame, text="Production Tools")
-        production_frame.grid(row=5, column=0, columnspan=3, sticky="ew", padx=5, pady=10)
-        production_frame.columnconfigure(2, weight=1)
-        
-        # Houdini version with checkbox
-        self.use_houdini_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(production_frame, variable=self.use_houdini_var, 
-                       command=self.toggle_software_fields).grid(row=0, column=0, sticky="w", padx=5, pady=5)
-        
-        ttk.Label(production_frame, text="Houdini:").grid(row=0, column=1, sticky="w", padx=5, pady=5)
-        self.houdini_var = tk.StringVar(value="20.5")
-        self.houdini_entry = ttk.Entry(production_frame, textvariable=self.houdini_var, width=15)
-        self.houdini_entry.grid(row=0, column=2, sticky="w", padx=5, pady=5)
-        
-        # Blender version with checkbox
-        self.use_blender_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(production_frame, variable=self.use_blender_var, 
-                       command=self.toggle_software_fields).grid(row=1, column=0, sticky="w", padx=5, pady=5)
-        
-        ttk.Label(production_frame, text="Blender:").grid(row=1, column=1, sticky="w", padx=5, pady=5)
-        self.blender_var = tk.StringVar(value="4.4")
-        self.blender_entry = ttk.Entry(production_frame, textvariable=self.blender_var, width=15)
-        self.blender_entry.grid(row=1, column=2, sticky="w", padx=5, pady=5)
-        
-        # FreeCAD version with checkbox
-        self.use_freecad_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(production_frame, variable=self.use_freecad_var, 
-                       command=self.toggle_software_fields).grid(row=2, column=0, sticky="w", padx=5, pady=5)
-        
-        ttk.Label(production_frame, text="FreeCAD:").grid(row=2, column=1, sticky="w", padx=5, pady=5)
-        self.freecad_var = tk.StringVar(value="0.21")
-        self.freecad_entry = ttk.Entry(production_frame, textvariable=self.freecad_var, width=15)
-        self.freecad_entry.grid(row=2, column=2, sticky="w", padx=5, pady=5)
-        
-        # Alibre version with checkbox
-        self.use_alibre_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(production_frame, variable=self.use_alibre_var, 
-                       command=self.toggle_software_fields).grid(row=3, column=0, sticky="w", padx=5, pady=5)
-        
-        ttk.Label(production_frame, text="Alibre:").grid(row=3, column=1, sticky="w", padx=5, pady=5)
-        self.alibre_var = tk.StringVar(value="2024")
-        self.alibre_entry = ttk.Entry(production_frame, textvariable=self.alibre_var, width=15)
-        self.alibre_entry.grid(row=3, column=2, sticky="w", padx=5, pady=5)
-        
-        # Affinity version with checkbox
-        self.use_affinity_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(production_frame, variable=self.use_affinity_var, 
-                       command=self.toggle_software_fields).grid(row=4, column=0, sticky="w", padx=5, pady=5)
-        
-        ttk.Label(production_frame, text="Affinity:").grid(row=4, column=1, sticky="w", padx=5, pady=5)
-        self.affinity_var = tk.StringVar(value="2.0")
-        self.affinity_entry = ttk.Entry(production_frame, textvariable=self.affinity_var, width=15)
-        self.affinity_entry.grid(row=4, column=2, sticky="w", padx=5, pady=5)
-        
-        # Hardware specifications
-        hardware_frame = ttk.LabelFrame(form_frame, text="Hardware Specifications")
-        hardware_frame.grid(row=6, column=0, columnspan=3, sticky="ew", padx=5, pady=10)
-        hardware_frame.columnconfigure(2, weight=1)
-        
-        # Slicer dropdown
-        ttk.Label(hardware_frame, text="Slicer:").grid(row=0, column=0, sticky="w", padx=5, pady=5)
-        self.slicer_var = tk.StringVar(value="Bambu Studio")
-        slicer_combo = ttk.Combobox(hardware_frame, textvariable=self.slicer_var, width=20, state="readonly")
-        slicer_combo['values'] = ('Bambu Studio', 'PrusaSlicer', 'Cura', 'Simplify3D', 'Creality Slicer', 'Other')
-        slicer_combo.grid(row=0, column=1, sticky="w", padx=5, pady=5)
-        
-        # 3D Printer dropdown
-        ttk.Label(hardware_frame, text="3D Printer:").grid(row=1, column=0, sticky="w", padx=5, pady=5)
-        self.printer_var = tk.StringVar(value="Bambu Lab X1 Carbon")
-        printer_combo = ttk.Combobox(hardware_frame, textvariable=self.printer_var, width=20, state="readonly")
-        printer_combo['values'] = ('Bambu Lab X1 Carbon', 'Bambu Lab P1S', 'Bambu Lab X1', 'Prusa MK3S+', 'Creality Ender 3', 'Other')
-        printer_combo.grid(row=1, column=1, sticky="w", padx=5, pady=5)
-        
-        # Project Structure Options
-        structure_frame = ttk.LabelFrame(form_frame, text="Project Structure Options")
-        structure_frame.grid(row=7, column=0, columnspan=3, sticky="ew", padx=5, pady=10)
-        
-        # Preproduction folder checkbox
+        self.date_entry = create_styled_entry(date_frame, textvariable=self.date_var, width=12)
+        self.date_entry.pack(side=tk.LEFT)
+
+        # Structure options (inline)
         self.include_preproduction_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(structure_frame, text="Include Preproduction folder", 
-                       variable=self.include_preproduction_var,
-                       command=self.update_preview).grid(row=0, column=0, sticky="w", padx=5, pady=5)
-        
-        # Library folder checkbox
+        create_styled_checkbox(row2, text="Preproduction",
+                              variable=self.include_preproduction_var,
+                              command=self.update_preview).pack(side=tk.LEFT, padx=(0, 10))
+
         self.include_library_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(structure_frame, text="Include _LIBRARY folder", 
-                       variable=self.include_library_var,
-                       command=self.update_preview).grid(row=1, column=0, sticky="w", padx=5, pady=5)
-        
-        # Notes section
-        notes_frame = ttk.LabelFrame(form_frame, text="Project Notes")
-        notes_frame.grid(row=8, column=0, columnspan=3, sticky="nsew", padx=5, pady=10)
+        create_styled_checkbox(row2, text="_LIBRARY",
+                              variable=self.include_library_var,
+                              command=self.update_preview).pack(side=tk.LEFT)
+
+        # Base directory
+        default_base = self.settings.get_work_path("Physical").replace('\\', '/')
+        self.base_dir_var = tk.StringVar(value=default_base)
+
+        # ==================== ROW 3: Software & Hardware ====================
+        row3 = create_styled_frame(main_frame)
+        row3.grid(row=2, column=0, sticky="ew", pady=(0, 10))
+        row3.columnconfigure(0, weight=1)
+        row3.columnconfigure(1, weight=1)
+
+        # Production Tools (left) - using software chips
+        tools_frame = create_styled_labelframe(row3, text="Software (click to toggle)")
+        tools_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+
+        # Get software defaults from config
+        sw_defaults = self.settings.get_software_defaults("Physical")
+
+        # Create software chips row
+        self.software_chip_frame, self.software_chips = create_software_chip_row(
+            tools_frame,
+            ["Houdini", "Blender", "FreeCAD", "Alibre", "Affinity"],
+            defaults={
+                "Houdini": sw_defaults.get("houdini", "20.5"),
+                "Blender": sw_defaults.get("blender", "4.4"),
+                "FreeCAD": sw_defaults.get("freecad", ""),
+                "Alibre": sw_defaults.get("alibre", ""),
+                "Affinity": sw_defaults.get("affinity", ""),
+            },
+            on_change=lambda *args: self.update_preview()
+        )
+        self.software_chip_frame.pack(fill=tk.X, padx=10, pady=8)
+
+        # Hardware (right)
+        hw_frame = create_styled_labelframe(row3, text="Hardware")
+        hw_frame.grid(row=0, column=1, sticky="nsew")
+
+        hw_inner = create_styled_frame(hw_frame)
+        hw_inner.pack(fill=tk.X, padx=10, pady=5)
+
+        hw_row1 = create_styled_frame(hw_inner)
+        hw_row1.pack(fill=tk.X, pady=2)
+        create_styled_label(hw_row1, "Slicer:").pack(side=tk.LEFT)
+        self.slicer_var = tk.StringVar(value=sw_defaults.get("slicer", "Bambu Studio"))
+        self.slicer_combo = create_styled_combobox(
+            hw_row1, textvariable=self.slicer_var, width=18,
+            values=['Bambu Studio', 'PrusaSlicer', 'Cura', 'Simplify3D', 'Creality Slicer', 'Other']
+        )
+        self.slicer_combo.pack(side=tk.LEFT, padx=(5, 0))
+
+        hw_row2 = create_styled_frame(hw_inner)
+        hw_row2.pack(fill=tk.X, pady=2)
+        create_styled_label(hw_row2, "Printer:").pack(side=tk.LEFT)
+        self.printer_var = tk.StringVar(value=sw_defaults.get("printer", "Bambu Lab X1 Carbon"))
+        self.printer_combo = create_styled_combobox(
+            hw_row2, textvariable=self.printer_var, width=18,
+            values=['Bambu Lab X1 Carbon', 'Bambu Lab P1S', 'Bambu Lab X1', 'Prusa MK3S+', 'Creality Ender 3', 'Other']
+        )
+        self.printer_combo.pack(side=tk.LEFT, padx=(5, 0))
+
+        # ==================== ROW 4: Notes and Preview ====================
+        row4 = create_styled_frame(main_frame)
+        row4.grid(row=3, column=0, sticky="nsew", pady=(0, 10))
+        row4.columnconfigure(0, weight=1)
+        row4.columnconfigure(1, weight=2)
+        row4.rowconfigure(0, weight=1)
+
+        # Notes (left)
+        notes_frame = create_styled_labelframe(row4, text="Notes (optional)")
+        notes_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
         notes_frame.columnconfigure(0, weight=1)
         notes_frame.rowconfigure(0, weight=1)
-        
-        # Notes text area with scrollbar
-        self.notes_scrollbar = ttk.Scrollbar(notes_frame)
-        self.notes_scrollbar.grid(row=0, column=1, sticky="ns", padx=(0, 5), pady=5)
-        
-        self.notes_text = tk.Text(notes_frame, wrap=tk.WORD, height=5,
-                                yscrollcommand=self.notes_scrollbar.set)
-        self.notes_text.grid(row=0, column=0, sticky="nsew", padx=(5, 0), pady=5)
-        self.notes_scrollbar.config(command=self.notes_text.yview)
-        
-        # Button frame for Create and Cancel buttons
-        button_frame = ttk.Frame(form_frame)
-        button_frame.grid(row=9, column=0, columnspan=3, pady=20)
 
-        # Create button with padding to make it larger
-        create_btn = ttk.Button(button_frame, text="Create Project Structure",
-                               command=self.create_structure, padding=(20, 10))
-        create_btn.pack(side=tk.LEFT, padx=5)
+        self.notes_text = create_styled_text(notes_frame, height=6)
+        self.notes_text.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        self.notes_text.bind("<FocusIn>", lambda e: setattr(self, '_in_text_field', True))
+        self.notes_text.bind("<FocusOut>", lambda e: setattr(self, '_in_text_field', False))
 
-        # Cancel button (shown in embedded mode)
-        if self.embedded:
-            cancel_btn = ttk.Button(button_frame, text="Cancel",
-                                   command=self._handle_cancel, padding=(20, 10))
-            cancel_btn.pack(side=tk.LEFT, padx=5)
-        
-        # Create preview panel (right side)
-        preview_frame = ttk.LabelFrame(main_frame, text="Structure Preview")
-        preview_frame.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
-        preview_frame.rowconfigure(0, weight=1)
+        # Preview (right)
+        preview_frame = create_styled_labelframe(row4, text="Preview")
+        preview_frame.grid(row=0, column=1, sticky="nsew")
         preview_frame.columnconfigure(0, weight=1)
-        
-        # Preview text widget with scrollbar
-        self.preview_scrollbar = ttk.Scrollbar(preview_frame)
-        self.preview_scrollbar.grid(row=0, column=1, sticky="ns")
-        
-        self.preview_text = tk.Text(preview_frame, wrap=tk.WORD, 
-                                  yscrollcommand=self.preview_scrollbar.set)
+        preview_frame.rowconfigure(0, weight=1)
+
+        self.preview_text = tk.Text(
+            preview_frame, bg=FORM_COLORS["bg_input"], fg=FORM_COLORS["text_dim"],
+            font=("Consolas", 9), wrap=tk.WORD, state=tk.DISABLED,
+            highlightthickness=0, relief=tk.FLAT
+        )
         self.preview_text.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
-        self.preview_scrollbar.config(command=self.preview_text.yview)
-        
-        # Status bar (only in standalone mode)
+
+        # ==================== ROW 5: Action buttons ====================
+        row5 = create_styled_frame(main_frame)
+        row5.grid(row=4, column=0, sticky="e", pady=(10, 0))
+
+        self.browse_btn = create_styled_button(row5, text="Browse...", command=self.browse_base_dir)
+        self.browse_btn.pack(side=tk.LEFT, padx=(0, 10))
+
+        self.create_btn = create_styled_button(
+            row5, text=format_button_with_shortcut("Create Project", "create"),
+            command=self.create_structure, primary=True
+        )
+        self.create_btn.pack(side=tk.LEFT)
+
         self.status_var = tk.StringVar()
         self.status_var.set("Ready")
-        if not self.embedded:
-            self.status_bar = tk.Label(self.root, textvariable=self.status_var, bd=1,
-                                      relief=tk.SUNKEN, anchor=tk.W)
-            self.status_bar.grid(row=2, column=0, sticky="ew")
-        
-        # Define template path as constant (hidden from UI)
-        self.template_dir_var = tk.StringVar(value='P:\_Structure\YYYY-MM-DD_Physical3DPrint_NameClient_NameProject')
-        
-        # Initialize field states
-        self.toggle_software_fields()
-        
+
+        # Template path (hidden)
+        self.template_dir_var = tk.StringVar(value='P:\\_Structure\\YYYY-MM-DD_Physical3DPrint_NameClient_NameProject')
+
         # Initialize preview
         self.update_preview()
-        
+
         # Set up event bindings for live preview updates
         self.client_name_var.trace_add("write", lambda *args: self.update_preview())
         self.project_name_var.trace_add("write", lambda *args: self.update_preview())
@@ -282,34 +273,78 @@ class FolderStructureCreator:
         self.product_var.trace_add("write", lambda *args: self.update_preview())
         self.project_var.trace_add("write", lambda *args: self.update_preview())
         self.base_dir_var.trace_add("write", lambda *args: self.update_preview())
-        self.houdini_var.trace_add("write", lambda *args: self.update_preview())
-        self.blender_var.trace_add("write", lambda *args: self.update_preview())
-        self.alibre_var.trace_add("write", lambda *args: self.update_preview())
-        self.affinity_var.trace_add("write", lambda *args: self.update_preview())
-        self.use_houdini_var.trace_add("write", lambda *args: self.update_preview())
-        self.use_blender_var.trace_add("write", lambda *args: self.update_preview())
-        self.use_alibre_var.trace_add("write", lambda *args: self.update_preview())
-        self.use_affinity_var.trace_add("write", lambda *args: self.update_preview())
         self.slicer_var.trace_add("write", lambda *args: self.update_preview())
         self.printer_var.trace_add("write", lambda *args: self.update_preview())
         self.include_preproduction_var.trace_add("write", lambda *args: self.update_preview())
         self.include_library_var.trace_add("write", lambda *args: self.update_preview())
-    
+
+    def _collect_focusable_widgets(self):
+        """Collect widgets for keyboard navigation."""
+        self._focusable_widgets = [
+            self.client_entry, self.project_entry, self.personal_check,
+            self.date_entry, self.notes_text,
+        ]
+        self._create_btn = self.create_btn
+        self._browse_btn = self.browse_btn
+        self._notes_widget = self.notes_text
+        self._personal_checkbox = self.personal_check
+        self._personal_var = self.personal_var
+
+        # Add Enter binding for checkboxes to toggle them
+        self.personal_check.bind("<Return>", lambda e: self._toggle_checkbox(self.personal_var, 'personal'))
+        self.product_check.bind("<Return>", lambda e: self._toggle_checkbox(self.product_var, 'product'))
+        self.project_check.bind("<Return>", lambda e: self._toggle_checkbox(self.project_var, 'project'))
+
+    def _toggle_checkbox(self, var, toggle_type=None):
+        """Toggle a checkbox when Enter is pressed on it."""
+        if toggle_type:
+            self.toggle_project_type(toggle_type)
+        else:
+            var.set(not var.get())
+        return "break"
+
+    def _setup_project_type_shortcuts(self):
+        """Set up additional shortcuts for project types."""
+        root = self.parent.winfo_toplevel()
+        # O for prOduct
+        root.bind("<o>", self._on_o_key)
+        root.bind("<O>", self._on_o_key)
+        # J for proJect
+        root.bind("<j>", self._on_j_key)
+        root.bind("<J>", self._on_j_key)
+
+    def _on_o_key(self, event):
+        """Handle O key to toggle Product checkbox."""
+        if hasattr(self, '_in_text_field') and self._in_text_field:
+            return
+        self.toggle_project_type('product')
+        return "break"
+
+    def _on_j_key(self, event):
+        """Handle J key to toggle Project checkbox."""
+        if hasattr(self, '_in_text_field') and self._in_text_field:
+            return
+        self.toggle_project_type('project')
+        return "break"
+
     def toggle_project_type(self, clicked_type):
-        """Toggle project type checkboxes and update related fields"""
+        """Toggle project type checkboxes and update related fields."""
         # Ensure only one project type is selected at a time
         if clicked_type == 'personal':
-            if self.personal_var.get():
-                self.product_var.set(False)
-                self.project_var.set(False)
+            if not self.personal_var.get():
+                self.personal_var.set(True)
+            self.product_var.set(False)
+            self.project_var.set(False)
         elif clicked_type == 'product':
-            if self.product_var.get():
-                self.personal_var.set(False)
-                self.project_var.set(False)
+            if not self.product_var.get():
+                self.product_var.set(True)
+            self.personal_var.set(False)
+            self.project_var.set(False)
         elif clicked_type == 'project':
-            if self.project_var.get():
-                self.personal_var.set(False)
-                self.product_var.set(False)
+            if not self.project_var.get():
+                self.project_var.set(True)
+            self.personal_var.set(False)
+            self.product_var.set(False)
 
         # Save current values if switching to a special project type
         if (self.personal_var.get() or self.product_var.get() or self.project_var.get()) and not hasattr(self, 'client_name_backup'):
@@ -324,151 +359,73 @@ class FolderStructureCreator:
             self.client_name_var.set("alles3d")
             self.base_dir_var.set("I:/Physical/Product")
         elif self.project_var.get():
-            # Only set base directory, let user enter client name
             self.base_dir_var.set("I:/Physical/Project")
-            # Restore client name if previously saved
             if hasattr(self, 'client_name_backup'):
                 self.client_name_var.set(self.client_name_backup)
         else:
-            # Restore previous values if they exist
             if hasattr(self, 'client_name_backup'):
                 self.client_name_var.set(self.client_name_backup)
             else:
                 self.client_name_var.set("")
-
             if hasattr(self, 'base_dir_backup'):
                 self.base_dir_var.set(self.base_dir_backup)
             else:
                 self.base_dir_var.set("I:/Physical")
 
-        # Update preview
         self.update_preview()
-    
-    def toggle_software_fields(self):
-        """Enable/disable software version fields based on checkbox states"""
-        # Houdini
-        if self.use_houdini_var.get():
-            self.houdini_entry.configure(state="normal")
-        else:
-            self.houdini_entry.configure(state="disabled")
-        
-        # Blender
-        if self.use_blender_var.get():
-            self.blender_entry.configure(state="normal")
-        else:
-            self.blender_entry.configure(state="disabled")
-            
-        # FreeCAD
-        if self.use_freecad_var.get():
-            self.freecad_entry.configure(state="normal")
-        else:
-            self.freecad_entry.configure(state="disabled")
-            
-        # Alibre
-        if self.use_alibre_var.get():
-            self.alibre_entry.configure(state="normal")
-        else:
-            self.alibre_entry.configure(state="disabled")
-            
-        # Affinity
-        if self.use_affinity_var.get():
-            self.affinity_entry.configure(state="normal")
-        else:
-            self.affinity_entry.configure(state="disabled")
-        
-        # Update preview
-        self.update_preview()
-    
+
     def browse_base_dir(self):
-        """Open dialog to browse for base directory"""
+        """Open dialog to browse for base directory."""
         directory = filedialog.askdirectory()
         if directory:
             self.base_dir_var.set(directory)
             self.update_preview()
-    
-    def get_template_structure(self, template_dir):
-        """Get directory structure from template folder"""
-        if not os.path.isdir(template_dir):
-            return None
-        
-        # Create a list to store the relative paths
-        structure = []
-        
-        # Walk through the template directory
-        for root, dirs, files in os.walk(template_dir):
-            # Get the relative path
-            rel_path = os.path.relpath(root, template_dir)
-            if rel_path != '.':  # Skip the root directory
-                structure.append(rel_path)
-                
-            # Add files with their relative paths
-            for file in files:
-                file_path = os.path.join(rel_path, file)
-                if file_path != '.':
-                    structure.append(file_path)
-        
-        return sorted(structure)
-    
-    def get_folder_structure_preview(self):
-        """Generate the folder structure that will be created"""
-        folders = []
 
-        # Track numbered folders in the correct order
+    def get_folder_structure_preview(self):
+        """Generate the folder structure that will be created."""
+        folders = []
         numbered_folders = []
 
-        # Incoming folder (always first - starts at 00)
         numbered_folders.append("Incoming")
-
-        # Optional preproduction folder (comes after Incoming)
         if self.include_preproduction_var.get():
             numbered_folders.append("Preproduction")
-
-        # Production folder (always included)
         numbered_folders.append("Production")
-
-        # Outgoing folder (always included)
         numbered_folders.append("Outgoing")
 
-        # Apply numbering to main folders starting at 00
         counter = 0
-        folder_mapping = {}  # Map from unnumbered to numbered names
+        folder_mapping = {}
         for folder_name in numbered_folders:
             numbered_name = f"{counter:02d}_{folder_name}"
             folder_mapping[folder_name] = numbered_name
             folders.append(numbered_name)
             counter += 1
 
-        # Software-specific folders in Production organized by 3D and 2D
         production_folder = folder_mapping.get("Production", "Production")
 
-        # 3D tools
-        if self.use_houdini_var.get():
-            folders.append(f"{production_folder}/3D/Houdini")
-        if self.use_blender_var.get():
-            folders.append(f"{production_folder}/3D/Blender")
-        if self.use_freecad_var.get():
-            folders.append(f"{production_folder}/3D/FreeCAD")
-        if self.use_alibre_var.get():
-            folders.append(f"{production_folder}/3D/Alibre")
+        # Get active software from chips
+        active_software = get_active_software(self.software_chips)
 
-        # 2D tools
-        if self.use_affinity_var.get():
+        if "Houdini" in active_software:
+            folders.append(f"{production_folder}/3D/Houdini")
+        if "Blender" in active_software:
+            folders.append(f"{production_folder}/3D/Blender")
+        if "FreeCAD" in active_software:
+            folders.append(f"{production_folder}/3D/FreeCAD")
+        if "Alibre" in active_software:
+            folders.append(f"{production_folder}/3D/Alibre")
+        if "Affinity" in active_software:
             folders.append(f"{production_folder}/2D/Affinity")
 
-        # Documentation folder in Production
         folders.append(f"{production_folder}/Documentation")
         folders.append(f"{production_folder}/Documentation/Photo")
         folders.append(f"{production_folder}/Documentation/Photo/RAW")
         folders.append(f"{production_folder}/Documentation/Video")
         folders.append(f"{production_folder}/Documentation/Video/Footage")
 
-        # Outgoing subfolders - date folder only
         outgoing_folder = folder_mapping.get("Outgoing", "Outgoing")
-        # Get date for date-named folder
         date = self.date_var.get() or datetime.now().strftime('%Y-%m-%d')
         folders.append(f"{outgoing_folder}/{date}")
 
-        # Optional library folder (not numbered, underscore prefix)
         if self.include_library_var.get():
             folders.append("_LIBRARY")
             folders.append("_LIBRARY/Documents")
@@ -477,72 +434,35 @@ class FolderStructureCreator:
             folders.append("_LIBRARY/Pipeline/Scripts")
 
         return sorted(folders)
-    
+
     def update_preview(self):
-        """Update the preview of the folder structure to be created"""
+        """Update the preview of the folder structure."""
+        self.preview_text.configure(state=tk.NORMAL)
         self.preview_text.delete(1.0, tk.END)
-        
-        # Get values from entry fields
-        client = self.client_name_var.get() or "[Name Client]"
-        project = self.project_name_var.get() or "[Name Project]"
+
+        client = self.client_name_var.get() or "[Client]"
+        project = self.project_name_var.get() or "[Project]"
         date = self.date_var.get() or datetime.now().strftime('%Y-%m-%d')
-        
-        # Get software specs
-        software_list = []
-        if self.use_houdini_var.get():
-            software_list.append(f"Houdini: {self.houdini_var.get()}")
-        if self.use_blender_var.get():
-            software_list.append(f"Blender: {self.blender_var.get()}")
-        if self.use_freecad_var.get():
-            software_list.append(f"FreeCAD: {self.freecad_var.get()}")
-        if self.use_alibre_var.get():
-            software_list.append(f"Alibre: {self.alibre_var.get()}")
-        if self.use_affinity_var.get():
-            software_list.append(f"Affinity: {self.affinity_var.get()}")
-        
-        slicer = self.slicer_var.get()
-        printer = self.printer_var.get()
-        
-        # Get notes
-        notes = self.notes_text.get(1.0, tk.END).strip()
-        
-        # Build the project directory name based on project type
+
         if self.personal_var.get() or self.product_var.get():
             project_dir = f"{date}_3DPrint_{project}"
         else:
             project_dir = f"{date}_3DPrint_{client}_{project}"
-        
-        # Display preview
+
         base_dir = self.base_dir_var.get()
-        self.preview_text.insert(tk.END, f"Project will be created at:\n{base_dir}/{project_dir}\n\n")
-        
-        # Software & Hardware Specifications
-        self.preview_text.insert(tk.END, "Production Tools:\n")
+        self.preview_text.insert(tk.END, f"Path: {base_dir}/{project_dir}\n\n")
+
+        # Software specs from chips
+        active_software = get_active_software(self.software_chips)
+        software_list = [f"{name} {ver}" for name, ver in active_software.items() if ver]
+
         if software_list:
-            for software in software_list:
-                self.preview_text.insert(tk.END, f"• {software}\n")
-        else:
-            self.preview_text.insert(tk.END, "• No production tools selected\n")
-        
-        self.preview_text.insert(tk.END, f"\nHardware:\n")
-        self.preview_text.insert(tk.END, f"• Slicer: {slicer}\n")
-        self.preview_text.insert(tk.END, f"• 3D Printer: {printer}\n\n")
-        
-        # Preview notes
-        if notes:
-            self.preview_text.insert(tk.END, "Notes:\n")
-            # Limit preview to first 100 characters if lengthy
-            if len(notes) > 100:
-                self.preview_text.insert(tk.END, f"{notes[:100]}...\n\n")
-            else:
-                self.preview_text.insert(tk.END, f"{notes}\n\n")
-        
-        # Folder structure to be created
-        self.preview_text.insert(tk.END, "Folder structure to be created:\n\n")
-        
+            self.preview_text.insert(tk.END, f"Tools: {', '.join(software_list)}\n")
+        self.preview_text.insert(tk.END, f"Hardware: {self.slicer_var.get()} / {self.printer_var.get()}\n\n")
+
+        self.preview_text.insert(tk.END, "Structure:\n")
         folders = self.get_folder_structure_preview()
-        
-        # Build a dictionary to represent the directory tree
+
         dir_tree = {}
         for path in folders:
             parts = path.split('/')
@@ -551,93 +471,78 @@ class FolderStructureCreator:
                 if part not in current:
                     current[part] = {}
                 current = current[part]
-        
-        # Function to display the directory tree
+
         def print_tree(tree, prefix=""):
             items = list(tree.items())
             for i, (name, subtree) in enumerate(items):
                 is_last = i == len(items) - 1
-                
                 self.preview_text.insert(tk.END, f"{prefix}{'└── ' if is_last else '├── '}{name}\n")
-                if subtree:  # If not a leaf node
+                if subtree:
                     extension = "    " if is_last else "│   "
                     print_tree(subtree, prefix + extension)
-        
-        # Display the tree
+
         print_tree(dir_tree)
-        
-        # Preview specifications file
-        self.preview_text.insert(tk.END, "\nSpecifications file will be created at:\n")
-        if self.include_library_var.get():
-            self.preview_text.insert(tk.END, f"_LIBRARY/Documents/project_specifications.txt\n")
-        else:
-            self.preview_text.insert(tk.END, f"project_specifications.txt (in project root)\n")
-    
+
+        self.preview_text.configure(state=tk.DISABLED)
+
+    def validate_inputs(self):
+        """Validate all required inputs."""
+        client_name = self.client_name_var.get().strip()
+        project_name = self.project_name_var.get().strip()
+        date = self.date_var.get().strip()
+        base_dir = self.base_dir_var.get()
+
+        if not base_dir or not os.path.isdir(base_dir):
+            messagebox.showerror("Error", "Please select a valid base directory.")
+            return False
+
+        if not client_name:
+            if self.personal_var.get():
+                self.client_name_var.set("Personal")
+            elif self.product_var.get():
+                self.client_name_var.set("alles3d")
+            elif not self.project_var.get():
+                messagebox.showerror("Error", "Please enter a client name.")
+                return False
+
+        if not project_name:
+            messagebox.showerror("Error", "Please enter a project name.")
+            return False
+
+        if not date:
+            self.date_var.set(datetime.now().strftime('%Y-%m-%d'))
+
+        return True
+
     def create_structure(self):
-        """Create the folder structure based on user input"""
-        # Get values from entry fields
+        """Create the folder structure based on user input."""
+        if not self.validate_inputs():
+            return
+
         base_dir = self.base_dir_var.get()
         client_name = self.client_name_var.get()
         project_name = self.project_name_var.get()
         date = self.date_var.get()
-        
-        # Get software specs
-        software_specs = {}
-        if self.use_houdini_var.get():
-            software_specs['Houdini'] = self.houdini_var.get()
-        if self.use_blender_var.get():
-            software_specs['Blender'] = self.blender_var.get()
-        if self.use_freecad_var.get():
-            software_specs['FreeCAD'] = self.freecad_var.get()
-        if self.use_alibre_var.get():
-            software_specs['Alibre'] = self.alibre_var.get()
-        if self.use_affinity_var.get():
-            software_specs['Affinity'] = self.affinity_var.get()
-        
+
+        # Get software specs from chips
+        software_specs = get_active_software(self.software_chips)
+
         slicer_software = self.slicer_var.get()
         printer_model = self.printer_var.get()
-        
-        # Validate inputs
-        if not base_dir or not os.path.isdir(base_dir):
-            messagebox.showerror("Error", "Please select a valid base directory.")
-            return
 
-        if not client_name:
-            if self.personal_var.get():
-                client_name = "Personal"
-            elif self.product_var.get():
-                client_name = "alles3d"
-            elif not self.project_var.get():
-                messagebox.showerror("Error", "Please enter a name client.")
-                return
-
-        if not project_name:
-            messagebox.showerror("Error", "Please enter a name project.")
-            return
-
-        if not date:
-            date = datetime.now().strftime('%Y-%m-%d')
-
-        # Build the base directory path based on project type
         if self.personal_var.get() or self.product_var.get():
             project_dir = os.path.join(base_dir, f'{date}_3DPrint_{project_name}')
         else:
             project_dir = os.path.join(base_dir, f'{date}_3DPrint_{client_name}_{project_name}')
 
         try:
-            # Create the project directory
             os.makedirs(project_dir, exist_ok=True)
-            
-            # Create folder structure
             self.create_folder_structure(project_dir, date, software_specs)
-            
-            # Create specifications text file
-            self.create_specs_file(project_dir, client_name, project_name, date, 
+            self.create_specs_file(project_dir, client_name, project_name, date,
                                    software_specs, slicer_software, printer_model)
-            
+
             self.status_var.set(f"Created project structure for {project_name}")
 
-            # Build project data for callback
             project_data = {
                 'client_name': client_name,
                 'project_name': project_name,
@@ -656,13 +561,10 @@ class FolderStructureCreator:
                 }
             }
 
-            # Handle success based on mode
             if self.embedded and self.on_project_created:
-                # In embedded mode, call the callback with project data
                 self.on_project_created(project_data)
             else:
-                # Show success message
-                if messagebox.askyesno("Success", f"Project structure created successfully at:\n\n{project_dir}\n\nWould you like to open the folder?"):
+                if messagebox.askyesno("Success", f"Project created at:\n\n{project_dir}\n\nOpen folder?"):
                     self.open_folder(project_dir)
 
         except Exception as e:
@@ -670,43 +572,31 @@ class FolderStructureCreator:
             self.status_var.set("Error creating project structure")
 
     def _handle_cancel(self):
-        """Handle cancel button click in embedded mode."""
+        """Handle cancel button click."""
         if self.on_cancel:
             self.on_cancel()
 
     def create_folder_structure(self, project_dir, date, software_specs):
-        """Create the folder structure dynamically"""
+        """Create the folder structure dynamically."""
         folders_to_create = []
-
-        # Track numbered folders in the correct order
         numbered_folders = []
 
-        # Incoming folder (always first - starts at 00)
         numbered_folders.append("Incoming")
-
-        # Optional preproduction folder (comes after Incoming)
         if self.include_preproduction_var.get():
             numbered_folders.append("Preproduction")
-
-        # Production folder (always included)
         numbered_folders.append("Production")
-
-        # Outgoing folder (always included)
         numbered_folders.append("Outgoing")
 
-        # Apply numbering to main folders starting at 00
         counter = 0
-        folder_mapping = {}  # Map from unnumbered to numbered names
+        folder_mapping = {}
         for folder_name in numbered_folders:
             numbered_name = f"{counter:02d}_{folder_name}"
             folder_mapping[folder_name] = numbered_name
             folders_to_create.append(numbered_name)
             counter += 1
 
-        # Software-specific folders in Production organized by 3D and 2D
         production_folder = folder_mapping.get("Production", "Production")
 
-        # 3D tools
         if 'Houdini' in software_specs:
             folders_to_create.append(f"{production_folder}/3D/Houdini")
         if 'Blender' in software_specs:
@@ -715,23 +605,18 @@ class FolderStructureCreator:
             folders_to_create.append(f"{production_folder}/3D/FreeCAD")
         if 'Alibre' in software_specs:
             folders_to_create.append(f"{production_folder}/3D/Alibre")
-
-        # 2D tools
         if 'Affinity' in software_specs:
             folders_to_create.append(f"{production_folder}/2D/Affinity")
 
-        # Documentation folder in Production
         folders_to_create.append(f"{production_folder}/Documentation")
         folders_to_create.append(f"{production_folder}/Documentation/Product_Photo")
         folders_to_create.append(f"{production_folder}/Documentation/Product_Photo/RAW")
         folders_to_create.append(f"{production_folder}/Documentation/Product_Video")
         folders_to_create.append(f"{production_folder}/Documentation/Product_Video/Footage")
 
-        # Outgoing subfolders - date folder only
         outgoing_folder = folder_mapping.get("Outgoing", "Outgoing")
         folders_to_create.append(f"{outgoing_folder}/{date}")
 
-        # Optional library folder (not numbered, underscore prefix)
         if self.include_library_var.get():
             folders_to_create.append("_LIBRARY")
             folders_to_create.append("_LIBRARY/Documents")
@@ -739,51 +624,43 @@ class FolderStructureCreator:
             folders_to_create.append("_LIBRARY/Pipeline/Plugins")
             folders_to_create.append("_LIBRARY/Pipeline/Scripts")
 
-        # Create all folders
         for folder in folders_to_create:
             folder_path = os.path.join(project_dir, folder)
             os.makedirs(folder_path, exist_ok=True)
-    
-    def create_specs_file(self, project_dir, client_name, project_name, date, 
+
+    def create_specs_file(self, project_dir, client_name, project_name, date,
                           software_specs, slicer_software, printer_model):
-        """Create a specifications text file"""
+        """Create a specifications text file."""
         try:
-            # Determine file location based on _LIBRARY folder setting
             if self.include_library_var.get():
                 docs_dir = os.path.join(project_dir, '_LIBRARY/Documents')
                 spec_file_path = os.path.join(docs_dir, 'project_specifications.txt')
             else:
                 spec_file_path = os.path.join(project_dir, 'project_specifications.txt')
-            
-            # Current timestamp
+
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            
-            # Get notes from the text area
             notes = self.notes_text.get(1.0, tk.END).strip()
             if not notes:
                 notes = "No notes provided."
-            
-            # Create software section content
+
             software_content = "PRODUCTION TOOLS\n======================\n"
             if software_specs:
                 for software, version in software_specs.items():
                     software_content += f"{software}: {version}\n"
             else:
                 software_content += "No production tools selected.\n"
-            
-            # Create project structure info
+
             structure_content = "PROJECT STRUCTURE\n======================\n"
             if self.include_preproduction_var.get():
-                structure_content += "✓ Preproduction folder included\n"
+                structure_content += "Preproduction folder included\n"
             else:
-                structure_content += "✗ Preproduction folder not included\n"
-                
+                structure_content += "Preproduction folder not included\n"
+
             if self.include_library_var.get():
-                structure_content += "✓ _LIBRARY folder included\n"
+                structure_content += "_LIBRARY folder included\n"
             else:
-                structure_content += "✗ _LIBRARY folder not included\n"
-            
-            # Create file content
+                structure_content += "_LIBRARY folder not included\n"
+
             content = f"""PROJECT SPECIFICATIONS
 ======================
 Generated: {timestamp}
@@ -803,34 +680,37 @@ NOTES
 ======================
 {notes}
 """
-            
-            # Write to file
+
             with open(spec_file_path, 'w', encoding='utf-8') as file:
                 file.write(content)
-                
+
             self.status_var.set(f"Created project structure and specifications file")
-                
+
         except Exception as e:
             messagebox.showwarning("Warning", f"Created folder structure but failed to create specifications file: {str(e)}")
             self.status_var.set("Warning: Failed to create specifications file")
-    
+
     def open_folder(self, path):
-        """Open the folder in file explorer"""
+        """Open the folder in file explorer."""
         if os.path.exists(path):
             try:
-                # Platform-specific folder opening
                 import subprocess
-                if os.name == 'nt':  # Windows
+                if os.name == 'nt':
                     os.startfile(path)
-                elif os.name == 'posix':  # macOS and Linux
-                    if os.uname().sysname == 'Darwin':  # macOS
+                elif os.name == 'posix':
+                    if os.uname().sysname == 'Darwin':
                         subprocess.call(['open', path])
-                    else:  # Linux
+                    else:
                         subprocess.call(['xdg-open', path])
             except Exception as e:
                 print(f"Could not open folder: {str(e)}")
 
+
+# Backwards compatibility alias
+FolderStructureCreator = PhysicalFolderStructureCreator
+
+
 if __name__ == "__main__":
     root = tk.Tk()
-    app = FolderStructureCreator(root)
+    app = PhysicalFolderStructureCreator(root)
     root.mainloop()
