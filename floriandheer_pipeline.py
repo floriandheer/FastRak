@@ -166,9 +166,8 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
         self.root = root
         self.root.title(f"{APP_NAME} v{APP_VERSION}")
 
-        # Open in fullscreen
-        self.root.state('zoomed')  # Windows
-        # For Linux/Mac, use: self.root.attributes('-zoomed', True)
+        # Open maximized or fullscreen depending on setting
+        self.root.state('zoomed')  # Windows maximized
 
         # Set minimum size
         self.root.minsize(1200, 800)
@@ -181,6 +180,10 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
 
         # Load path configuration
         self.settings = get_rak_settings()
+
+        # Apply fullscreen if configured
+        if self.settings.get_start_fullscreen():
+            self.root.attributes('-fullscreen', True)
 
         # Keyboard navigation state
         self.focused_panel = "categories"  # "categories", "operations", "tools", "tracker"
@@ -1989,9 +1992,9 @@ def main():
     # ====================================
 
     # Number keys - Global filters (scope 1/2/3, status 4/5/6)
-    root.bind('1', lambda e: app._set_scope("personal"))
-    root.bind('2', lambda e: app._set_scope("client"))
-    root.bind('3', lambda e: app._set_scope("all"))
+    root.bind('1', lambda e: app._set_scope("personal") if app._should_handle_keyboard() else None)
+    root.bind('2', lambda e: app._set_scope("client") if app._should_handle_keyboard() else None)
+    root.bind('3', lambda e: app._set_scope("all") if app._should_handle_keyboard() else None)
     root.bind('4', lambda e: app._set_status_filter("active"))
     root.bind('5', lambda e: app._set_status_filter("archived"))
     root.bind('6', lambda e: app._set_status_filter("all"))

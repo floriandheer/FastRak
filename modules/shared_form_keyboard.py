@@ -10,6 +10,7 @@ Design principles:
 - Efficient layout: Optimize for wide 16:9 screens
 """
 
+import re
 import tkinter as tk
 from tkinter import ttk, simpledialog
 from typing import List, Optional, Callable, Dict
@@ -339,6 +340,31 @@ def create_styled_entry(parent, textvariable=None, width=30, **kwargs) -> tk.Ent
     entry.bind("<FocusOut>", lambda e: e.widget.configure(bg=FORM_COLORS["bg_input"]))
 
     return entry
+
+
+def add_name_validation(string_var: tk.StringVar):
+    """
+    Attach a trace to a StringVar that strips any characters not safe for
+    folder names and shell scripts.  Only letters, digits, hyphens and
+    underscores are allowed.  Spaces and all other symbols are removed
+    as the user types.
+    """
+    _sanitizing = False  # prevent recursive trace calls
+
+    def _sanitize(*_args):
+        nonlocal _sanitizing
+        if _sanitizing:
+            return
+        current = string_var.get()
+        cleaned = re.sub(r'[^A-Za-z0-9\-_]', '', current)
+        if cleaned != current:
+            _sanitizing = True
+            pos = None
+            # Try to preserve cursor position via any linked entry
+            string_var.set(cleaned)
+            _sanitizing = False
+
+    string_var.trace_add("write", _sanitize)
 
 
 def create_styled_text(parent, height=3, **kwargs) -> tk.Text:

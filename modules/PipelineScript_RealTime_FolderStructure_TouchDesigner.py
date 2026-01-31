@@ -29,8 +29,12 @@ from shared_form_keyboard import (
     create_styled_entry, create_styled_text, create_styled_button,
     create_styled_label, create_styled_checkbox, create_styled_frame,
     create_styled_labelframe, format_button_with_shortcut,
-    create_software_chip_row, get_active_software
+    create_software_chip_row, get_active_software,
+    add_name_validation
 )
+from shared_folder_tree_parser import parse_tree_file, create_structure as tree_create_structure
+
+TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates")
 
 
 class TouchDesignerFolderStructureCreator(FormKeyboardMixin):
@@ -88,6 +92,7 @@ class TouchDesignerFolderStructureCreator(FormKeyboardMixin):
 
         create_styled_label(row1, "Client:").grid(row=0, column=0, sticky="e", padx=(0, 5))
         self.client_name_var = tk.StringVar()
+        add_name_validation(self.client_name_var)
         if self.project_db:
             self.client_entry = AutocompleteEntry(
                 row1, db=self.project_db, category="RealTime",
@@ -100,6 +105,7 @@ class TouchDesignerFolderStructureCreator(FormKeyboardMixin):
 
         create_styled_label(row1, "Project:").grid(row=0, column=2, sticky="e", padx=(0, 5))
         self.project_name_var = tk.StringVar()
+        add_name_validation(self.project_name_var)
         self.project_entry = create_styled_entry(row1, textvariable=self.project_name_var, width=25)
         self.project_entry.grid(row=0, column=3, sticky="ew")
 
@@ -141,9 +147,10 @@ class TouchDesignerFolderStructureCreator(FormKeyboardMixin):
         self.resolution_entry = create_styled_entry(row2, textvariable=self.resolution_var, width=12)
         self.resolution_entry.pack(side=tk.LEFT)
 
-        # Base directory (hidden from main UI, use Browse button)
+        # Base directory and tree file
         default_base = self.settings.get_work_path("RealTime").replace('\\', '/')
         self.base_dir_var = tk.StringVar(value=default_base)
+        self.tree_file = os.path.join(TEMPLATES_DIR, 'realtime_touchdesigner_structure.txt')
 
         # ==================== ROW 3: Notes and Preview ====================
         row3 = create_styled_frame(main_frame)
@@ -242,68 +249,6 @@ class TouchDesignerFolderStructureCreator(FormKeyboardMixin):
             self.base_dir_var.set(directory)
             self.update_preview()
 
-    def get_folder_structure(self):
-        """Define the TouchDesigner folder structure."""
-        return {
-            'Production': {
-                'Projects': {},
-                'Components': {},
-                'Assets': {
-                    '3D': {
-                        'Source': {},
-                        'Optimized': {},
-                        'References': {}
-                    },
-                    'Textures': {
-                        'Source': {},
-                        'Optimized': {}
-                    },
-                    'Images': {},
-                    'Videos': {},
-                    'Audio': {},
-                    'Fonts': {}
-                },
-                'Preparation': {
-                    'Blender': {},
-                    'Substance': {},
-                    'Houdini': {},
-                    'Tests': {}
-                },
-                'Data': {
-                    'JSON': {},
-                    'CSV': {},
-                    'XML': {}
-                },
-                'Scripts': {
-                    'Extensions': {},
-                    'Modules': {}
-                },
-                'Shaders': {
-                    'GLSL': {},
-                    'MAT': {}
-                },
-                'Palettes': {},
-                'MIDI': {},
-                'OSC': {},
-                'DMX': {},
-                'Exports': {
-                    'Movies': {},
-                    'Images': {},
-                    'TOE': {}
-                }
-            },
-            '_Library': {
-                'Documents': {},
-                'References': {},
-                'Backup': {
-                    'YYY-MM-DD': {}
-                }
-            },
-            '_Delivery': {
-                'YYY-MM-DD': {}
-            }
-        }
-
     def update_preview(self):
         """Update the preview of the folder structure."""
         self.preview_text.configure(state=tk.NORMAL)
@@ -333,21 +278,14 @@ class TouchDesignerFolderStructureCreator(FormKeyboardMixin):
         self.preview_text.insert(tk.END, f"TD: {touchdesigner}  |  Python: {python}  |  Res: {resolution}\n\n")
         self.preview_text.insert(tk.END, "Structure:\n")
 
-        structure = self.get_folder_structure()
-
-        def print_tree(tree, prefix="", max_depth=3, current_depth=0):
-            if current_depth >= max_depth:
-                return
-            items = list(tree.items())
-            for i, (name, subtree) in enumerate(items):
-                is_last = i == len(items) - 1
+        if os.path.isfile(self.tree_file):
+            tree_entries = parse_tree_file(self.tree_file)
+            for path, _ in tree_entries:
+                depth = path.count('/')
+                name = path.split('/')[-1]
                 display_name = date if name == "YYY-MM-DD" else name
-                self.preview_text.insert(tk.END, f"{prefix}{'└── ' if is_last else '├── '}{display_name}\n")
-                if subtree:
-                    extension = "    " if is_last else "│   "
-                    print_tree(subtree, prefix + extension, max_depth, current_depth + 1)
-
-        print_tree(structure)
+                indent = "  " * depth
+                self.preview_text.insert(tk.END, f"{indent}{display_name}/\n")
 
         self.preview_text.configure(state=tk.DISABLED)
 
@@ -401,7 +339,9 @@ class TouchDesignerFolderStructureCreator(FormKeyboardMixin):
         project_dir = os.path.join(base_dir, folder_name)
 
         try:
-            self.create_folders(project_dir, self.get_folder_structure(), date)
+            tree = parse_tree_file(self.tree_file)
+            replacements = {'YYY-MM-DD': date}
+            tree_create_structure(project_dir, tree, replacements)
             self.create_specs_file(project_dir, client_name, project_name, date,
                                    touchdesigner_version, python_version, resolution)
 
@@ -440,18 +380,6 @@ class TouchDesignerFolderStructureCreator(FormKeyboardMixin):
         """Handle cancel button click."""
         if self.on_cancel:
             self.on_cancel()
-
-    def create_folders(self, base_path, structure, date):
-        """Recursively create folder structure."""
-        for folder_name, subfolders in structure.items():
-            if folder_name == "YYY-MM-DD":
-                folder_name = date
-
-            folder_path = os.path.join(base_path, folder_name)
-            os.makedirs(folder_path, exist_ok=True)
-
-            if subfolders:
-                self.create_folders(folder_path, subfolders, date)
 
     def create_specs_file(self, project_dir, client_name, project_name, date,
                           touchdesigner_version, python_version, resolution):

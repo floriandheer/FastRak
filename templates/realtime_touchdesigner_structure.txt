@@ -1,0 +1,45 @@
++---Production
+|   +---Projects
+|   +---Components
+|   +---Assets
+|   |   +---3D
+|   |   |   +---Source
+|   |   |   +---Optimized
+|   |   |   \---References
+|   |   +---Textures
+|   |   |   +---Source
+|   |   |   \---Optimized
+|   |   +---Images
+|   |   +---Videos
+|   |   +---Audio
+|   |   \---Fonts
+|   +---Preparation
+|   |   +---Blender
+|   |   +---Substance
+|   |   +---Houdini
+|   |   \---Tests
+|   +---Data
+|   |   +---JSON
+|   |   +---CSV
+|   |   \---XML
+|   +---Scripts
+|   |   +---Extensions
+|   |   \---Modules
+|   +---Shaders
+|   |   +---GLSL
+|   |   \---MAT
+|   +---Palettes
+|   +---MIDI
+|   +---OSC
+|   +---DMX
+|   \---Exports
+|       +---Movies
+|       +---Images
+|       \---TOE
++---_Library
+|   +---Documents
+|   +---References
+|   \---Backup
+|       \---YYY-MM-DD
+\---_Delivery
+    \---YYY-MM-DD

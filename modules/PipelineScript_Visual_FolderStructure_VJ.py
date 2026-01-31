@@ -17,7 +17,6 @@ import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from datetime import datetime
-import shutil
 from pathlib import Path
 
 # Add modules to path
@@ -33,35 +32,18 @@ from shared_form_keyboard import (
     create_styled_entry, create_styled_text, create_styled_button,
     create_styled_label, create_styled_checkbox, create_styled_frame,
     create_styled_labelframe, format_button_with_shortcut,
-    create_software_chip_row, get_active_software
+    create_software_chip_row, get_active_software,
+    add_name_validation
 )
+from shared_folder_tree_parser import parse_tree_file, create_structure as tree_create_structure, create_gitkeep_files
 
 logger = get_logger(__name__)
+
+TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates")
 
 
 class VJFolderStructureCreator(FormKeyboardMixin):
     """Creates folder structure for Live Video projects with keyboard-first navigation."""
-
-    # Default folder structure for Live Video projects
-    DEFAULT_STRUCTURE = [
-        "_Library",
-        "_Library/Documents",
-        "_Library/References",
-        "_Sources",
-        "_Sources/Audio",
-        "_Sources/Video",
-        "_Sources/Images",
-        "_Sources/Fonts",
-        "_Compositions",
-        "_Compositions/Resolume",
-        "_Compositions/Other",
-        "_Exports",
-        "_Exports/Clips",
-        "_Exports/Decks",
-        "_Renders",
-        "_Renders/Preview",
-        "_Renders/Final",
-    ]
 
     def __init__(self, root_or_frame, embedded=False, on_project_created=None, on_cancel=None, project_db=None):
         """
@@ -142,6 +124,7 @@ class VJFolderStructureCreator(FormKeyboardMixin):
         # Client Name
         create_styled_label(row1, "Client:").grid(row=0, column=0, sticky="e", padx=(0, 5))
         self.client_name_var = tk.StringVar()
+        add_name_validation(self.client_name_var)
         if self.project_db:
             self.client_entry = AutocompleteEntry(
                 row1,
@@ -158,6 +141,7 @@ class VJFolderStructureCreator(FormKeyboardMixin):
         # Project Name
         create_styled_label(row1, "Project:").grid(row=0, column=2, sticky="e", padx=(0, 5))
         self.project_name_var = tk.StringVar()
+        add_name_validation(self.project_name_var)
         self.project_entry = create_styled_entry(row1, textvariable=self.project_name_var, width=25)
         self.project_entry.grid(row=0, column=3, sticky="ew")
 
@@ -230,9 +214,10 @@ class VJFolderStructureCreator(FormKeyboardMixin):
         row4 = create_styled_frame(main_frame)
         row4.grid(row=3, column=0, sticky="e", pady=(10, 0))
 
-        # Base directory (hidden from main view, accessible via browse)
+        # Base directory and tree file
         default_base = self.settings.get_work_path("Visual").replace('\\', '/')
         self.base_dir_var = tk.StringVar(value=default_base)
+        self.tree_file = os.path.join(TEMPLATES_DIR, 'visual_vj_structure.txt')
 
         # Browse button (secondary)
         self.browse_btn = create_styled_button(
@@ -340,12 +325,13 @@ class VJFolderStructureCreator(FormKeyboardMixin):
 
         # Folder structure (abbreviated)
         self.preview_text.insert(tk.END, "Structure:\n")
-        for path in self.DEFAULT_STRUCTURE[:8]:  # Show first 8
-            depth = path.count('/')
-            name = path.split('/')[-1]
-            indent = "  " * depth
-            self.preview_text.insert(tk.END, f"{indent}{name}/\n")
-        self.preview_text.insert(tk.END, "  ...\n")
+        if os.path.isfile(self.tree_file):
+            tree_entries = parse_tree_file(self.tree_file)
+            for path, _ in tree_entries:
+                depth = path.count('/')
+                name = path.split('/')[-1]
+                indent = "  " * depth
+                self.preview_text.insert(tk.END, f"{indent}{name}/\n")
 
         self.preview_text.configure(state=tk.DISABLED)
 
@@ -384,10 +370,10 @@ class VJFolderStructureCreator(FormKeyboardMixin):
             # Create main project directory
             os.makedirs(project_dir, exist_ok=True)
 
-            # Create folder structure
-            for folder in self.DEFAULT_STRUCTURE:
-                folder_path = os.path.join(project_dir, folder)
-                os.makedirs(folder_path, exist_ok=True)
+            # Create folder structure from tree file
+            tree = parse_tree_file(self.tree_file)
+            created = tree_create_structure(project_dir, tree)
+            create_gitkeep_files(project_dir, created)
 
             # Create specifications file
             self.create_specs_file(project_dir, project_name, client_name, date)

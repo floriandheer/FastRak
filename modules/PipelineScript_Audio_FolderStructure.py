@@ -16,7 +16,6 @@ import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from datetime import datetime
-import shutil
 from pathlib import Path
 
 # Add modules to path
@@ -30,8 +29,10 @@ from shared_form_keyboard import (
     create_styled_entry, create_styled_text, create_styled_button,
     create_styled_label, create_styled_checkbox, create_styled_frame,
     create_styled_labelframe, create_styled_combobox, format_button_with_shortcut,
-    create_software_chip_row, get_active_software
+    create_software_chip_row, get_active_software,
+    add_name_validation
 )
+from shared_folder_tree_parser import parse_tree_file, create_structure as tree_create_structure, create_gitkeep_files
 
 TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates")
 
@@ -90,6 +91,7 @@ class FolderStructureCreator(FormKeyboardMixin):
 
         create_styled_label(row1, "Client:").grid(row=0, column=0, sticky="e", padx=(0, 5))
         self.client_name_var = tk.StringVar()
+        add_name_validation(self.client_name_var)
         if self.project_db:
             self.client_entry = AutocompleteEntry(
                 row1, db=self.project_db, category="Audio",
@@ -102,6 +104,7 @@ class FolderStructureCreator(FormKeyboardMixin):
 
         create_styled_label(row1, "Project:").grid(row=0, column=2, sticky="e", padx=(0, 5))
         self.project_name_var = tk.StringVar()
+        add_name_validation(self.project_name_var)
         self.project_entry = create_styled_entry(row1, textvariable=self.project_name_var, width=25)
         self.project_entry.grid(row=0, column=3, sticky="ew")
 
@@ -168,7 +171,7 @@ class FolderStructureCreator(FormKeyboardMixin):
 
         default_base = self.settings.get_work_path("Audio").replace('\\', '/')
         self.base_dir_var = tk.StringVar(value=default_base)
-        self.template_dir_var = tk.StringVar(value=os.path.join(TEMPLATES_DIR, 'YYYY-MM-DD_AudioProd_NameClient_NameProject'))
+        self.tree_file = os.path.join(TEMPLATES_DIR, 'audio_production_structure.txt')
 
         self.browse_btn = create_styled_button(row4, text="Browse...", command=self.browse_base_dir)
         self.browse_btn.pack(side=tk.LEFT, padx=(0, 10))
@@ -228,21 +231,6 @@ class FolderStructureCreator(FormKeyboardMixin):
             self.base_dir_var.set(directory)
             self.update_preview()
 
-    def get_template_structure(self, template_dir):
-        """Get directory structure from template folder."""
-        if not os.path.isdir(template_dir):
-            return None
-        structure = []
-        for root, dirs, files in os.walk(template_dir):
-            rel_path = os.path.relpath(root, template_dir)
-            if rel_path != '.':
-                structure.append(rel_path)
-            for file in files:
-                file_path = os.path.join(rel_path, file)
-                if file_path != '.':
-                    structure.append(file_path)
-        return sorted(structure)
-
     def update_preview(self):
         """Update the preview."""
         self.preview_text.configure(state=tk.NORMAL)
@@ -273,19 +261,17 @@ class FolderStructureCreator(FormKeyboardMixin):
         else:
             self.preview_text.insert(tk.END, "No DAW selected\n\n")
 
-        template_structure = self.get_template_structure(self.template_dir_var.get())
-        if template_structure:
+        if os.path.isfile(self.tree_file):
+            tree_entries = parse_tree_file(self.tree_file)
             self.preview_text.insert(tk.END, "Structure:\n")
-            for path in template_structure[:10]:
-                depth = path.count(os.sep)
-                name = path.split(os.sep)[-1]
+            for path, _ in tree_entries:
+                depth = path.count('/')
+                name = path.split('/')[-1]
                 if name == "YYY-MM-DD":
                     name = date
                 self.preview_text.insert(tk.END, f"{'  ' * depth}{name}/\n")
-            if len(template_structure) > 10:
-                self.preview_text.insert(tk.END, "  ...\n")
         else:
-            self.preview_text.insert(tk.END, "Template not found.\n")
+            self.preview_text.insert(tk.END, "Tree structure file not found.\n")
 
         self.preview_text.configure(state=tk.DISABLED)
 
@@ -295,7 +281,6 @@ class FolderStructureCreator(FormKeyboardMixin):
         client_name = self.client_name_var.get()
         project_name = self.project_name_var.get()
         date = self.date_var.get()
-        template_dir = self.template_dir_var.get()
 
         software_specs = get_active_software(self.software_chips)
 
@@ -317,8 +302,8 @@ class FolderStructureCreator(FormKeyboardMixin):
         if not date:
             date = datetime.now().strftime('%Y-%m-%d')
 
-        if not template_dir or not os.path.isdir(template_dir):
-            messagebox.showerror("Error", "Template directory not found.")
+        if not os.path.isfile(self.tree_file):
+            messagebox.showerror("Error", "Tree structure file not found.")
             return
 
         if self.personal_var.get():
@@ -334,9 +319,12 @@ class FolderStructureCreator(FormKeyboardMixin):
 
         try:
             os.makedirs(project_dir, exist_ok=True)
-            self.copy_template(template_dir, project_dir, date)
+            tree = parse_tree_file(self.tree_file)
+            replacements = {'YYY-MM-DD': date}
+            created = tree_create_structure(project_dir, tree, replacements)
+            create_gitkeep_files(project_dir, created)
 
-            docs_dir = os.path.join(project_dir, '_Library/Documents')
+            docs_dir = os.path.join(project_dir, '_Library', 'Documents')
             os.makedirs(docs_dir, exist_ok=True)
 
             self.create_specs_file(project_dir, client_name, project_name, date, software_specs)
@@ -373,25 +361,10 @@ class FolderStructureCreator(FormKeyboardMixin):
         if self.on_cancel:
             self.on_cancel()
 
-    def copy_template(self, src, dst, date):
-        """Copy template structure."""
-        for item in os.listdir(src):
-            s = os.path.join(src, item)
-            d = os.path.join(dst, item)
-
-            if os.path.isdir(s):
-                if item == "YYY-MM-DD":
-                    d = os.path.join(os.path.dirname(d), date)
-                os.makedirs(d, exist_ok=True)
-                self.copy_template(s, d, date)
-            else:
-                if not os.path.exists(d) or not os.path.samefile(s, d):
-                    shutil.copy2(s, d)
-
     def create_specs_file(self, project_dir, client_name, project_name, date, software_specs):
         """Create specifications file."""
         try:
-            docs_dir = os.path.join(project_dir, '_Library/Documents')
+            docs_dir = os.path.join(project_dir, '_Library', 'Documents')
             spec_file_path = os.path.join(docs_dir, 'project_specifications.txt')
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             notes = self.notes_text.get(1.0, tk.END).strip() or "No notes provided."

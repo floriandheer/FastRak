@@ -29,8 +29,12 @@ from shared_form_keyboard import (
     create_styled_entry, create_styled_text, create_styled_button,
     create_styled_label, create_styled_checkbox, create_styled_frame,
     create_styled_labelframe, create_styled_combobox, format_button_with_shortcut,
-    create_software_chip_row, get_active_software
+    create_software_chip_row, get_active_software,
+    add_name_validation
 )
+from shared_folder_tree_parser import parse_tree_file, create_structure as tree_create_structure, create_gitkeep_files
+
+TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates")
 
 
 class GodotFolderStructureCreator(FormKeyboardMixin):
@@ -88,6 +92,7 @@ class GodotFolderStructureCreator(FormKeyboardMixin):
 
         create_styled_label(row1, "Client:").grid(row=0, column=0, sticky="e", padx=(0, 5))
         self.client_name_var = tk.StringVar()
+        add_name_validation(self.client_name_var)
         if self.project_db:
             self.client_entry = AutocompleteEntry(
                 row1, db=self.project_db, category="RealTime",
@@ -100,6 +105,7 @@ class GodotFolderStructureCreator(FormKeyboardMixin):
 
         create_styled_label(row1, "Project:").grid(row=0, column=2, sticky="e", padx=(0, 5))
         self.project_name_var = tk.StringVar()
+        add_name_validation(self.project_name_var)
         self.project_entry = create_styled_entry(row1, textvariable=self.project_name_var, width=25)
         self.project_entry.grid(row=0, column=3, sticky="ew")
 
@@ -150,9 +156,10 @@ class GodotFolderStructureCreator(FormKeyboardMixin):
         )
         self.renderer_combo.pack(side=tk.LEFT)
 
-        # Base directory (hidden from main UI, use Browse button)
+        # Base directory and tree file
         default_base = self.settings.get_work_path("RealTime").replace('\\', '/')
         self.base_dir_var = tk.StringVar(value=default_base)
+        self.tree_file = os.path.join(TEMPLATES_DIR, 'realtime_godot_structure.txt')
 
         # ==================== ROW 3: Notes and Preview ====================
         row3 = create_styled_frame(main_frame)
@@ -252,78 +259,6 @@ class GodotFolderStructureCreator(FormKeyboardMixin):
             self.base_dir_var.set(directory)
             self.update_preview()
 
-    def get_folder_structure(self):
-        """Define the Godot folder structure."""
-        return {
-            'Production': {
-                'Scenes': {
-                    'Main': {},
-                    'Levels': {},
-                    'UI': {},
-                    'Characters': {},
-                    'Environment': {}
-                },
-                'Scripts': {
-                    'Characters': {},
-                    'Gameplay': {},
-                    'UI': {},
-                    'Systems': {},
-                    'Utilities': {}
-                },
-                'Assets': {
-                    'Textures': {
-                        'Characters': {},
-                        'Environment': {},
-                        'UI': {},
-                        'VFX': {}
-                    },
-                    'Models': {
-                        'Characters': {},
-                        'Props': {},
-                        'Environment': {}
-                    },
-                    'Audio': {
-                        'Music': {},
-                        'SFX': {},
-                        'Voice': {}
-                    },
-                    'Fonts': {},
-                    'Materials': {},
-                    'Animations': {}
-                },
-                'Addons': {},
-                'Autoload': {},
-                'Resources': {
-                    'Themes': {},
-                    'Materials': {},
-                    'Shaders': {}
-                },
-                'Shaders': {},
-                'Prefabs': {},
-                'Exports': {
-                    'Builds': {
-                        'Windows': {},
-                        'Linux': {},
-                        'MacOS': {},
-                        'Android': {},
-                        'iOS': {},
-                        'Web': {}
-                    },
-                    'Screenshots': {}
-                }
-            },
-            '_Library': {
-                'Documents': {},
-                'References': {},
-                'Backup': {
-                    'YYY-MM-DD': {}
-                }
-            },
-            '_Delivery': {
-                'YYY-MM-DD': {}
-            }
-        }
-
     def update_preview(self):
         """Update the preview of the folder structure."""
         self.preview_text.configure(state=tk.NORMAL)
@@ -353,21 +288,14 @@ class GodotFolderStructureCreator(FormKeyboardMixin):
         self.preview_text.insert(tk.END, f"Godot: {godot}  |  Platform: {platform}  |  Renderer: {renderer}\n\n")
         self.preview_text.insert(tk.END, "Structure:\n")
 
-        structure = self.get_folder_structure()
-
-        def print_tree(tree, prefix="", max_depth=3, current_depth=0):
-            if current_depth >= max_depth:
-                return
-            items = list(tree.items())
-            for i, (name, subtree) in enumerate(items):
-                is_last = i == len(items) - 1
+        if os.path.isfile(self.tree_file):
+            tree_entries = parse_tree_file(self.tree_file)
+            for path, _ in tree_entries:
+                depth = path.count('/')
+                name = path.split('/')[-1]
                 display_name = date if name == "YYY-MM-DD" else name
-                self.preview_text.insert(tk.END, f"{prefix}{'└── ' if is_last else '├── '}{display_name}\n")
-                if subtree:
-                    extension = "    " if is_last else "│   "
-                    print_tree(subtree, prefix + extension, max_depth, current_depth + 1)
-
-        print_tree(structure)
+                indent = "  " * depth
+                self.preview_text.insert(tk.END, f"{indent}{display_name}/\n")
         self.preview_text.insert(tk.END, "\n+ project.godot, .gitignore\n")
 
         self.preview_text.configure(state=tk.DISABLED)
@@ -422,7 +350,15 @@ class GodotFolderStructureCreator(FormKeyboardMixin):
         project_dir = os.path.join(base_dir, folder_name)
 
         try:
-            self.create_folders(project_dir, self.get_folder_structure(), date)
+            tree = parse_tree_file(self.tree_file)
+            replacements = {'YYY-MM-DD': date}
+            created = tree_create_structure(project_dir, tree, replacements)
+            # Add .gdignore to _Library and _Delivery folders
+            for folder_name in ['_Library', '_Delivery', 'Backup']:
+                for path in created:
+                    if os.path.basename(path) == folder_name:
+                        gdignore_path = os.path.join(path, '.gdignore')
+                        open(gdignore_path, 'a').close()
             self.create_godot_project_file(project_dir, project_name, renderer)
             self.create_specs_file(project_dir, client_name, project_name, date,
                                    godot_version, platform, renderer)
@@ -463,22 +399,6 @@ class GodotFolderStructureCreator(FormKeyboardMixin):
         """Handle cancel button click."""
         if self.on_cancel:
             self.on_cancel()
-
-    def create_folders(self, base_path, structure, date):
-        """Recursively create folder structure."""
-        for folder_name, subfolders in structure.items():
-            if folder_name == "YYY-MM-DD":
-                folder_name = date
-
-            folder_path = os.path.join(base_path, folder_name)
-            os.makedirs(folder_path, exist_ok=True)
-
-            if folder_name in ['_Library', '_Delivery', 'Backup']:
-                gdignore_path = os.path.join(folder_path, '.gdignore')
-                open(gdignore_path, 'a').close()
-
-            if subfolders:
-                self.create_folders(folder_path, subfolders, date)
 
     def create_godot_project_file(self, project_dir, project_name, renderer):
         """Create a basic project.godot file."""

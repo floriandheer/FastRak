@@ -93,6 +93,10 @@ class RakSettings:
                 "subcategories": []
             }
         },
+        # UI preferences
+        "ui": {
+            "start_fullscreen": False
+        },
         # Global software version defaults (one version per software, used everywhere)
         "software_defaults": {
             "houdini": "20.5",
@@ -190,6 +194,10 @@ class RakSettings:
                     else:
                         result["software_defaults"][key] = value
 
+        # Update UI preferences
+        if "ui" in loaded:
+            result["ui"].update(loaded["ui"])
+
         # Preserve version from loaded if newer
         if "version" in loaded:
             result["version"] = loaded["version"]
@@ -215,6 +223,17 @@ class RakSettings:
         self._save()
 
     # ==================== GETTERS ====================
+
+    def get_start_fullscreen(self) -> bool:
+        """Get whether the app should start in borderless fullscreen."""
+        return self.config.get("ui", {}).get("start_fullscreen", False)
+
+    def set_start_fullscreen(self, value: bool):
+        """Set whether the app should start in borderless fullscreen."""
+        if "ui" not in self.config:
+            self.config["ui"] = {}
+        self.config["ui"]["start_fullscreen"] = value
+        self._save()
 
     def get_work_drive(self) -> str:
         """Get the work drive letter (e.g., 'I:')."""

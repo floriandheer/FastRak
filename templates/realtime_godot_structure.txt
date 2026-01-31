@@ -1,0 +1,54 @@
++---Production
+|   +---Scenes
+|   |   +---Main
+|   |   +---Levels
+|   |   +---UI
+|   |   +---Characters
+|   |   \---Environment
+|   +---Scripts
+|   |   +---Characters
+|   |   +---Gameplay
+|   |   +---UI
+|   |   +---Systems
+|   |   \---Utilities
+|   +---Assets
+|   |   +---Textures
+|   |   |   +---Characters
+|   |   |   +---Environment
+|   |   |   +---UI
+|   |   |   \---VFX
+|   |   +---Models
+|   |   |   +---Characters
+|   |   |   +---Props
+|   |   |   \---Environment
+|   |   +---Audio
+|   |   |   +---Music
+|   |   |   +---SFX
+|   |   |   \---Voice
+|   |   +---Fonts
+|   |   +---Materials
+|   |   \---Animations
+|   +---Addons
+|   +---Autoload
+|   +---Resources
+|   |   +---Themes
+|   |   +---Materials
+|   |   \---Shaders
+|   +---Shaders
+|   +---Prefabs
+|   \---Exports
+|       +---Builds
+|       |   +---Windows
+|       |   +---Linux
+|       |   +---MacOS
+|       |   +---Android
+|       |   +---iOS
+|       |   \---Web
+|       \---Screenshots
++---_Library
+|   +---Documents
+|   +---References
+|   \---Backup
+|       \---YYY-MM-DD
+\---_Delivery
+    \---YYY-MM-DD

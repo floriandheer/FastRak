@@ -17,6 +17,9 @@ import datetime
 # Setup logging using shared utility
 from shared_logging import get_logger, setup_logging as setup_shared_logging
 from rak_settings import get_rak_settings
+from shared_folder_tree_parser import parse_tree_file, create_structure as tree_create_structure
+
+TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates")
 
 # Get logger reference (configured in main())
 logger = get_logger("bookkeeping_folders")
@@ -65,23 +68,17 @@ def get_next_quarter():
 def create_quarter_folders(base_dir, year, quarter):
     """Create the folder structure for a specific quarter."""
     try:
-        # Create year directory
-        year_dir = os.path.join(base_dir, str(year))
-        os.makedirs(year_dir, exist_ok=True)
-        
-        # Create quarter directory
-        quarter_dir = os.path.join(year_dir, quarter)
+        # Create year/quarter directory
+        quarter_dir = os.path.join(base_dir, str(year), quarter)
         os.makedirs(quarter_dir, exist_ok=True)
-        
-        # Create Binnenkomend and Uitgaand folders
-        incoming_dir = os.path.join(quarter_dir, INCOMING_FOLDER)
-        outgoing_dir = os.path.join(quarter_dir, OUTGOING_FOLDER)
-        
-        os.makedirs(incoming_dir, exist_ok=True)
-        os.makedirs(outgoing_dir, exist_ok=True)
-        
+
+        # Create subfolders from tree definition
+        tree_file = os.path.join(TEMPLATES_DIR, 'bookkeeping_structure.txt')
+        tree = parse_tree_file(tree_file)
+        tree_create_structure(quarter_dir, tree)
+
         return True, quarter_dir
-        
+
     except Exception as e:
         return False, str(e)
 
