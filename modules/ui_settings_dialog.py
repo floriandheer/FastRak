@@ -84,8 +84,16 @@ class SettingsDialog:
                  foreground=[("selected", "#ffffff")],
                  padding=[("selected", [15, 8])])
 
+        # === BUTTON ROW (pack first so it always stays visible at bottom) ===
+        self._build_button_row()
+
         self.notebook = ttk.Notebook(self.dialog, style="Settings.TNotebook")
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+
+        # === GENERAL TAB ===
+        general_tab = tk.Frame(self.notebook, bg=COLORS["bg_primary"])
+        self.notebook.add(general_tab, text="General")
+        self._build_general_tab(general_tab)
 
         # === PATHS TAB ===
         paths_tab = tk.Frame(self.notebook, bg=COLORS["bg_primary"])
@@ -97,8 +105,37 @@ class SettingsDialog:
         self.notebook.add(software_tab, text="Software Defaults")
         self._build_software_tab(software_tab)
 
-        # === BUTTON ROW ===
-        self._build_button_row()
+    def _build_general_tab(self, parent):
+        """Build the General settings tab."""
+        content_frame = tk.Frame(parent, bg=COLORS["bg_primary"])
+        content_frame.pack(fill=tk.BOTH, expand=True, pady=10)
+
+        section = tk.LabelFrame(
+            content_frame,
+            text=" Window ",
+            font=font.Font(family="Segoe UI", size=11, weight="bold"),
+            fg=COLORS["text_primary"],
+            bg=COLORS["bg_card"],
+            padx=15,
+            pady=10
+        )
+        section.pack(fill=tk.X, padx=20, pady=(0, 15))
+
+        self.start_fullscreen_var = tk.BooleanVar(
+            value=self.settings.get_start_fullscreen()
+        )
+        cb = tk.Checkbutton(
+            section,
+            text="Start in fullscreen (borderless)",
+            variable=self.start_fullscreen_var,
+            font=font.Font(family="Segoe UI", size=10),
+            fg=COLORS["text_primary"],
+            bg=COLORS["bg_card"],
+            selectcolor=COLORS["bg_secondary"],
+            activebackground=COLORS["bg_card"],
+            activeforeground=COLORS["text_primary"]
+        )
+        cb.pack(anchor="w")
 
     def _build_paths_tab(self, parent):
         """Build the Paths settings tab."""
@@ -495,7 +532,7 @@ class SettingsDialog:
     def _build_button_row(self):
         """Build the button row at the bottom of the dialog."""
         button_frame = tk.Frame(self.dialog, bg=COLORS["bg_primary"])
-        button_frame.pack(fill=tk.X, padx=20, pady=15)
+        button_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=15)
 
         # Reset button (left side)
         reset_btn = tk.Button(
@@ -676,6 +713,9 @@ class SettingsDialog:
         if hasattr(self, 'software_entries'):
             versions = {software: var.get() for software, var in self.software_entries.items()}
             self.settings.set_software_defaults(**versions)
+
+        # Save general settings
+        self.settings.set_start_fullscreen(self.start_fullscreen_var.get())
 
         self.result = True
         self.dialog.destroy()

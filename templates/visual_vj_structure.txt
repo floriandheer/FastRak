@@ -1,0 +1,17 @@
++---_Library
+|   +---Documents
+|   \---References
++---_Sources
+|   +---Audio
+|   +---Video
+|   +---Images
+|   \---Fonts
++---_Compositions
+|   +---Resolume
+|   \---Other
++---_Exports
+|   +---Clips
+|   \---Decks
+\---_Renders
+    +---Preview
+    \---Final

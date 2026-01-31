@@ -30,8 +30,10 @@ from shared_form_keyboard import (
     create_styled_entry, create_styled_text, create_styled_button,
     create_styled_label, create_styled_checkbox, create_styled_frame,
     create_styled_labelframe, create_styled_combobox, format_button_with_shortcut,
-    create_software_chip_row, get_active_software
+    create_software_chip_row, get_active_software,
+    add_name_validation
 )
+from shared_folder_tree_parser import parse_tree_file, create_structure as tree_create_structure
 
 TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates")
 
@@ -92,6 +94,7 @@ class PhysicalFolderStructureCreator(FormKeyboardMixin):
 
         create_styled_label(row1, "Client:").grid(row=0, column=0, sticky="e", padx=(0, 5))
         self.client_name_var = tk.StringVar()
+        add_name_validation(self.client_name_var)
         if self.project_db:
             self.client_entry = AutocompleteEntry(
                 row1, db=self.project_db, category="Physical",
@@ -104,6 +107,7 @@ class PhysicalFolderStructureCreator(FormKeyboardMixin):
 
         create_styled_label(row1, "Project:").grid(row=0, column=2, sticky="e", padx=(0, 5))
         self.project_name_var = tk.StringVar()
+        add_name_validation(self.project_name_var)
         self.project_entry = create_styled_entry(row1, textvariable=self.project_name_var, width=25)
         self.project_entry.grid(row=0, column=3, sticky="ew")
 
@@ -261,8 +265,7 @@ class PhysicalFolderStructureCreator(FormKeyboardMixin):
         self.status_var = tk.StringVar()
         self.status_var.set("Ready")
 
-        # Template path (hidden)
-        self.template_dir_var = tk.StringVar(value=os.path.join(TEMPLATES_DIR, 'YYYY-MM-DD_Physical3DPrint_NameClient_NameProject'))
+        self.tree_file = os.path.join(TEMPLATES_DIR, 'physical_3dprint_structure.txt')
 
         # Initialize preview
         self.update_preview()
@@ -386,59 +389,45 @@ class PhysicalFolderStructureCreator(FormKeyboardMixin):
             self.base_dir_var.set(directory)
             self.update_preview()
 
+    def _get_conditionals(self):
+        """Build conditionals dict from current form state."""
+        active_software = get_active_software(self.software_chips)
+        return {
+            'preproduction': self.include_preproduction_var.get(),
+            'library': self.include_library_var.get(),
+            'houdini': 'Houdini' in active_software,
+            'blender': 'Blender' in active_software,
+            'freecad': 'FreeCAD' in active_software,
+            'alibre': 'Alibre' in active_software,
+            'affinity': 'Affinity' in active_software,
+        }
+
     def get_folder_structure_preview(self):
         """Generate the folder structure that will be created."""
-        folders = []
-        numbered_folders = []
-
-        numbered_folders.append("Incoming")
-        if self.include_preproduction_var.get():
-            numbered_folders.append("Preproduction")
-        numbered_folders.append("Production")
-        numbered_folders.append("Outgoing")
-
-        counter = 0
-        folder_mapping = {}
-        for folder_name in numbered_folders:
-            numbered_name = f"{counter:02d}_{folder_name}"
-            folder_mapping[folder_name] = numbered_name
-            folders.append(numbered_name)
-            counter += 1
-
-        production_folder = folder_mapping.get("Production", "Production")
-
-        # Get active software from chips
-        active_software = get_active_software(self.software_chips)
-
-        if "Houdini" in active_software:
-            folders.append(f"{production_folder}/3D/Houdini")
-        if "Blender" in active_software:
-            folders.append(f"{production_folder}/3D/Blender")
-        if "FreeCAD" in active_software:
-            folders.append(f"{production_folder}/3D/FreeCAD")
-        if "Alibre" in active_software:
-            folders.append(f"{production_folder}/3D/Alibre")
-        if "Affinity" in active_software:
-            folders.append(f"{production_folder}/2D/Affinity")
-
-        folders.append(f"{production_folder}/Documentation")
-        folders.append(f"{production_folder}/Documentation/Photo")
-        folders.append(f"{production_folder}/Documentation/Photo/RAW")
-        folders.append(f"{production_folder}/Documentation/Video")
-        folders.append(f"{production_folder}/Documentation/Video/Footage")
-
-        outgoing_folder = folder_mapping.get("Outgoing", "Outgoing")
+        if not os.path.isfile(self.tree_file):
+            return []
+        tree = parse_tree_file(self.tree_file)
+        conditionals = self._get_conditionals()
         date = self.date_var.get() or datetime.now().strftime('%Y-%m-%d')
-        folders.append(f"{outgoing_folder}/{date}")
+        replacements = {'YYY-MM-DD': date}
 
-        if self.include_library_var.get():
-            folders.append("_LIBRARY")
-            folders.append("_LIBRARY/Documents")
-            folders.append("_LIBRARY/Pipeline")
-            folders.append("_LIBRARY/Pipeline/Plugins")
-            folders.append("_LIBRARY/Pipeline/Scripts")
-
-        return sorted(folders)
+        folders = []
+        skipped_prefixes = []
+        for path, cond in tree:
+            skip = False
+            for prefix in skipped_prefixes:
+                if path.startswith(prefix + '/'):
+                    skip = True
+                    break
+            if skip:
+                continue
+            if cond and not conditionals.get(cond, True):
+                skipped_prefixes.append(path)
+                continue
+            for placeholder, value in replacements.items():
+                path = path.replace(placeholder, value)
+            folders.append(path)
+        return folders
 
     def update_preview(self):
         """Update the preview of the folder structure."""
@@ -582,56 +571,11 @@ class PhysicalFolderStructureCreator(FormKeyboardMixin):
             self.on_cancel()
 
     def create_folder_structure(self, project_dir, date, software_specs):
-        """Create the folder structure dynamically."""
-        folders_to_create = []
-        numbered_folders = []
-
-        numbered_folders.append("Incoming")
-        if self.include_preproduction_var.get():
-            numbered_folders.append("Preproduction")
-        numbered_folders.append("Production")
-        numbered_folders.append("Outgoing")
-
-        counter = 0
-        folder_mapping = {}
-        for folder_name in numbered_folders:
-            numbered_name = f"{counter:02d}_{folder_name}"
-            folder_mapping[folder_name] = numbered_name
-            folders_to_create.append(numbered_name)
-            counter += 1
-
-        production_folder = folder_mapping.get("Production", "Production")
-
-        if 'Houdini' in software_specs:
-            folders_to_create.append(f"{production_folder}/3D/Houdini")
-        if 'Blender' in software_specs:
-            folders_to_create.append(f"{production_folder}/3D/Blender")
-        if 'FreeCAD' in software_specs:
-            folders_to_create.append(f"{production_folder}/3D/FreeCAD")
-        if 'Alibre' in software_specs:
-            folders_to_create.append(f"{production_folder}/3D/Alibre")
-        if 'Affinity' in software_specs:
-            folders_to_create.append(f"{production_folder}/2D/Affinity")
-
-        folders_to_create.append(f"{production_folder}/Documentation")
-        folders_to_create.append(f"{production_folder}/Documentation/Product_Photo")
-        folders_to_create.append(f"{production_folder}/Documentation/Product_Photo/RAW")
-        folders_to_create.append(f"{production_folder}/Documentation/Product_Video")
-        folders_to_create.append(f"{production_folder}/Documentation/Product_Video/Footage")
-
-        outgoing_folder = folder_mapping.get("Outgoing", "Outgoing")
-        folders_to_create.append(f"{outgoing_folder}/{date}")
-
-        if self.include_library_var.get():
-            folders_to_create.append("_LIBRARY")
-            folders_to_create.append("_LIBRARY/Documents")
-            folders_to_create.append("_LIBRARY/Pipeline")
-            folders_to_create.append("_LIBRARY/Pipeline/Plugins")
-            folders_to_create.append("_LIBRARY/Pipeline/Scripts")
-
-        for folder in folders_to_create:
-            folder_path = os.path.join(project_dir, folder)
-            os.makedirs(folder_path, exist_ok=True)
+        """Create the folder structure from tree definition."""
+        tree = parse_tree_file(self.tree_file)
+        replacements = {'YYY-MM-DD': date}
+        conditionals = self._get_conditionals()
+        tree_create_structure(project_dir, tree, replacements, conditionals)
 
     def create_specs_file(self, project_dir, client_name, project_name, date,
                           software_specs, slicer_software, printer_model):

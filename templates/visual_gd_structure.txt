@@ -1,0 +1,12 @@
++---00_Incoming
+|   +---01_Preproduction
+|   \---02_Production
++---01_Preproduction
++---02_Production
++---03_Outgoing
+|   \---YYY-MM-DD
+\---_LIBRARY
+    +---Documents
+    +---Pipeline
+    |   +---Plugins
+    |   \---Scripts

@@ -29,6 +29,9 @@ from shared_form_keyboard import (
     create_styled_label, create_styled_checkbox, create_styled_frame,
     create_styled_labelframe, format_button_with_shortcut
 )
+from shared_folder_tree_parser import parse_tree_file, create_structure as tree_create_structure
+
+TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates")
 
 
 class PhotoFolderStructureCreator(FormKeyboardMixin):
@@ -306,8 +309,9 @@ class PhotoFolderStructureCreator(FormKeyboardMixin):
                     return
 
             os.makedirs(project_path, exist_ok=True)
-            raw_path = os.path.join(project_path, "RAW")
-            os.makedirs(raw_path, exist_ok=True)
+            tree_file = os.path.join(TEMPLATES_DIR, 'photo_structure.txt')
+            tree = parse_tree_file(tree_file)
+            tree_create_structure(project_path, tree)
 
             self.status_var.set(f"Created project structure: {folder_name}")
 
