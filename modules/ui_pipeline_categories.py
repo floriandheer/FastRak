@@ -204,6 +204,18 @@ BUSINESS_CATEGORIES = {
                 "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Global_Cleanup.py"),
                 "description": "Clean up temporary files and folders",
                 "icon": "🧹"
+            },
+            "software_sync": {
+                "name": "Software Config Sync",
+                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Global_SoftwareSync.py"),
+                "description": "Auto-detect software versions, back up/restore configs to NAS, and migrate configs to new versions",
+                "icon": "🔄"
+            },
+            "software_launcher": {
+                "name": "Software Launcher",
+                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Global_SoftwareLauncher.py"),
+                "description": "Download, update, and launch portable software tools from GitHub releases",
+                "icon": "🚀"
             }
         },
         "subcategories": {}

@@ -118,6 +118,10 @@ class RakSettings:
             "platform": "PC/Desktop",
             "renderer": "Forward+",
             "resolution": "1920x1080"
+        },
+        "software_sync": {
+            "nas_software_path": "D:\\_work\\_PIPELINE\\Software",
+            "mapped_software_path": "P:\\Software"
         }
     }
 
