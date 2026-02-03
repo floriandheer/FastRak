@@ -20,6 +20,7 @@ from typing import Dict, List, Optional, Tuple
 
 from shared_logging import get_logger, setup_logging as setup_shared_logging
 from shared_form_keyboard import FormKeyboardMixin, FORM_COLORS
+from rak_settings import RakSettings
 
 logger = get_logger("software_sync")
 
@@ -80,22 +81,20 @@ def detect_new_versions(sw_cfg: Dict) -> List[str]:
 
 
 def _scan_nas_versions(sw_cfg: Dict) -> List[str]:
-    """Scan NAS and mapped backup directories for version folders."""
+    """Scan mapped backup directories for version folders."""
     pattern = re.compile(sw_cfg["version_pattern"])
     versions = set()
     for prof in sw_cfg.get("profiles", []):
-        for key in ("nas", "mapped"):
-            # Replace {version} with a wildcard-friendly parent scan
-            tmpl = prof[key]
-            if "{version}" not in tmpl:
-                continue
-            parent = _expand_env(tmpl.split("{version}")[0].rstrip("/\\"))
-            if not os.path.isdir(parent):
-                continue
-            for entry in os.listdir(parent):
-                m = pattern.search(entry)
-                if m:
-                    versions.add(m.group(1))
+        tmpl = prof.get("mapped", "")
+        if "{version}" not in tmpl:
+            continue
+        parent = _expand_env(tmpl.split("{version}")[0].rstrip("/\\"))
+        if not os.path.isdir(parent):
+            continue
+        for entry in os.listdir(parent):
+            m = pattern.search(entry)
+            if m:
+                versions.add(m.group(1))
     return sorted(versions, key=lambda v: [int(x) for x in v.split('.')])
 
 
@@ -110,14 +109,13 @@ def find_previous_version(sw_cfg: Dict, target_ver: str) -> Optional[str]:
         if parts >= target_parts:
             continue
         cfg_dir = get_config_dir(sw_cfg, v)
-        # Accept if local config exists OR any NAS/mapped backup exists
+        # Accept if local config exists OR any mapped backup exists
         if os.path.isdir(cfg_dir):
             candidates.append(v)
             continue
         for prof in sw_cfg.get("profiles", []):
-            nas = _resolve_path(prof["nas"], v, cfg_dir)
             mapped = _resolve_path(prof["mapped"], v, cfg_dir)
-            if os.path.isdir(nas) or os.path.isdir(mapped):
+            if os.path.isdir(mapped):
                 candidates.append(v)
                 break
     return candidates[-1] if candidates else None
@@ -156,28 +154,20 @@ def _copy_tree(src: str, dst: str, patterns: Optional[List[str]] = None) -> int:
     return count
 
 
-def profile_status(source: str, nas: str, mapped: str,
+def profile_status(source: str, mapped: str,
                    patterns: Optional[List[str]] = None) -> str:
     """Compare mtimes and return a status string."""
     mt_src = _newest_mtime(source, patterns)
-    mt_nas = _newest_mtime(nas, patterns)
     mt_mapped = _newest_mtime(mapped, patterns)
 
     if mt_src is None:
         return "missing"
-    if mt_nas is None and mt_mapped is None:
+    if mt_mapped is None:
         return "local only"
-    if mt_nas is not None and mt_src is not None:
-        diff = mt_src - mt_nas
-        if abs(diff) < 2:
-            return "synced"
-        return "local newer" if diff > 0 else "NAS newer"
-    if mt_mapped is not None and mt_src is not None:
-        diff = mt_src - mt_mapped
-        if abs(diff) < 2:
-            return "synced"
-        return "local newer" if diff > 0 else "mapped newer"
-    return "unknown"
+    diff = mt_src - mt_mapped
+    if abs(diff) < 2:
+        return "synced"
+    return "local newer" if diff > 0 else "NAS newer"
 
 
 # ============================================================================
@@ -190,7 +180,7 @@ class SoftwareSyncManager(FormKeyboardMixin):
     def __init__(self, root, embedded=False, settings=None):
         self.root = root
         self.embedded = embedded
-        self.settings = settings
+        self.settings = settings or RakSettings()
         self.manifest: Dict = {}
         self.rows: List[Dict] = []  # treeview row data
 
@@ -201,6 +191,7 @@ class SoftwareSyncManager(FormKeyboardMixin):
             self.root.configure(bg=FORM_COLORS["bg"])
 
         self._load_manifest()
+        self._resolve_manifest_paths()
         self._build_form()
         # initial scan
         self.root.after(200, self._scan_status)
@@ -212,6 +203,15 @@ class SoftwareSyncManager(FormKeyboardMixin):
         except Exception as e:
             self.manifest = {}
             logger.error(f"Failed to load manifest: {e}")
+
+    def _resolve_manifest_paths(self):
+        """Prepend the mapped software base path from settings to relative profile paths."""
+        base = self.settings.get_mapped_software_path()
+        for sw_key, sw_cfg in self.manifest.items():
+            for prof in sw_cfg.get("profiles", []):
+                mapped = prof.get("mapped", "")
+                if mapped and not os.path.isabs(mapped):
+                    prof["mapped"] = os.path.join(base, mapped)
 
     # ---- UI ----
     def _build_form(self):
@@ -243,13 +243,13 @@ class SoftwareSyncManager(FormKeyboardMixin):
         tree_frame = tk.Frame(container, bg=FORM_COLORS["bg"])
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=4)
 
-        columns = ("software", "version", "profile", "local", "nas", "mapped", "status")
+        columns = ("software", "version", "profile", "local", "mapped", "status")
         self.tree = ttk.Treeview(tree_frame, columns=columns, show="headings",
                                  selectmode="extended", style="Dark.Treeview")
         headings = {"software": "Software", "version": "Version", "profile": "Profile",
-                    "local": "Local", "nas": "NAS", "mapped": "Mapped Drive", "status": "Status"}
+                    "local": "Local", "mapped": "Mapped Drive (NAS)", "status": "Status"}
         widths = {"software": 100, "version": 70, "profile": 90,
-                  "local": 200, "nas": 200, "mapped": 200, "status": 100}
+                  "local": 200, "mapped": 250, "status": 100}
         for col in columns:
             self.tree.heading(col, text=headings[col])
             self.tree.column(col, width=widths[col], minwidth=50)
@@ -311,33 +311,31 @@ class SoftwareSyncManager(FormKeyboardMixin):
                 for prof in sw_cfg.get("profiles", []):
                     patterns = prof.get("patterns")
                     source = _resolve_path(prof["source"], ver, config_dir)
-                    nas = _resolve_path(prof["nas"], ver, config_dir)
                     mapped = _resolve_path(prof["mapped"], ver, config_dir)
 
                     if is_new:
                         status = "NEW VERSION"
                     else:
-                        status = profile_status(source, nas, mapped, patterns)
+                        status = profile_status(source, mapped, patterns)
 
                     row = {
                         "sw_key": sw_key, "version": ver, "profile": prof["name"],
-                        "source": source, "nas": nas, "mapped": mapped,
+                        "source": source, "mapped": mapped,
                         "patterns": patterns, "status": status,
                     }
                     self.rows.append(row)
 
                     local_short = source if os.path.isdir(source) else "(missing)"
-                    nas_short = nas if os.path.isdir(nas) else "(missing)"
                     mapped_short = mapped if os.path.isdir(mapped) else "(missing)"
 
                     tag = "new" if is_new else status.replace(" ", "_")
                     self.tree.insert("", tk.END, values=(
-                        label, ver, prof["name"], local_short, nas_short, mapped_short, status
+                        label, ver, prof["name"], local_short, mapped_short, status
                     ), tags=(tag,))
 
             if not installed:
                 self.tree.insert("", tk.END, values=(
-                    label, "-", "-", "(not found)", "", "", "no install"
+                    label, "-", "-", "(not found)", "", "no install"
                 ), tags=("missing",))
 
         # Tag colours
@@ -365,13 +363,12 @@ class SoftwareSyncManager(FormKeyboardMixin):
     def _do_backup(self, row: Dict):
         src = row["source"]
         patterns = row.get("patterns")
-        for dest_key in ("nas", "mapped"):
-            dest = row[dest_key]
-            try:
-                n = _copy_tree(src, dest, patterns)
-                self._log(f"Backed up {n} files: {src} -> {dest}")
-            except Exception as e:
-                self._log(f"ERROR backing up to {dest}: {e}")
+        dest = row["mapped"]
+        try:
+            n = _copy_tree(src, dest, patterns)
+            self._log(f"Backed up {n} files: {src} -> {dest}")
+        except Exception as e:
+            self._log(f"ERROR backing up to {dest}: {e}")
 
     def _backup_selected(self):
         rows = self._selected_rows()
@@ -396,16 +393,14 @@ class SoftwareSyncManager(FormKeyboardMixin):
     def _do_restore(self, row: Dict):
         dst = row["source"]
         patterns = row.get("patterns")
-        # prefer mapped drive, fallback to NAS (Synology-synced D: drive)
-        for src_key in ("mapped", "nas"):
-            src = row[src_key]
-            if os.path.isdir(src):
-                try:
-                    n = _copy_tree(src, dst, patterns)
-                    self._log(f"Restored {n} files: {src} -> {dst}")
-                    return
-                except Exception as e:
-                    self._log(f"ERROR restoring from {src}: {e}")
+        src = row["mapped"]
+        if os.path.isdir(src):
+            try:
+                n = _copy_tree(src, dst, patterns)
+                self._log(f"Restored {n} files: {src} -> {dst}")
+                return
+            except Exception as e:
+                self._log(f"ERROR restoring from {src}: {e}")
         self._log(f"No backup found for {row['sw_key']} {row['version']}/{row['profile']}")
 
     def _restore_selected(self):
@@ -473,9 +468,8 @@ class SoftwareSyncManager(FormKeyboardMixin):
                 continue
             cfg_dir = get_config_dir(sw_cfg, v)
             source = _resolve_path(prof["source"], v, cfg_dir)
-            nas = _resolve_path(prof["nas"], v, cfg_dir)
             mapped = _resolve_path(prof["mapped"], v, cfg_dir)
-            if os.path.isdir(source) or os.path.isdir(nas) or os.path.isdir(mapped):
+            if os.path.isdir(source) or os.path.isdir(mapped):
                 candidates.append(v)
         return candidates[-1] if candidates else None
 
@@ -487,20 +481,16 @@ class SoftwareSyncManager(FormKeyboardMixin):
 
         src = _resolve_path(prof["source"], prev, prev_config_dir)
         dst_local = _resolve_path(prof["source"], new_ver, new_config_dir)
-        dst_nas = _resolve_path(prof["nas"], new_ver, new_config_dir)
         dst_mapped = _resolve_path(prof["mapped"], new_ver, new_config_dir)
 
-        # Use local source if available, otherwise fall back to mapped/NAS
+        # Use local source if available, otherwise fall back to mapped drive
         if os.path.isdir(src):
             actual_src = src
         else:
-            actual_src = None
-            for fallback in (_resolve_path(prof["mapped"], prev, prev_config_dir),
-                             _resolve_path(prof["nas"], prev, prev_config_dir)):
-                if os.path.isdir(fallback):
-                    actual_src = fallback
-                    break
-            if actual_src is None:
+            fallback = _resolve_path(prof["mapped"], prev, prev_config_dir)
+            if os.path.isdir(fallback):
+                actual_src = fallback
+            else:
                 self._log(f"  [{prof['name']}] No source found for {prev}, skipping")
                 return
             self._log(f"  [{prof['name']}] Using backup: {actual_src}")
@@ -508,12 +498,11 @@ class SoftwareSyncManager(FormKeyboardMixin):
         n = _copy_tree(actual_src, dst_local, patterns)
         self._log(f"  [{prof['name']}] Copied {n} files to local config")
 
-        for dest in (dst_nas, dst_mapped):
-            try:
-                nc = _copy_tree(dst_local, dest, patterns)
-                self._log(f"  [{prof['name']}] Backed up {nc} files to {dest}")
-            except Exception as e:
-                self._log(f"  [{prof['name']}] ERROR backing up to {dest}: {e}")
+        try:
+            nc = _copy_tree(dst_local, dst_mapped, patterns)
+            self._log(f"  [{prof['name']}] Backed up {nc} files to {dst_mapped}")
+        except Exception as e:
+            self._log(f"  [{prof['name']}] ERROR backing up to {dst_mapped}: {e}")
 
 
 # ============================================================================

@@ -1,22 +1,20 @@
 {
   "blender": {
     "label": "Blender",
-    "install_scan": "C:/Users/flori/Blender/stable",
+    "install_scan": "%USERPROFILE%/Blender/stable",
     "version_pattern": "blender-(\\d+\\.\\d+)",
     "config_dir": "%APPDATA%/Blender Foundation/Blender/{version}",
     "profiles": [
       {
         "name": "config",
         "source": "{config_dir}/config",
-        "nas": "D:/_work/_PIPELINE/Software/Blender/{version}/config",
-        "mapped": "P:/Software/Blender/{version}/config",
+        "mapped": "Blender/{version}/config",
         "patterns": ["*.blend", "*.json", "*.txt"]
       },
       {
         "name": "scripts",
         "source": "{config_dir}/scripts",
-        "nas": "D:/_work/_PIPELINE/Software/Blender/{version}/scripts",
-        "mapped": "P:/Software/Blender/{version}/scripts"
+        "mapped": "Blender/{version}/scripts"
       }
     ]
   },
@@ -29,22 +27,19 @@
       {
         "name": "prefs",
         "source": "{config_dir}",
-        "nas": "D:/_work/_PIPELINE/Software/Houdini/houdini{version}",
-        "mapped": "P:/Software/Houdini/houdini{version}",
+        "mapped": "Houdini/houdini{version}",
         "patterns": ["*.pref", "*.env"]
       },
       {
         "name": "desktop",
         "source": "{config_dir}/desktop",
-        "nas": "D:/_work/_PIPELINE/Software/Houdini/desktop",
-        "mapped": "P:/Software/Houdini/desktop",
+        "mapped": "Houdini/desktop",
         "patterns": ["*.desk"]
       },
       {
         "name": "packages",
         "source": "{config_dir}/packages",
-        "nas": "D:/_work/_PIPELINE/Software/Houdini/packages",
-        "mapped": "P:/Software/Houdini/packages",
+        "mapped": "Houdini/packages",
         "patterns": ["*.json"]
       }
     ]
