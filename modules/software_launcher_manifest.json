@@ -4,7 +4,7 @@
     "description": "Manage and download Blender versions",
     "github_repo": "Victor-IX/Blender-Launcher-V2",
     "asset_pattern": "Windows_x64.zip",
-    "install_dir": "D:/_work/_PIPELINE/Launchers/BlenderLauncher",
+    "install_dir": "BlenderLauncher",
     "executable": "Blender Launcher.exe",
     "library_path": "C:\\Users\\flori\\Blender"
   }

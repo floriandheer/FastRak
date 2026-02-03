@@ -308,6 +308,110 @@ class SettingsDialog:
         )
         self.archive_status_label.pack(side=tk.LEFT)
 
+        # === SOFTWARE TOOLS SECTION ===
+        tools_section = tk.LabelFrame(
+            content_frame,
+            text=" Software Tools ",
+            font=font.Font(family="Segoe UI", size=11, weight="bold"),
+            fg=COLORS["text_primary"],
+            bg=COLORS["bg_card"],
+            padx=15,
+            pady=10
+        )
+        tools_section.pack(fill=tk.X, pady=(0, 15))
+
+        # Mapped Software Path row
+        mapped_sw_frame = tk.Frame(tools_section, bg=COLORS["bg_card"])
+        mapped_sw_frame.pack(fill=tk.X, pady=5)
+
+        tk.Label(
+            mapped_sw_frame,
+            text="Software (NAS):",
+            font=font.Font(family="Segoe UI", size=10),
+            fg=COLORS["text_primary"],
+            bg=COLORS["bg_card"],
+            width=15,
+            anchor="w"
+        ).pack(side=tk.LEFT)
+
+        self.mapped_sw_var = tk.StringVar(value=self.settings.get_mapped_software_path())
+        mapped_sw_entry = tk.Entry(
+            mapped_sw_frame,
+            textvariable=self.mapped_sw_var,
+            font=font.Font(family="Segoe UI", size=10),
+            bg=COLORS["bg_secondary"],
+            fg=COLORS["text_primary"],
+            insertbackground=COLORS["text_primary"],
+            width=30
+        )
+        mapped_sw_entry.pack(side=tk.LEFT, padx=(0, 10))
+
+        tk.Button(
+            mapped_sw_frame,
+            text="Browse",
+            command=lambda: self._browse_to_var(self.mapped_sw_var, "Select Software Sync Directory"),
+            bg=COLORS["bg_secondary"],
+            fg=COLORS["text_primary"],
+            font=font.Font(family="Segoe UI", size=9),
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=10
+        ).pack(side=tk.LEFT)
+
+        tk.Label(
+            tools_section,
+            text="Mapped drive path for software config sync (e.g. P:\\Software)",
+            font=font.Font(family="Segoe UI", size=9, slant="italic"),
+            fg=COLORS["text_secondary"],
+            bg=COLORS["bg_card"]
+        ).pack(anchor="w", padx=(15 * 10, 0), pady=(0, 5))
+
+        # Launchers Base Path row
+        launchers_frame = tk.Frame(tools_section, bg=COLORS["bg_card"])
+        launchers_frame.pack(fill=tk.X, pady=5)
+
+        tk.Label(
+            launchers_frame,
+            text="Launchers Path:",
+            font=font.Font(family="Segoe UI", size=10),
+            fg=COLORS["text_primary"],
+            bg=COLORS["bg_card"],
+            width=15,
+            anchor="w"
+        ).pack(side=tk.LEFT)
+
+        self.launchers_var = tk.StringVar(value=self.settings.get_launchers_base_path())
+        launchers_entry = tk.Entry(
+            launchers_frame,
+            textvariable=self.launchers_var,
+            font=font.Font(family="Segoe UI", size=10),
+            bg=COLORS["bg_secondary"],
+            fg=COLORS["text_primary"],
+            insertbackground=COLORS["text_primary"],
+            width=30
+        )
+        launchers_entry.pack(side=tk.LEFT, padx=(0, 10))
+
+        tk.Button(
+            launchers_frame,
+            text="Browse",
+            command=lambda: self._browse_to_var(self.launchers_var, "Select Launchers Directory"),
+            bg=COLORS["bg_secondary"],
+            fg=COLORS["text_primary"],
+            font=font.Font(family="Segoe UI", size=9),
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=10
+        ).pack(side=tk.LEFT)
+
+        tk.Label(
+            tools_section,
+            text="Base path for portable software launchers",
+            font=font.Font(family="Segoe UI", size=9, slant="italic"),
+            fg=COLORS["text_secondary"],
+            bg=COLORS["bg_card"]
+        ).pack(anchor="w", padx=(15 * 10, 0), pady=(0, 5))
+
         # === CATEGORY PATHS SECTION ===
         paths_section = tk.LabelFrame(
             content_frame,
@@ -660,6 +764,18 @@ class SettingsDialog:
             self.active_base_var.set(folder)
             self._validate_paths()
 
+    def _browse_to_var(self, var, title):
+        """Open folder browser and set the result to a StringVar."""
+        current = var.get()
+        initial_dir = current if os.path.isdir(current) else None
+        folder = filedialog.askdirectory(
+            parent=self.dialog,
+            title=title,
+            initialdir=initial_dir
+        )
+        if folder:
+            var.set(folder.replace('/', '\\'))
+
     def _reset_defaults(self):
         """Reset to default values."""
         if messagebox.askyesno(
@@ -676,6 +792,8 @@ class SettingsDialog:
             self.work_drive_var.set("I:")
             self.active_base_var.set("D:\\_work\\Active")
             self.archive_base_var.set("D:\\_work\\Archive")
+            self.mapped_sw_var.set("P:\\Software")
+            self.launchers_var.set("D:\\_work\\_PIPELINE\\Launchers")
             self._validate_paths()
 
             # Reset software defaults in UI
@@ -708,6 +826,8 @@ class SettingsDialog:
         self.settings.set_work_drive(work_drive)
         self.settings.set_active_base(active_base)
         self.settings.set_archive_base(archive_base)
+        self.settings.set_mapped_software_path(self.mapped_sw_var.get())
+        self.settings.set_launchers_base_path(self.launchers_var.get())
 
         # Save software defaults
         if hasattr(self, 'software_entries'):

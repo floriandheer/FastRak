@@ -121,7 +121,8 @@ class RakSettings:
         },
         "software_sync": {
             "nas_software_path": "D:\\_work\\_PIPELINE\\Software",
-            "mapped_software_path": "P:\\Software"
+            "mapped_software_path": "P:\\Software",
+            "launchers_base_path": "D:\\_work\\_PIPELINE\\Launchers"
         }
     }
 
@@ -251,6 +252,16 @@ class RakSettings:
         """Get the archive base path (e.g., 'D:\\_work\\Archive')."""
         return self.config["drives"]["archive_base"]
 
+    def get_mapped_software_path(self) -> str:
+        """Get the mapped drive path for software sync (e.g., 'P:\\Software')."""
+        return self.config.get("software_sync", {}).get(
+            "mapped_software_path", "P:\\Software")
+
+    def get_launchers_base_path(self) -> str:
+        """Get the base path for software launchers (e.g., 'D:\\_work\\_PIPELINE\\Launchers')."""
+        return self.config.get("software_sync", {}).get(
+            "launchers_base_path", "D:\\_work\\_PIPELINE\\Launchers")
+
     def get_work_path(self, category: str) -> str:
         """
         Get the full work path for a category.
@@ -367,6 +378,24 @@ class RakSettings:
         self.config["drives"]["archive_base"] = path
         self._save()
         logger.info(f"Archive base set to: {path}")
+
+    def set_mapped_software_path(self, path: str):
+        """Set the mapped drive path for software sync."""
+        path = path.replace('/', '\\')
+        if "software_sync" not in self.config:
+            self.config["software_sync"] = {}
+        self.config["software_sync"]["mapped_software_path"] = path
+        self._save()
+        logger.info(f"Mapped software path set to: {path}")
+
+    def set_launchers_base_path(self, path: str):
+        """Set the base path for software launchers."""
+        path = path.replace('/', '\\')
+        if "software_sync" not in self.config:
+            self.config["software_sync"] = {}
+        self.config["software_sync"]["launchers_base_path"] = path
+        self._save()
+        logger.info(f"Launchers base path set to: {path}")
 
     def set_category_paths(self, category: str, work_subpath: str = None,
                           archive_subpath: str = None):

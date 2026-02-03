@@ -20,6 +20,7 @@ from urllib.error import URLError
 
 from shared_logging import get_logger, setup_logging as setup_shared_logging
 from shared_form_keyboard import FormKeyboardMixin, FORM_COLORS
+from rak_settings import RakSettings
 
 logger = get_logger("software_launcher")
 
@@ -129,9 +130,10 @@ def launch_tool(tool_cfg: Dict) -> bool:
 class SoftwareLauncherManager(FormKeyboardMixin):
     """Tkinter GUI for downloading, updating, and launching portable tools."""
 
-    def __init__(self, root, embedded=False):
+    def __init__(self, root, embedded=False, settings=None):
         self.root = root
         self.embedded = embedded
+        self.settings = settings or RakSettings()
         self.manifest: Dict = {}
         # tool_key -> {installed, latest, asset_url, status}
         self.tool_info: Dict[str, Dict] = {}
@@ -143,6 +145,7 @@ class SoftwareLauncherManager(FormKeyboardMixin):
             self.root.configure(bg=FORM_COLORS["bg"])
 
         self._load_manifest()
+        self._resolve_manifest_paths()
         self._build_form()
         self.root.after(200, self._check_versions)
 
@@ -153,6 +156,14 @@ class SoftwareLauncherManager(FormKeyboardMixin):
         except Exception as e:
             self.manifest = {}
             logger.error(f"Failed to load manifest: {e}")
+
+    def _resolve_manifest_paths(self):
+        """Resolve relative install_dir paths using the launchers base path from settings."""
+        base = self.settings.get_launchers_base_path()
+        for key, cfg in self.manifest.items():
+            install_dir = cfg.get("install_dir", "")
+            if not os.path.isabs(install_dir):
+                cfg["install_dir"] = os.path.join(base, install_dir)
 
     # ---- UI ----
     def _build_form(self):
