@@ -788,12 +788,13 @@ class SettingsDialog:
             "- All software version defaults",
             parent=self.dialog
         ):
-            # Reset paths
-            self.work_drive_var.set("I:")
-            self.active_base_var.set("D:\\_work\\Active")
-            self.archive_base_var.set("D:\\_work\\Archive")
-            self.mapped_sw_var.set("P:\\Software")
-            self.launchers_var.set("D:\\_work\\_PIPELINE\\Launchers")
+            # Reset paths from DEFAULT_CONFIG
+            defaults = self.settings.DEFAULT_CONFIG
+            self.work_drive_var.set(defaults["drives"]["work"])
+            self.active_base_var.set(defaults["drives"]["active_base"])
+            self.archive_base_var.set(defaults["drives"]["archive_base"])
+            self.mapped_sw_var.set(defaults["software_sync"]["mapped_software_path"])
+            self.launchers_var.set(defaults["software_sync"]["launchers_base_path"])
             self._validate_paths()
 
             # Reset software defaults in UI

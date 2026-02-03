@@ -4,6 +4,10 @@
     "install_scan": "%USERPROFILE%/Blender/stable",
     "version_pattern": "blender-(\\d+\\.\\d+)",
     "config_dir": "%APPDATA%/Blender Foundation/Blender/{version}",
+    "config_scan": {
+      "path": "%APPDATA%/Blender Foundation/Blender",
+      "pattern": "^(\\d+\\.\\d+)$"
+    },
     "profiles": [
       {
         "name": "config",
@@ -23,6 +27,10 @@
     "install_scan": "C:/Program Files/Side Effects Software",
     "version_pattern": "Houdini (\\d+\\.\\d+)",
     "config_dir": "%USERPROFILE%/Documents/houdini{version}",
+    "config_scan": {
+      "path": "%USERPROFILE%/Documents",
+      "pattern": "^houdini(\\d+\\.\\d+)$"
+    },
     "profiles": [
       {
         "name": "prefs",

@@ -122,7 +122,7 @@ class RakSettings:
         "software_sync": {
             "nas_software_path": "D:\\_work\\_PIPELINE\\Software",
             "mapped_software_path": "P:\\Software",
-            "launchers_base_path": "D:\\_work\\_PIPELINE\\Launchers"
+            "launchers_base_path": "P:\\Launchers"
         }
     }
 
@@ -202,6 +202,10 @@ class RakSettings:
         # Update UI preferences
         if "ui" in loaded:
             result["ui"].update(loaded["ui"])
+
+        # Update software_sync (preserve user customizations)
+        if "software_sync" in loaded:
+            result["software_sync"].update(loaded["software_sync"])
 
         # Preserve version from loaded if newer
         if "version" in loaded:

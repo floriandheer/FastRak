@@ -51,17 +51,40 @@ def load_manifest(path: str = MANIFEST_PATH) -> Dict:
         return json.load(f)
 
 
-def scan_installed_versions(sw_cfg: Dict) -> List[str]:
-    """Scan install directory and return sorted list of detected major.minor versions."""
-    scan_dir = _expand_env(sw_cfg["install_scan"])
-    pattern = re.compile(sw_cfg["version_pattern"])
+def _scan_directory_for_versions(scan_dir: str, pattern: re.Pattern) -> set:
+    """Scan a directory for version patterns and return matching versions."""
     versions = set()
     if not os.path.isdir(scan_dir):
-        return []
+        return versions
     for entry in os.listdir(scan_dir):
         m = pattern.search(entry)
         if m:
             versions.add(m.group(1))
+    return versions
+
+
+def scan_installed_versions(sw_cfg: Dict) -> List[str]:
+    """Scan install and config directories for detected major.minor versions.
+
+    Checks both install_scan and config_scan locations to find versions.
+    This allows detecting configs even when software isn't installed
+    in the standard location.
+    """
+    versions = set()
+
+    # Scan install directory (optional)
+    if "install_scan" in sw_cfg:
+        scan_dir = _expand_env(sw_cfg["install_scan"])
+        pattern = re.compile(sw_cfg["version_pattern"])
+        versions.update(_scan_directory_for_versions(scan_dir, pattern))
+
+    # Also scan config directory location (optional, uses its own pattern)
+    if "config_scan" in sw_cfg:
+        config_scan = sw_cfg["config_scan"]
+        scan_dir = _expand_env(config_scan.get("path", ""))
+        pattern = re.compile(config_scan.get("pattern", sw_cfg["version_pattern"]))
+        versions.update(_scan_directory_for_versions(scan_dir, pattern))
+
     return sorted(versions, key=lambda v: [int(x) for x in v.split('.')])
 
 
