@@ -6,6 +6,6 @@
     "asset_pattern": "Windows_x64.zip",
     "install_dir": "BlenderLauncher",
     "executable": "Blender Launcher.exe",
-    "library_path": "C:\\Users\\flori\\Blender"
+    "library_path": "%USERPROFILE%\\Blender"
   }
 }

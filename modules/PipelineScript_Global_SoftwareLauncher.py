@@ -28,6 +28,16 @@ MANIFEST_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "softwa
 GITHUB_API = "https://api.github.com"
 
 
+def _expand_env(path: str) -> str:
+    """Expand environment variables like %APPDATA% and %USERPROFILE%."""
+    import re
+    result = path
+    for var in re.findall(r'%([^%]+)%', path):
+        val = os.environ.get(var, '')
+        result = result.replace(f'%{var}%', val)
+    return os.path.normpath(result)
+
+
 # ============================================================================
 # CORE LOGIC
 # ============================================================================
@@ -255,6 +265,8 @@ class SoftwareLauncherManager(FormKeyboardMixin):
         if len(keys) == 1:
             cfg = self.manifest.get(keys[0], {})
             lib_path = cfg.get("library_path", "")
+            if lib_path:
+                lib_path = _expand_env(lib_path)
         else:
             lib_path = ""
         self.lib_path_var.set(lib_path)
