@@ -139,8 +139,33 @@ class SettingsDialog:
 
     def _build_paths_tab(self, parent):
         """Build the Paths settings tab."""
-        content_frame = tk.Frame(parent, bg=COLORS["bg_primary"])
-        content_frame.pack(fill=tk.BOTH, expand=True, pady=10)
+        canvas = tk.Canvas(parent, bg=COLORS["bg_primary"], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        content_frame = tk.Frame(canvas, bg=COLORS["bg_primary"])
+
+        content_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=content_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Enable mousewheel scrolling when mouse is over the canvas
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+
+        def _bind_mousewheel(event):
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        def _unbind_mousewheel(event):
+            canvas.unbind_all("<MouseWheel>")
+
+        canvas.bind("<Enter>", _bind_mousewheel)
+        canvas.bind("<Leave>", _unbind_mousewheel)
+
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, pady=10)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=10)
 
         # === DRIVE CONFIGURATION SECTION ===
         drive_section = tk.LabelFrame(
@@ -152,7 +177,7 @@ class SettingsDialog:
             padx=15,
             pady=10
         )
-        drive_section.pack(fill=tk.X, pady=(0, 15))
+        drive_section.pack(fill=tk.X, padx=20, pady=(0, 15))
 
         # Active Drive row
         work_frame = tk.Frame(drive_section, bg=COLORS["bg_card"])
@@ -308,6 +333,14 @@ class SettingsDialog:
         )
         self.archive_status_label.pack(side=tk.LEFT)
 
+        tk.Label(
+            drive_section,
+            text="Root directory for completed and archived projects",
+            font=font.Font(family="Segoe UI", size=9, slant="italic"),
+            fg=COLORS["text_secondary"],
+            bg=COLORS["bg_card"]
+        ).pack(anchor="w", padx=(15 * 10, 0), pady=(0, 5))
+
         # === SOFTWARE TOOLS SECTION ===
         tools_section = tk.LabelFrame(
             content_frame,
@@ -318,7 +351,7 @@ class SettingsDialog:
             padx=15,
             pady=10
         )
-        tools_section.pack(fill=tk.X, pady=(0, 15))
+        tools_section.pack(fill=tk.X, padx=20, pady=(0, 15))
 
         # Mapped Software Path row
         mapped_sw_frame = tk.Frame(tools_section, bg=COLORS["bg_card"])
@@ -356,7 +389,17 @@ class SettingsDialog:
             relief=tk.FLAT,
             cursor="hand2",
             padx=10
-        ).pack(side=tk.LEFT)
+        ).pack(side=tk.LEFT, padx=(0, 10))
+
+        self.mapped_sw_status_label = tk.Label(
+            mapped_sw_frame,
+            text="",
+            font=font.Font(family="Segoe UI", size=9),
+            bg=COLORS["bg_card"],
+            width=20,
+            anchor="w"
+        )
+        self.mapped_sw_status_label.pack(side=tk.LEFT)
 
         tk.Label(
             tools_section,
@@ -402,7 +445,17 @@ class SettingsDialog:
             relief=tk.FLAT,
             cursor="hand2",
             padx=10
-        ).pack(side=tk.LEFT)
+        ).pack(side=tk.LEFT, padx=(0, 10))
+
+        self.launchers_status_label = tk.Label(
+            launchers_frame,
+            text="",
+            font=font.Font(family="Segoe UI", size=9),
+            bg=COLORS["bg_card"],
+            width=20,
+            anchor="w"
+        )
+        self.launchers_status_label.pack(side=tk.LEFT)
 
         tk.Label(
             tools_section,
@@ -422,7 +475,7 @@ class SettingsDialog:
             padx=15,
             pady=10
         )
-        paths_section.pack(fill=tk.BOTH, expand=True, pady=(0, 15))
+        paths_section.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 15))
 
         # Header row
         header_row = tk.Frame(paths_section, bg=COLORS["bg_card"])
@@ -568,8 +621,8 @@ class SettingsDialog:
         canvas.bind("<Enter>", _bind_mousewheel)
         canvas.bind("<Leave>", _unbind_mousewheel)
 
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, pady=10)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=10)
 
         # Store software entry widgets for saving
         self.software_entries = {}
@@ -596,7 +649,7 @@ class SettingsDialog:
                 padx=15,
                 pady=10
             )
-            section.pack(fill=tk.X, padx=10, pady=(0, 10))
+            section.pack(fill=tk.X, padx=20, pady=(0, 15))
 
             for software in software_list:
                 # Skip if already has an entry (e.g. touchdesigner appears in both)
@@ -711,6 +764,24 @@ class SettingsDialog:
             self.archive_status_label.config(text=f"OK {archive_msg}", fg=COLORS["success"])
         else:
             self.archive_status_label.config(text=f"! {archive_msg}", fg=COLORS["warning"])
+
+        # Validate mapped software path
+        mapped_sw = self.mapped_sw_var.get()
+        sw_valid, sw_msg = self.settings.validate_drive(mapped_sw)
+
+        if sw_valid:
+            self.mapped_sw_status_label.config(text=f"OK {sw_msg}", fg=COLORS["success"])
+        else:
+            self.mapped_sw_status_label.config(text=f"! {sw_msg}", fg=COLORS["warning"])
+
+        # Validate launchers path
+        launchers = self.launchers_var.get()
+        launch_valid, launch_msg = self.settings.validate_drive(launchers)
+
+        if launch_valid:
+            self.launchers_status_label.config(text=f"OK {launch_msg}", fg=COLORS["success"])
+        else:
+            self.launchers_status_label.config(text=f"! {launch_msg}", fg=COLORS["warning"])
 
         # Update category path labels
         self._update_category_paths()
