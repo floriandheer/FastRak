@@ -85,6 +85,83 @@
    pip install -r requirements.txt
    ```
 
+## New PC Setup
+
+The `setup_new_pc.py` script automates the one-time provisioning steps for a new workstation.
+
+### What it automates
+
+| Step | Description |
+|------|-------------|
+| Folder structure | Creates `Active`, `Archive`, and `_PIPELINE` directories with all category/subcategory folders |
+| Drive mappings | Runs `subst` to map virtual drive letters (e.g. `I:` -> `D:\_work\Active`) and writes `HKCU\...\Run` registry entries so they persist after reboot |
+| Synology Drive | Checks whether the Synology Drive client is installed and running, and verifies expected sync folders are populated |
+| Pipeline config | Creates or updates `rak_config.json` with your paths via the existing `RakSettings` class |
+
+### Prerequisites
+
+- **Windows** (native, not WSL) - drive mappings and registry entries require Win32
+- **Python 3.8+**
+- **Synology Drive Client** installed (for sync checks; download from [synology.com](https://www.synology.com/en-global/dsm/feature/drive))
+
+### Step-by-step
+
+1. **Copy the config template**
+   ```bash
+   copy setup_config.json.example setup_config.json
+   ```
+
+2. **Edit `setup_config.json`** - adjust drive letters, base paths, and Synology sync folders to match your system.
+
+3. **Run the setup script**
+   ```bash
+   python setup_new_pc.py
+   ```
+   The script walks through each step, shows what it will do, and asks for confirmation.
+
+4. **Manual steps after running:**
+   - Open Synology Drive Client and create sync tasks for each expected folder
+   - Reboot and verify that mapped drives (`I:`, `P:`, etc.) are auto-mounted
+
+### CLI flags
+
+| Flag | Description |
+|------|-------------|
+| `--config PATH` | Path to config file (default: `./setup_config.json`) |
+| `--dry-run` | Show what would happen without making any changes |
+| `--yes` | Skip all confirmation prompts |
+| `--step STEP` | Run only one step: `folders`, `drives`, `synology`, `config`, or `all` |
+
+### How drive mapping works
+
+The script uses the built-in Windows `subst` command to create virtual drive letters that point to real directories. For example:
+
+```
+subst I: "D:\_work\Active"
+```
+
+To make this survive reboots, the script writes a registry entry under:
+
+```
+HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run
+```
+
+This does **not** require administrator rights (it's per-user, under HKCU) and does not require VisualSubst or any third-party tool.
+
+### Synology Drive
+
+The script **checks** whether Synology Drive is installed, running, and whether expected sync folders exist and are populated. It **cannot** create sync tasks automatically (Synology Drive has no CLI or API for this). Any missing sync tasks are listed as manual action items.
+
+### Re-running the script
+
+The script is idempotent - safe to run multiple times:
+
+- Existing folders are skipped (`os.makedirs(exist_ok=True)`)
+- Already-mapped drives are detected via `subst` output
+- Registry values are only written when different from expected
+- `RakSettings` merges config with defaults
+- Synology checks are read-only
+
 ## Troubleshooting Installation
 
 ### Issue: pyexiv2 installation fails

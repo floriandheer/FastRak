@@ -81,5 +81,8 @@ tools/
 *.conf
 rclone.conf
 
+# Setup config (user-specific paths, only .example is committed)
+setup_config.json
+
 # AI assistant
 .claude/
