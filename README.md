@@ -69,6 +69,18 @@ Some pipeline scripts require additional external software:
    python install_dependencies.py
    ```
 
+### New PC Setup
+
+The `setup_new_pc.py` script automates provisioning a new workstation: it creates the folder structure, maps `subst` drives with registry persistence (no admin rights needed), checks Synology Drive sync status, and generates the pipeline config file.
+
+```bash
+copy setup_config.json.example setup_config.json   # 1. Copy template
+# 2. Edit setup_config.json with your drive letters and paths
+python setup_new_pc.py                              # 3. Run setup
+```
+
+Use `--dry-run` to preview changes without modifying anything. See [docs/INSTALLATION.md](docs/INSTALLATION.md) for a full walkthrough.
+
 ## Usage
 
 ### Launching the Pipeline Manager
