@@ -289,14 +289,6 @@ def step_drives(cfg: dict, dry_run: bool, auto_yes: bool) -> bool:
         if not _ok:
             ok = False
 
-        # --- Drive label (optional, requires admin) ---
-        label = m.get("label")
-        if label:
-            _ok = _set_drive_label(drive, label, dry_run)
-            if not _ok:
-                # Non-fatal: label is cosmetic, don't fail the whole step
-                pass
-
     # Verify accessibility
     if not dry_run:
         print()
@@ -352,54 +344,6 @@ def _ensure_registry_autorun(name: str, value: str, dry_run: bool) -> bool:
     except Exception as e:
         status_line(f"Registry '{name}'", False, str(e))
         logger.error(f"Failed to write registry {name}: {e}")
-        return False
-
-
-def _set_drive_label(drive: str, label: str, dry_run: bool) -> bool:
-    """Set a drive label in Explorer via HKLM\\...\\DriveIcons (requires admin)."""
-    try:
-        import winreg
-    except ImportError:
-        print("    WARNING: winreg not available (not on Windows?)")
-        return False
-
-    letter = drive[0].upper()
-    key_path = rf"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\DriveIcons\{letter}\DefaultLabel"
-
-    # Read existing value
-    try:
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path, 0,
-                            winreg.KEY_READ) as key:
-            existing, _ = winreg.QueryValueEx(key, "")
-            if existing == label:
-                status_line(f"{drive} label", True, f'"{label}" already set')
-                return True
-    except FileNotFoundError:
-        pass  # Key or value doesn't exist yet
-    except PermissionError:
-        pass  # Can't even read — will try to write below
-    except Exception as e:
-        logger.debug(f"Could not read drive label registry: {e}")
-
-    if dry_run:
-        print(f'    [DRY RUN] Would set {drive} label to "{label}" (requires admin)')
-        return True
-
-    # Write the value (requires admin)
-    try:
-        with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, key_path, 0,
-                                winreg.KEY_SET_VALUE) as key:
-            winreg.SetValueEx(key, "", 0, winreg.REG_SZ, label)
-        status_line(f"{drive} label", True, f'set to "{label}"')
-        logger.info(f"Drive label set: {drive} = {label}")
-        return True
-    except PermissionError:
-        status_line(f"{drive} label", False,
-                    "requires admin - run as Administrator to set drive labels")
-        return False
-    except Exception as e:
-        status_line(f"{drive} label", False, str(e))
-        logger.error(f"Failed to set drive label for {drive}: {e}")
         return False
 
 
@@ -557,8 +501,10 @@ def final_report(results: dict):
 
     print("\n  Manual steps remaining:")
     print("    1. Create Synology Drive sync tasks (if not done)")
-    print("    2. Reboot to verify drive persistence via registry")
-    print("    3. Launch Pipeline Manager and verify paths in Settings (Ctrl+,)")
+    print("    2. Use Visual Subst to set drive labels (I: = Work, P: = Pipeline)")
+    print("       https://www.ntwind.com/software/visual-subst.html")
+    print("    3. Reboot to verify drive persistence via registry")
+    print("    4. Launch Pipeline Manager and verify paths in Settings (Ctrl+,)")
 
 
 # ============================================================
