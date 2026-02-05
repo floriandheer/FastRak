@@ -5,14 +5,12 @@
     {
       "drive_letter": "I:",
       "target_path": "D:\\_work\\Active",
-      "label": "Work",
       "description": "Work drive - active projects",
       "registry_name": "SubstDrive_I"
     },
     {
       "drive_letter": "P:",
       "target_path": "D:\\_work\\_PIPELINE",
-      "label": "Pipeline",
       "description": "Pipeline drive - scripts, software, launchers",
       "registry_name": "SubstDrive_P"
     }
@@ -21,10 +19,7 @@
   "folder_structure": {
     "bases": ["D:\\_work\\Active", "D:\\_work\\Archive"],
     "categories": ["Visual", "RealTime", "Audio", "Physical", "Photo", "Web"],
-    "subcategories": {
-      "Visual": ["GD", "CG", "VJ"],
-      "RealTime": ["Godot", "TD"]
-    },
+    "subcategories": {},
     "extra_dirs": ["D:\\_work\\_PIPELINE"]
   },
 
