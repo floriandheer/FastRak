@@ -4,17 +4,20 @@
 PipelineScript_Audio_PowerAmpSync.py
 Description: Sync MusicBee/iTunes playlists and music to PowerAmp (Android)
 Author: Florian Dheer
-Version: 2.0.0
+Version: 2.1.0
 
 Features:
 - Reads playlists from iTunes XML (exported from MusicBee or iTunes)
 - Selective playlist sync with treeview selection
-- Converts lossless audio (FLAC, WAV, AIFF) to MP3 for phone storage
-- Configurable MP3 quality (320k CBR, 256k, V0 VBR, V2 VBR)
+- Converts audio (FLAC, WAV, MP3, etc.) to Opus for optimal phone storage
+- Configurable Opus quality (64k to 192k VBR)
 - Skip existing files option for fast incremental syncs
 - Exports playlists to M3U8 format (UTF-8 for Unicode support)
 - Configurable source/destination path mapping
 - Same UI patterns as TraktorSyncPlaylists for consistency
+- ADB direct sync: Push files directly to Android phone via USB
+- Mirror sync: Delete orphaned files no longer in any playlist
+- Cover art handling: Copies/extracts album art alongside music
 """
 
 import os
@@ -39,11 +42,16 @@ import urllib.parse
 # ============================================================================
 
 APP_NAME = "MusicBee to PowerAmp Sync"
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.1.0"
 
 # Configuration paths
 APP_DATA_DIR = os.path.join(os.path.expanduser("~"), "AppData", "Local", "PipelineManager")
 CONFIG_FILE = os.path.join(APP_DATA_DIR, "poweramp_sync_config.json")
+
+# Local ADB path (relative to script location)
+SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # Parent of modules/
+LOCAL_ADB_DIR = os.path.join(SCRIPT_DIR, "tools", "platform-tools")
+LOCAL_ADB_EXE = os.path.join(LOCAL_ADB_DIR, "adb.exe" if sys.platform == "win32" else "adb")
 
 # Header color (matching pipeline style)
 HEADER_COLOR = "#2c3e50"
@@ -77,10 +85,14 @@ class SyncSettings:
     selected_playlists: List[str] = field(default_factory=list)
     # Sync mode: "music_and_playlists" or "playlists_only"
     sync_mode: str = "music_and_playlists"
-    # MP3 conversion settings
-    convert_to_mp3: bool = True
+    # Opus conversion settings
+    convert_to_opus: bool = True
     skip_existing: bool = True
-    mp3_bitrate: str = "320k"  # Options: "320k", "256k", "192k", "V0", "V2"
+    opus_bitrate: str = "128k"  # Options: "192k", "160k", "128k", "96k", "64k"
+    # ADB sync settings
+    sync_target: str = "local"  # "local" or "adb"
+    adb_music_path: str = "/storage/emulated/0/Music/"
+    adb_playlist_path: str = "/storage/emulated/0/Music/Playlists/"
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -91,8 +103,8 @@ class SyncSettings:
         return cls(**valid_fields)
 
 
-# Lossless formats that should be converted to MP3
-LOSSLESS_EXTENSIONS = {'.flac', '.wav', '.aiff', '.aif', '.alac', '.ape', '.wv'}
+# Audio formats that should be converted to Opus (all non-opus audio)
+CONVERTIBLE_EXTENSIONS = {'.flac', '.wav', '.aiff', '.aif', '.alac', '.ape', '.wv', '.mp3', '.m4a', '.aac', '.wma', '.ogg'}
 
 
 # ============================================================================
@@ -149,8 +161,8 @@ class PowerAmpSyncApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title(APP_NAME)
-        self.root.geometry("700x850")
-        self.root.minsize(650, 750)
+        self.root.geometry("700x950")
+        self.root.minsize(650, 850)
 
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(1, weight=1)
@@ -165,6 +177,12 @@ class PowerAmpSyncApp:
         self.tracks_dict = {}  # Track ID -> track info
         self.syncing = False
         self.bitrate_radios = []
+        self.adb_device_id: Optional[str] = None
+        self.adb_device_name: str = ""
+        self.adb_path: Optional[str] = None  # Will be set by _find_adb()
+
+        # Find ADB executable
+        self._find_adb()
 
         # Create UI
         self._create_ui()
@@ -174,6 +192,225 @@ class PowerAmpSyncApp:
 
         # Handle window close
         self.root.protocol("WM_DELETE_WINDOW", self._on_closing)
+
+    # =========================================================================
+    # ADB HELPER METHODS
+    # =========================================================================
+
+    def _find_adb(self) -> None:
+        """Find ADB executable - checks local tools folder first, then system PATH."""
+        # Check local tools folder first
+        if os.path.exists(LOCAL_ADB_EXE):
+            self.adb_path = LOCAL_ADB_EXE
+            logger.info(f"Found local ADB: {LOCAL_ADB_EXE}")
+            return
+
+        # Check system PATH
+        try:
+            process_args = {
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+                "creationflags": subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            }
+            result = subprocess.run(["adb", "version"], **process_args, timeout=10)
+            if result.returncode == 0:
+                self.adb_path = "adb"
+                logger.info("Found ADB in system PATH")
+                return
+        except (subprocess.SubprocessError, FileNotFoundError, OSError):
+            pass
+
+        # ADB not found
+        self.adb_path = None
+        logger.warning("ADB not found - install platform-tools to tools/platform-tools/ or add to PATH")
+
+    def _check_adb(self) -> bool:
+        """Check if ADB is available."""
+        return self.adb_path is not None
+
+    def _get_adb_device(self) -> Optional[str]:
+        """Get connected device ID, or None if no device connected."""
+        if not self.adb_path:
+            return None
+        try:
+            process_args = {
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+                "creationflags": subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            }
+            result = subprocess.run([self.adb_path, "devices"], **process_args, timeout=10)
+            if result.returncode != 0:
+                return None
+
+            output = result.stdout.decode('utf-8', errors='replace')
+            lines = output.strip().split('\n')
+
+            # Skip header line "List of devices attached"
+            for line in lines[1:]:
+                if '\tdevice' in line:
+                    device_id = line.split('\t')[0].strip()
+                    if device_id:
+                        return device_id
+            return None
+        except (subprocess.SubprocessError, FileNotFoundError, OSError):
+            return None
+
+    def _get_adb_device_name(self, device_id: str) -> str:
+        """Get the model name of the connected device."""
+        if not self.adb_path:
+            return device_id
+        try:
+            process_args = {
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+                "creationflags": subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            }
+            result = subprocess.run(
+                [self.adb_path, "-s", device_id, "shell", "getprop", "ro.product.model"],
+                **process_args, timeout=10
+            )
+            if result.returncode == 0:
+                return result.stdout.decode('utf-8', errors='replace').strip()
+            return device_id
+        except (subprocess.SubprocessError, FileNotFoundError, OSError):
+            return device_id
+
+    def _adb_cmd(self, *args) -> List[str]:
+        """Build ADB command with device specifier if needed."""
+        cmd = [self.adb_path]
+        if self.adb_device_id:
+            cmd.extend(["-s", self.adb_device_id])
+        cmd.extend(args)
+        return cmd
+
+    def _adb_push(self, local_path: str, remote_path: str) -> Tuple[bool, str]:
+        """Push a file to the connected Android device.
+
+        Returns:
+            Tuple of (success, error_message)
+        """
+        if not self.adb_path:
+            return False, "ADB not available"
+        try:
+            process_args = {
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+                "creationflags": subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            }
+            # Ensure remote directory exists
+            remote_dir = os.path.dirname(remote_path).replace('\\', '/')
+            subprocess.run(
+                self._adb_cmd("shell", f"mkdir -p '{remote_dir}'"),
+                **process_args, timeout=30
+            )
+
+            result = subprocess.run(
+                self._adb_cmd("push", local_path, remote_path),
+                **process_args, timeout=300
+            )
+            if result.returncode == 0:
+                return True, ""
+            else:
+                error = result.stderr.decode('utf-8', errors='replace').strip()
+                logger.error(f"ADB push failed for {remote_path}: {error}")
+                return False, error
+        except subprocess.TimeoutExpired:
+            return False, "Timeout"
+        except (subprocess.SubprocessError, FileNotFoundError, OSError) as e:
+            logger.error(f"ADB push failed: {e}")
+            return False, str(e)
+
+    def _adb_list_files(self, remote_dir: str) -> List[str]:
+        """List all files recursively in a directory on the device.
+
+        Returns a list of file paths relative to remote_dir.
+        """
+        if not self.adb_path:
+            return []
+        try:
+            process_args = {
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+                "creationflags": subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            }
+            # Use find to list all files recursively
+            remote_dir = remote_dir.rstrip('/')
+            result = subprocess.run(
+                self._adb_cmd("shell", f"find '{remote_dir}' -type f 2>/dev/null"),
+                **process_args, timeout=120
+            )
+            if result.returncode != 0:
+                return []
+
+            output = result.stdout.decode('utf-8', errors='replace')
+            files = []
+            for line in output.strip().split('\n'):
+                line = line.strip()
+                if line and line.startswith(remote_dir):
+                    # Get path relative to remote_dir
+                    relative = line[len(remote_dir):].lstrip('/')
+                    if relative:
+                        files.append(relative)
+            return files
+        except (subprocess.SubprocessError, FileNotFoundError, OSError) as e:
+            logger.error(f"ADB list files failed: {e}")
+            return []
+
+    def _adb_delete(self, remote_path: str) -> bool:
+        """Delete a file on the device."""
+        if not self.adb_path:
+            return False
+        try:
+            process_args = {
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+                "creationflags": subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            }
+            result = subprocess.run(
+                self._adb_cmd("shell", f"rm '{remote_path}'"),
+                **process_args, timeout=30
+            )
+            return result.returncode == 0
+        except (subprocess.SubprocessError, FileNotFoundError, OSError) as e:
+            logger.error(f"ADB delete failed: {e}")
+            return False
+
+    def _adb_rmdir_empty(self, remote_dir: str) -> bool:
+        """Remove an empty directory on the device."""
+        if not self.adb_path:
+            return False
+        try:
+            process_args = {
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+                "creationflags": subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            }
+            result = subprocess.run(
+                self._adb_cmd("shell", f"rmdir '{remote_dir}' 2>/dev/null"),
+                **process_args, timeout=30
+            )
+            return result.returncode == 0
+        except (subprocess.SubprocessError, FileNotFoundError, OSError):
+            return False
+
+    def _adb_exists(self, remote_path: str) -> bool:
+        """Check if a file or directory exists on the device."""
+        if not self.adb_path:
+            return False
+        try:
+            process_args = {
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+                "creationflags": subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            }
+            result = subprocess.run(
+                self._adb_cmd("shell", f"test -e '{remote_path}' && echo exists"),
+                **process_args, timeout=30
+            )
+            output = result.stdout.decode('utf-8', errors='replace').strip()
+            return 'exists' in output
+        except (subprocess.SubprocessError, FileNotFoundError, OSError):
+            return False
 
     def _create_ui(self) -> None:
         """Create the complete UI."""
@@ -212,7 +449,7 @@ class PowerAmpSyncApp:
 
         # Mode selection
         mode_row = ttk.Frame(dest_frame)
-        mode_row.grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 10))
+        mode_row.grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 5))
 
         ttk.Label(mode_row, text="Mode:").pack(side=tk.LEFT, padx=(0, 15))
         self.sync_mode_var = tk.StringVar(value="music_and_playlists")
@@ -221,27 +458,72 @@ class PowerAmpSyncApp:
         ttk.Radiobutton(mode_row, text="Playlists Only", variable=self.sync_mode_var,
                         value="playlists_only", command=self._on_sync_mode_changed).pack(side=tk.LEFT)
 
-        # Music folder
-        ttk.Label(dest_frame, text="Music folder:").grid(row=1, column=0, sticky="w", pady=3)
-        self.music_dest_var = tk.StringVar()
-        self.music_dest_entry = ttk.Entry(dest_frame, textvariable=self.music_dest_var)
-        self.music_dest_entry.grid(row=1, column=1, sticky="ew", padx=10, pady=3)
-        self.music_dest_browse_btn = ttk.Button(dest_frame, text="Browse...", command=self._browse_music_destination, width=10)
-        self.music_dest_browse_btn.grid(row=1, column=2, pady=3)
+        # Sync target selection (Local vs ADB)
+        target_row = ttk.Frame(dest_frame)
+        target_row.grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 10))
 
-        # Playlist folder
-        ttk.Label(dest_frame, text="Playlist folder:").grid(row=2, column=0, sticky="w", pady=3)
+        ttk.Label(target_row, text="Target:").pack(side=tk.LEFT, padx=(0, 15))
+        self.sync_target_var = tk.StringVar(value="local")
+        ttk.Radiobutton(target_row, text="Local Folder", variable=self.sync_target_var,
+                        value="local", command=self._on_sync_target_changed).pack(side=tk.LEFT, padx=(0, 20))
+        ttk.Radiobutton(target_row, text="Android Device (ADB)", variable=self.sync_target_var,
+                        value="adb", command=self._on_sync_target_changed).pack(side=tk.LEFT)
+
+        # Local folder settings frame
+        self.local_frame = ttk.Frame(dest_frame)
+        self.local_frame.grid(row=2, column=0, columnspan=3, sticky="ew")
+        self.local_frame.columnconfigure(1, weight=1)
+
+        # Music folder (local)
+        ttk.Label(self.local_frame, text="Music folder:").grid(row=0, column=0, sticky="w", pady=3)
+        self.music_dest_var = tk.StringVar()
+        self.music_dest_entry = ttk.Entry(self.local_frame, textvariable=self.music_dest_var)
+        self.music_dest_entry.grid(row=0, column=1, sticky="ew", padx=10, pady=3)
+        self.music_dest_browse_btn = ttk.Button(self.local_frame, text="Browse...", command=self._browse_music_destination, width=10)
+        self.music_dest_browse_btn.grid(row=0, column=2, pady=3)
+
+        # Playlist folder (local)
+        ttk.Label(self.local_frame, text="Playlist folder:").grid(row=1, column=0, sticky="w", pady=3)
         self.dest_var = tk.StringVar()
-        ttk.Entry(dest_frame, textvariable=self.dest_var).grid(row=2, column=1, sticky="ew", padx=10, pady=3)
-        ttk.Button(dest_frame, text="Browse...", command=self._browse_destination, width=10).grid(row=2, column=2, pady=3)
+        ttk.Entry(self.local_frame, textvariable=self.dest_var).grid(row=1, column=1, sticky="ew", padx=10, pady=3)
+        ttk.Button(self.local_frame, text="Browse...", command=self._browse_destination, width=10).grid(row=1, column=2, pady=3)
+
+        # ADB settings frame (initially hidden)
+        self.adb_frame = ttk.Frame(dest_frame)
+        self.adb_frame.columnconfigure(1, weight=1)
+
+        # Device status row
+        adb_status_row = ttk.Frame(self.adb_frame)
+        adb_status_row.grid(row=0, column=0, columnspan=3, sticky="w", pady=3)
+        ttk.Label(adb_status_row, text="Device:").pack(side=tk.LEFT, padx=(0, 10))
+        self.adb_device_status_var = tk.StringVar(value="No device detected")
+        self.adb_device_status_label = ttk.Label(adb_status_row, textvariable=self.adb_device_status_var)
+        self.adb_device_status_label.pack(side=tk.LEFT)
+        self.detect_device_btn = ttk.Button(adb_status_row, text="Detect Device", command=self._detect_adb_device, width=14)
+        self.detect_device_btn.pack(side=tk.LEFT, padx=(15, 0))
+        ttk.Button(adb_status_row, text="?", command=self._show_adb_help, width=3).pack(side=tk.LEFT, padx=(5, 0))
+
+        # ADB Music path
+        ttk.Label(self.adb_frame, text="Music path:").grid(row=1, column=0, sticky="w", pady=3)
+        self.adb_music_path_var = tk.StringVar(value="/storage/emulated/0/Music/")
+        ttk.Entry(self.adb_frame, textvariable=self.adb_music_path_var).grid(row=1, column=1, columnspan=2, sticky="ew", padx=10, pady=3)
+
+        # ADB Playlist path
+        ttk.Label(self.adb_frame, text="Playlist path:").grid(row=2, column=0, sticky="w", pady=3)
+        self.adb_playlist_path_var = tk.StringVar(value="/storage/emulated/0/Music/Playlists/")
+        ttk.Entry(self.adb_frame, textvariable=self.adb_playlist_path_var).grid(row=2, column=1, columnspan=2, sticky="ew", padx=10, pady=3)
 
         # Separator
         ttk.Separator(dest_frame, orient="horizontal").grid(row=3, column=0, columnspan=3, sticky="ew", pady=10)
 
         # Path mapping
-        ttk.Label(dest_frame, text="Path mapping:").grid(row=4, column=0, sticky="w", pady=3)
-        map_row = ttk.Frame(dest_frame)
-        map_row.grid(row=4, column=1, columnspan=2, sticky="ew", pady=3)
+        self.path_mapping_frame = ttk.Frame(dest_frame)
+        self.path_mapping_frame.grid(row=4, column=0, columnspan=3, sticky="ew")
+        self.path_mapping_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(self.path_mapping_frame, text="Path mapping:").grid(row=0, column=0, sticky="w", pady=3)
+        map_row = ttk.Frame(self.path_mapping_frame)
+        map_row.grid(row=0, column=1, columnspan=2, sticky="ew", pady=3)
 
         self.source_prefix_var = tk.StringVar()
         ttk.Entry(map_row, textvariable=self.source_prefix_var, width=12).pack(side=tk.LEFT)
@@ -250,8 +532,8 @@ class PowerAmpSyncApp:
         ttk.Entry(map_row, textvariable=self.android_prefix_var, width=30).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         self.relative_paths_var = tk.BooleanVar()
-        ttk.Checkbutton(dest_frame, text="Use relative paths only", variable=self.relative_paths_var).grid(
-            row=5, column=0, columnspan=3, sticky="w", pady=(5, 0))
+        ttk.Checkbutton(self.path_mapping_frame, text="Use relative paths only", variable=self.relative_paths_var).grid(
+            row=1, column=0, columnspan=3, sticky="w", pady=(5, 0))
 
         # === SECTION 3: CONVERSION ===
         self.conv_frame = ttk.LabelFrame(main, text="Conversion", padding=10)
@@ -261,17 +543,17 @@ class PowerAmpSyncApp:
         conv_row1 = ttk.Frame(self.conv_frame)
         conv_row1.pack(fill=tk.X, pady=(0, 5))
 
-        self.convert_mp3_var = tk.BooleanVar(value=True)
-        self.convert_mp3_checkbox = ttk.Checkbutton(conv_row1, text="Convert FLAC/WAV to MP3",
-                                                     variable=self.convert_mp3_var, command=self._on_convert_mp3_changed)
-        self.convert_mp3_checkbox.pack(side=tk.LEFT)
+        self.convert_opus_var = tk.BooleanVar(value=True)
+        self.convert_opus_checkbox = ttk.Checkbutton(conv_row1, text="Convert all audio to Opus",
+                                                     variable=self.convert_opus_var, command=self._on_convert_opus_changed)
+        self.convert_opus_checkbox.pack(side=tk.LEFT)
 
         ttk.Label(conv_row1, text="Quality:").pack(side=tk.LEFT, padx=(30, 8))
-        self.bitrate_var = tk.StringVar(value="320k")
-        self.quality_combo = ttk.Combobox(conv_row1, textvariable=self.bitrate_var, state="readonly", width=18,
-                                          values=["320 kbps (Best)", "256 kbps", "V0 (~245 kbps VBR)", "V2 (~190 kbps VBR)"])
+        self.bitrate_var = tk.StringVar(value="128k")
+        self.quality_combo = ttk.Combobox(conv_row1, textvariable=self.bitrate_var, state="readonly", width=22,
+                                          values=["192 kbps (Transparent)", "160 kbps (Excellent)", "128 kbps (Recommended)", "96 kbps (Good)", "64 kbps (Efficient)"])
         self.quality_combo.pack(side=tk.LEFT)
-        self.quality_combo.current(0)
+        self.quality_combo.current(2)  # Default to 128 kbps
         self.quality_combo.bind("<<ComboboxSelected>>", self._on_quality_changed)
 
         # Skip existing + FFmpeg check
@@ -414,12 +696,13 @@ class PowerAmpSyncApp:
         selection = self.quality_combo.get()
         # Map display text to internal value
         mapping = {
-            "320 kbps (Best)": "320k",
-            "256 kbps": "256k",
-            "V0 (~245 kbps VBR)": "V0",
-            "V2 (~190 kbps VBR)": "V2"
+            "192 kbps (Transparent)": "192k",
+            "160 kbps (Excellent)": "160k",
+            "128 kbps (Recommended)": "128k",
+            "96 kbps (Good)": "96k",
+            "64 kbps (Efficient)": "64k"
         }
-        self.bitrate_var.set(mapping.get(selection, "320k"))
+        self.bitrate_var.set(mapping.get(selection, "128k"))
 
     def _initialize_default_paths(self) -> None:
         """Initialize default paths from config or common locations."""
@@ -448,24 +731,31 @@ class PowerAmpSyncApp:
         self.android_prefix_var.set(settings.android_music_prefix)
         self.relative_paths_var.set(settings.use_relative_paths)
 
-        # Load sync mode and MP3 conversion settings
+        # Load sync mode and Opus conversion settings
         self.sync_mode_var.set(settings.sync_mode)
-        self.convert_mp3_var.set(settings.convert_to_mp3)
+        self.convert_opus_var.set(settings.convert_to_opus)
         self.skip_existing_var.set(settings.skip_existing)
+
+        # Load ADB settings
+        self.sync_target_var.set(settings.sync_target)
+        self.adb_music_path_var.set(settings.adb_music_path)
+        self.adb_playlist_path_var.set(settings.adb_playlist_path)
 
         # Set quality combobox based on saved bitrate
         bitrate_to_combo = {
-            "320k": "320 kbps (Best)",
-            "256k": "256 kbps",
-            "V0": "V0 (~245 kbps VBR)",
-            "V2": "V2 (~190 kbps VBR)"
+            "192k": "192 kbps (Transparent)",
+            "160k": "160 kbps (Excellent)",
+            "128k": "128 kbps (Recommended)",
+            "96k": "96 kbps (Good)",
+            "64k": "64 kbps (Efficient)"
         }
-        combo_value = bitrate_to_combo.get(settings.mp3_bitrate, "320 kbps (Best)")
+        combo_value = bitrate_to_combo.get(settings.opus_bitrate, "128 kbps (Recommended)")
         self.quality_combo.set(combo_value)
-        self.bitrate_var.set(settings.mp3_bitrate)
+        self.bitrate_var.set(settings.opus_bitrate)
 
-        # Update UI state based on sync mode
+        # Update UI state based on sync mode and target
         self._on_sync_mode_changed()
+        self._on_sync_target_changed()
 
     def _browse_itunes_xml(self) -> None:
         """Browse for iTunes XML file."""
@@ -492,21 +782,119 @@ class PowerAmpSyncApp:
     def _on_sync_mode_changed(self) -> None:
         """Handle sync mode change - enable/disable music sync options."""
         playlists_only = self.sync_mode_var.get() == "playlists_only"
+        is_adb = self.sync_target_var.get() == "adb"
 
-        # Enable/disable music sync widgets
+        # Enable/disable music sync widgets (respecting both mode and target)
         state = "disabled" if playlists_only else "normal"
         combo_state = "disabled" if playlists_only else "readonly"
 
-        self.music_dest_entry.config(state=state)
-        self.music_dest_browse_btn.config(state=state)
-        self.convert_mp3_checkbox.config(state=state)
+        # Local music folder is disabled in playlists_only mode or when using ADB
+        local_music_state = "disabled" if (playlists_only or is_adb) else "normal"
+        self.music_dest_entry.config(state=local_music_state)
+        self.music_dest_browse_btn.config(state=local_music_state)
+
+        self.convert_opus_checkbox.config(state=state)
         self.skip_existing_checkbox.config(state=state)
         self.ffmpeg_btn.config(state=state)
         self.quality_combo.config(state=combo_state)
 
-    def _on_convert_mp3_changed(self) -> None:
+    def _on_sync_target_changed(self) -> None:
+        """Handle sync target change - show/hide local vs ADB settings."""
+        is_adb = self.sync_target_var.get() == "adb"
+
+        if is_adb:
+            # Hide local settings, show ADB settings
+            self.local_frame.grid_remove()
+            self.adb_frame.grid(row=2, column=0, columnspan=3, sticky="ew")
+            # Path mapping still relevant for playlist file references
+            # but not editable since we use ADB paths directly
+        else:
+            # Show local settings, hide ADB settings
+            self.adb_frame.grid_remove()
+            self.local_frame.grid(row=2, column=0, columnspan=3, sticky="ew")
+
+        # Update sync mode UI state as well (local music folder depends on target)
+        self._on_sync_mode_changed()
+
+    def _detect_adb_device(self) -> None:
+        """Detect connected ADB device and update UI."""
+        self.adb_device_status_var.set("Detecting...")
+        self.root.update_idletasks()
+
+        # Re-check for ADB in case user just added it
+        self._find_adb()
+
+        if not self._check_adb():
+            self.adb_device_status_var.set("ADB not found - add to tools/platform-tools/")
+            self.adb_device_id = None
+            self.adb_device_name = ""
+            # Show helpful message in log
+            self.analysis_text.delete(1.0, tk.END)
+            self.analysis_text.insert(tk.END, "ADB not found!\n\n")
+            self.analysis_text.insert(tk.END, "To enable ADB sync, download Android Platform Tools:\n")
+            self.analysis_text.insert(tk.END, "https://developer.android.com/tools/releases/platform-tools\n\n")
+            self.analysis_text.insert(tk.END, f"Extract to: {LOCAL_ADB_DIR}\n\n")
+            self.analysis_text.insert(tk.END, "The folder should contain adb.exe, fastboot.exe, etc.\n")
+            return
+
+        device_id = self._get_adb_device()
+        if device_id:
+            self.adb_device_id = device_id
+            self.adb_device_name = self._get_adb_device_name(device_id)
+            self.adb_device_status_var.set(f"{self.adb_device_name} ({device_id})")
+            logger.info(f"ADB device detected: {self.adb_device_name} ({device_id})")
+        else:
+            self.adb_device_id = None
+            self.adb_device_name = ""
+            self.adb_device_status_var.set("No device connected")
+
+    def _show_adb_help(self) -> None:
+        """Show ADB setup instructions in a dialog."""
+        help_text = """ADB Setup Instructions
+
+1. ENABLE DEVELOPER OPTIONS
+   - Go to Settings → About phone
+   - Tap "Build number" 7 times
+   - You'll see "You are now a developer!"
+
+2. ENABLE USB DEBUGGING
+   - Go to Settings → Developer options
+   - Enable "USB debugging"
+
+3. CONNECT YOUR PHONE
+   - Connect via USB cable
+   - On your phone, tap "Allow USB debugging"
+   - Check "Always allow from this computer"
+
+4. INSTALL ADB (if not already)
+   - Download Android Platform Tools from:
+     https://developer.android.com/tools/releases/platform-tools
+   - Extract to: tools/platform-tools/ in this script's folder
+
+5. CLICK "Detect Device"
+
+TROUBLESHOOTING
+- If "unauthorized": Check phone for USB debugging prompt
+- If "offline": Reconnect USB or restart phone
+- Try different USB cable (some only charge)
+- Try different USB port (USB 2.0 often works better)
+"""
+        # Create a simple help dialog
+        help_window = tk.Toplevel(self.root)
+        help_window.title("ADB Setup Help")
+        help_window.geometry("500x480")
+        help_window.transient(self.root)
+
+        text_widget = tk.Text(help_window, wrap=tk.WORD, padx=15, pady=15, font=("Consolas", 10))
+        text_widget.pack(fill=tk.BOTH, expand=True)
+        text_widget.insert(tk.END, help_text)
+        text_widget.config(state=tk.DISABLED)
+
+        ttk.Button(help_window, text="Close", command=help_window.destroy).pack(pady=10)
+
+    def _on_convert_opus_changed(self) -> None:
         """Handle conversion checkbox change - check for FFmpeg."""
-        if self.convert_mp3_var.get():
+        if self.convert_opus_var.get():
             has_ffmpeg = self._check_ffmpeg()
             if not has_ffmpeg:
                 messagebox.showwarning(
@@ -517,7 +905,7 @@ class PowerAmpSyncApp:
                     "- Or use: winget install ffmpeg\n\n"
                     "After installing, restart the application."
                 )
-                self.root.after(100, lambda: self.convert_mp3_var.set(False))
+                self.root.after(100, lambda: self.convert_opus_var.set(False))
 
     def _check_ffmpeg(self) -> bool:
         """Check if FFmpeg is available."""
@@ -561,7 +949,7 @@ class PowerAmpSyncApp:
             self.analysis_text.insert(tk.END, "- macOS: brew install ffmpeg\n")
             self.analysis_text.insert(tk.END, "- Linux: apt install ffmpeg\n")
             self.ffmpeg_status_var.set("FFmpeg NOT FOUND")
-            self.convert_mp3_var.set(False)
+            self.convert_opus_var.set(False)
 
         except Exception as e:
             self.analysis_text.insert(tk.END, f"Error checking FFmpeg: {e}\n")
@@ -583,9 +971,13 @@ class PowerAmpSyncApp:
             use_relative_paths=self.relative_paths_var.get(),
             selected_playlists=selected,
             sync_mode=self.sync_mode_var.get(),
-            convert_to_mp3=self.convert_mp3_var.get(),
+            convert_to_opus=self.convert_opus_var.get(),
             skip_existing=self.skip_existing_var.get(),
-            mp3_bitrate=self.bitrate_var.get()
+            opus_bitrate=self.bitrate_var.get(),
+            # ADB settings
+            sync_target=self.sync_target_var.get(),
+            adb_music_path=self.adb_music_path_var.get(),
+            adb_playlist_path=self.adb_playlist_path_var.get()
         )
         self.status_var.set("Settings saved")
         messagebox.showinfo("Settings Saved", "Configuration saved successfully!")
@@ -959,16 +1351,16 @@ class PowerAmpSyncApp:
             return path[3:].lstrip('/')
         return os.path.basename(path)
 
-    def _get_dest_file_path(self, source_path: str, convert_to_mp3: bool) -> str:
+    def _get_dest_file_path(self, source_path: str, convert_to_opus: bool) -> str:
         """Calculate destination path for a source file."""
         music_dest = self.music_dest_var.get().strip()
         relative_path = self._get_relative_path(source_path)
 
         # Change extension if converting
-        if convert_to_mp3:
+        if convert_to_opus:
             file_ext = os.path.splitext(relative_path)[1].lower()
-            if file_ext in LOSSLESS_EXTENSIONS:
-                relative_path = os.path.splitext(relative_path)[0] + '.mp3'
+            if file_ext in CONVERTIBLE_EXTENSIONS:
+                relative_path = os.path.splitext(relative_path)[0] + '.opus'
 
         return os.path.join(music_dest, relative_path)
 
@@ -1021,8 +1413,106 @@ class PowerAmpSyncApp:
         except Exception:
             return False
 
-    def _convert_to_mp3(self, source_path: str, dest_path: str) -> bool:
-        """Convert an audio file to MP3 using FFmpeg, preserving/embedding cover art."""
+    def _extract_cover_art(self, source_audio_path: str, dest_cover_path: str) -> bool:
+        """Extract embedded cover art from an audio file using FFmpeg."""
+        try:
+            os.makedirs(os.path.dirname(dest_cover_path), exist_ok=True)
+
+            cmd = [
+                "ffmpeg", "-y", "-i", source_audio_path,
+                "-an",              # No audio
+                "-vcodec", "copy",  # Copy the image stream as-is
+                dest_cover_path
+            ]
+
+            process_args = {
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+                "creationflags": subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            }
+
+            result = subprocess.run(cmd, **process_args, timeout=60)
+
+            if result.returncode == 0 and os.path.exists(dest_cover_path):
+                # Verify the file is not empty/corrupt
+                if os.path.getsize(dest_cover_path) > 100:
+                    return True
+                else:
+                    os.remove(dest_cover_path)
+                    return False
+            return False
+
+        except Exception as e:
+            logger.error(f"Error extracting cover art from {source_audio_path}: {e}")
+            return False
+
+    def _ensure_cover_art(self, source_path: str, dest_dir: str, processed_dirs: set) -> Optional[str]:
+        """Ensure cover art exists in the destination directory.
+
+        Args:
+            source_path: Path to a source audio file
+            dest_dir: Destination directory where cover should be placed
+            processed_dirs: Set of already-processed destination directories
+
+        Returns:
+            Path to cover art if created/found, None otherwise
+        """
+        # Skip if we've already processed this directory
+        if dest_dir in processed_dirs:
+            return None
+
+        processed_dirs.add(dest_dir)
+
+        # Check if cover already exists in destination
+        dest_cover = os.path.join(dest_dir, "cover.jpg")
+        if os.path.exists(dest_cover):
+            return dest_cover
+
+        # Also check for other common cover names in destination
+        for name in ['cover.jpg', 'cover.png', 'folder.jpg', 'folder.png']:
+            existing = os.path.join(dest_dir, name)
+            if os.path.exists(existing):
+                return existing
+
+        os.makedirs(dest_dir, exist_ok=True)
+        source_dir = os.path.dirname(source_path)
+
+        # Try to find and copy external cover art from source
+        external_cover = self._find_cover_art(source_path)
+        if external_cover:
+            try:
+                # Determine extension from source
+                ext = os.path.splitext(external_cover)[1].lower()
+                if ext not in ['.jpg', '.jpeg', '.png']:
+                    ext = '.jpg'
+                dest_cover = os.path.join(dest_dir, f"cover{ext}")
+                shutil.copy2(external_cover, dest_cover)
+                return dest_cover
+            except Exception as e:
+                logger.error(f"Failed to copy cover art: {e}")
+
+        # No external cover - try to extract from this audio file
+        if self._source_has_embedded_art(source_path):
+            dest_cover = os.path.join(dest_dir, "cover.jpg")
+            if self._extract_cover_art(source_path, dest_cover):
+                return dest_cover
+
+        # Try to find any audio file in source dir with embedded art
+        try:
+            for f in os.listdir(source_dir):
+                if f.lower().endswith(tuple(VALID_EXTENSIONS)):
+                    audio_file = os.path.join(source_dir, f)
+                    if self._source_has_embedded_art(audio_file):
+                        dest_cover = os.path.join(dest_dir, "cover.jpg")
+                        if self._extract_cover_art(audio_file, dest_cover):
+                            return dest_cover
+        except OSError:
+            pass
+
+        return None
+
+    def _convert_to_opus(self, source_path: str, dest_path: str) -> bool:
+        """Convert an audio file to Opus using FFmpeg, preserving metadata."""
         try:
             # Ensure destination directory exists
             os.makedirs(os.path.dirname(dest_path), exist_ok=True)
@@ -1030,53 +1520,19 @@ class PowerAmpSyncApp:
             # Build FFmpeg command based on bitrate setting
             bitrate = self.bitrate_var.get()
 
-            # Check for cover art sources
-            has_embedded_art = self._source_has_embedded_art(source_path)
-            external_cover = self._find_cover_art(source_path) if not has_embedded_art else None
-
-            # Build the FFmpeg command
-            cmd = ["ffmpeg", "-y", "-i", source_path]
-
-            # Add external cover art as input if found
-            if external_cover:
-                cmd.extend(["-i", external_cover])
-
-            # Audio encoding settings
-            if bitrate.startswith("V"):
-                # VBR mode (V0, V2, etc.)
-                quality = bitrate[1]  # Extract number
-                cmd.extend(["-c:a", "libmp3lame", "-q:a", quality])
-            else:
-                # CBR mode (320k, 256k, etc.)
-                cmd.extend(["-c:a", "libmp3lame", "-b:a", bitrate])
-
-            # Handle cover art embedding
-            if has_embedded_art:
-                # Source has embedded art - copy it to output
-                cmd.extend([
-                    "-c:v", "copy",           # Copy the image stream
-                    "-map", "0:a",            # Map audio from input 0
-                    "-map", "0:v?",           # Map video (cover) from input 0 if exists
-                    "-id3v2_version", "3",    # Use ID3v2.3 for better compatibility
-                    "-metadata:s:v", "title=Album cover",
-                    "-metadata:s:v", "comment=Cover (front)",
-                ])
-            elif external_cover:
-                # Use external cover art file
-                cmd.extend([
-                    "-c:v", "mjpeg" if external_cover.lower().endswith(('.jpg', '.jpeg')) else "png",
-                    "-map", "0:a",            # Map audio from input 0
-                    "-map", "1:v",            # Map video (cover) from input 1
-                    "-id3v2_version", "3",    # Use ID3v2.3 for better compatibility
-                    "-metadata:s:v", "title=Album cover",
-                    "-metadata:s:v", "comment=Cover (front)",
-                ])
-            else:
-                # No cover art available
-                cmd.extend(["-vn"])  # No video/image output
-
-            # Copy metadata from source
-            cmd.extend(["-map_metadata", "0", dest_path])
+            # Build the FFmpeg command for Opus encoding
+            # Opus uses VBR by default and the bitrate is a target
+            cmd = [
+                "ffmpeg", "-y", "-i", source_path,
+                "-c:a", "libopus",
+                "-b:a", bitrate,
+                "-vbr", "on",           # Enable VBR for better quality
+                "-compression_level", "10",  # Max compression effort
+                "-application", "audio",     # Optimize for music (not speech)
+                "-vn",                  # No video output (Opus doesn't support embedded art)
+                "-map_metadata", "0",   # Copy metadata from source
+                dest_path
+            ]
 
             process_args = {
                 "stdout": subprocess.PIPE,
@@ -1192,23 +1648,46 @@ class PowerAmpSyncApp:
             messagebox.showwarning("No Selection", "Please select at least one playlist to sync.")
             return
 
-        playlist_dest = self.dest_var.get().strip()
-        if not playlist_dest:
-            messagebox.showwarning("No Destination", "Please specify a playlist destination folder.")
-            return
-
-        music_dest = self.music_dest_var.get().strip()
-        convert_to_mp3 = self.convert_mp3_var.get()
+        # Determine sync target mode
+        is_adb_mode = self.sync_target_var.get() == "adb"
         playlists_only = self.sync_mode_var.get() == "playlists_only"
-        sync_music = not playlists_only and bool(music_dest)
+        convert_to_opus = self.convert_opus_var.get()
+        mirror_sync = True  # Always enabled - delete orphaned files not in playlists
+
+        # Get destinations based on mode
+        if is_adb_mode:
+            music_dest = self.adb_music_path_var.get().strip().rstrip('/')
+            playlist_dest = self.adb_playlist_path_var.get().strip().rstrip('/')
+
+            # Validate ADB connection
+            if not self._check_adb():
+                messagebox.showerror("ADB Not Found",
+                    "ADB is not installed or not in PATH.\n\n"
+                    "Please install Android SDK Platform Tools.")
+                return
+
+            if not self._get_adb_device():
+                messagebox.showerror("No Device",
+                    "No Android device connected.\n\n"
+                    "Please connect your phone and enable USB debugging.")
+                return
+        else:
+            playlist_dest = self.dest_var.get().strip()
+            music_dest = self.music_dest_var.get().strip()
+
+            if not playlist_dest:
+                messagebox.showwarning("No Destination", "Please specify a playlist destination folder.")
+                return
+
+        sync_music = not playlists_only
 
         # Validate music sync settings
-        if not playlists_only and not music_dest:
+        if sync_music and not is_adb_mode and not music_dest:
             messagebox.showwarning("No Music Destination",
                 "Please specify a music destination folder, or select 'Playlists Only' mode.")
             return
 
-        if sync_music and convert_to_mp3:
+        if sync_music and convert_to_opus:
             if not self._check_ffmpeg():
                 messagebox.showerror(
                     "FFmpeg Not Found",
@@ -1217,24 +1696,27 @@ class PowerAmpSyncApp:
                 )
                 return
 
-        # Create destinations if needed
-        try:
-            os.makedirs(playlist_dest, exist_ok=True)
-            if sync_music:
-                os.makedirs(music_dest, exist_ok=True)
-        except Exception as e:
-            messagebox.showerror("Error", f"Cannot create destination folder:\n{e}")
-            return
+        # Create local destinations if needed (not for ADB mode)
+        if not is_adb_mode:
+            try:
+                os.makedirs(playlist_dest, exist_ok=True)
+                if sync_music:
+                    os.makedirs(music_dest, exist_ok=True)
+            except Exception as e:
+                messagebox.showerror("Error", f"Cannot create destination folder:\n{e}")
+                return
 
         # Build confirmation message
+        target_label = "Android device (ADB)" if is_adb_mode else "local folder"
         if playlists_only:
-            msg_parts = [f"Export {len(selected_playlists)} playlist(s) (playlists only)"]
+            msg_parts = [f"Export {len(selected_playlists)} playlist(s) to {target_label}"]
         else:
-            msg_parts = [f"Sync {len(selected_playlists)} playlist(s)"]
-            msg_parts.append(f"\nMusic files to: {music_dest}")
-            if convert_to_mp3:
-                msg_parts.append(f"\nConvert FLAC/WAV to MP3 ({self.bitrate_var.get()})")
+            msg_parts = [f"Sync {len(selected_playlists)} playlist(s) to {target_label}"]
+            msg_parts.append(f"\nMusic to: {music_dest}")
+            if convert_to_opus:
+                msg_parts.append(f"\nConvert all audio to Opus ({self.bitrate_var.get()})")
         msg_parts.append(f"\nPlaylists to: {playlist_dest}")
+        msg_parts.append("\n\nMirror sync: orphaned files will be deleted")
         msg_parts.append("\n\nProceed?")
 
         if not messagebox.askyesno("Confirm Sync", "".join(msg_parts)):
@@ -1251,16 +1733,18 @@ class PowerAmpSyncApp:
 
         def sync_thread():
             path_mapping = {}  # source path -> android path
+            expected_files = set()  # Files that should exist after sync (relative paths)
             playlist_success = 0
             playlist_error = 0
 
-            self._append_sync_text(f"Starting sync of {len(selected_playlists)} playlist(s)...\n")
+            mode_label = "ADB" if is_adb_mode else "Local"
+            self._append_sync_text(f"Starting {mode_label} sync of {len(selected_playlists)} playlist(s)...\n")
             if sync_music:
                 self._append_sync_text(f"Music destination: {music_dest}\n")
-                if convert_to_mp3:
-                    self._append_sync_text(f"Converting lossless audio to MP3 ({self.bitrate_var.get()})\n")
+                if convert_to_opus:
+                    self._append_sync_text(f"Converting audio to Opus ({self.bitrate_var.get()})\n")
             self._append_sync_text(f"Playlist destination: {playlist_dest}\n")
-            self._append_sync_text(f"Path mapping: {self.source_prefix_var.get()} → {self.android_prefix_var.get()}\n")
+            self._append_sync_text("Mirror sync: ON (orphaned files will be deleted)\n")
             self._append_sync_text("=" * 50 + "\n\n")
 
             # Phase 1: Sync music files if enabled
@@ -1280,11 +1764,23 @@ class PowerAmpSyncApp:
                 total_tracks = len(unique_tracks)
                 self._append_sync_text(f"Found {total_tracks} unique tracks to sync\n\n")
 
+                # Build expected files set for mirror sync
+                for source_path in unique_tracks.keys():
+                    relative_path = self._get_relative_path(source_path)
+                    if convert_to_opus:
+                        file_ext = os.path.splitext(relative_path)[1].lower()
+                        if file_ext in CONVERTIBLE_EXTENSIONS:
+                            relative_path = os.path.splitext(relative_path)[0] + '.opus'
+                    expected_files.add(relative_path.replace('\\', '/'))
+
                 copied_count = 0
                 converted_count = 0
+                pushed_count = 0
                 skipped_count = 0
                 error_count = 0
+                covers_count = 0
                 skip_existing = self.skip_existing_var.get()
+                processed_cover_dirs = set()  # Track dirs where we've handled cover art
 
                 for i, (source_path, track_info) in enumerate(unique_tracks.items()):
                     if not self.syncing:
@@ -1296,18 +1792,23 @@ class PowerAmpSyncApp:
                                     self.status_var.set(f"Syncing music {n}/{t}"))
 
                     file_ext = os.path.splitext(source_path)[1].lower()
-                    needs_conversion = convert_to_mp3 and file_ext in LOSSLESS_EXTENSIONS
-                    dest_path = self._get_dest_file_path(source_path, convert_to_mp3)
+                    needs_conversion = convert_to_opus and file_ext in CONVERTIBLE_EXTENSIONS
+                    relative_path = self._get_relative_path(source_path)
 
-                    # Calculate android path for playlist mapping
-                    relative_from_music_dest = os.path.relpath(dest_path, music_dest)
-                    android_path = self.android_prefix_var.get() + relative_from_music_dest.replace('\\', '/')
+                    # Calculate destination path and android path
+                    if needs_conversion:
+                        relative_path_converted = os.path.splitext(relative_path)[0] + '.opus'
+                    else:
+                        relative_path_converted = relative_path
+
+                    if is_adb_mode:
+                        dest_path = music_dest + '/' + relative_path_converted.replace('\\', '/')
+                        android_path = dest_path
+                    else:
+                        dest_path = os.path.join(self.music_dest_var.get().strip(), relative_path_converted)
+                        android_path = self.android_prefix_var.get() + relative_path_converted.replace('\\', '/')
+
                     path_mapping[source_path] = android_path
-
-                    # Check if file exists
-                    if skip_existing and os.path.exists(dest_path):
-                        skipped_count += 1
-                        continue
 
                     # Check if source file exists
                     if not os.path.exists(source_path):
@@ -1315,28 +1816,116 @@ class PowerAmpSyncApp:
                         error_count += 1
                         continue
 
-                    # Copy or convert
                     filename = os.path.basename(source_path)
-                    if needs_conversion:
-                        self._append_sync_text(f"Converting: {filename}...")
-                        if self._convert_to_mp3(source_path, dest_path):
-                            self._append_sync_text(" OK\n")
-                            converted_count += 1
+
+                    if is_adb_mode:
+                        # ADB mode: check if file exists on device
+                        if skip_existing and self._adb_exists(dest_path):
+                            skipped_count += 1
+                            continue
+
+                        # Convert to temp file then push
+                        if needs_conversion:
+                            self._append_sync_text(f"Converting & pushing: {filename}...")
+                            with tempfile.NamedTemporaryFile(suffix='.opus', delete=False) as tmp:
+                                tmp_path = tmp.name
+
+                            try:
+                                if self._convert_to_opus(source_path, tmp_path):
+                                    success, error = self._adb_push(tmp_path, dest_path)
+                                    if success:
+                                        self._append_sync_text(" OK\n")
+                                        converted_count += 1
+                                        pushed_count += 1
+                                    else:
+                                        self._append_sync_text(f" PUSH FAILED: {error}\n")
+                                        error_count += 1
+                                else:
+                                    self._append_sync_text(" CONVERT FAILED\n")
+                                    error_count += 1
+                            finally:
+                                if os.path.exists(tmp_path):
+                                    os.remove(tmp_path)
                         else:
-                            self._append_sync_text(" FAILED\n")
-                            error_count += 1
+                            # Push file directly
+                            self._append_sync_text(f"Pushing: {filename}...")
+                            success, error = self._adb_push(source_path, dest_path)
+                            if success:
+                                self._append_sync_text(" OK\n")
+                                pushed_count += 1
+                            else:
+                                self._append_sync_text(f" FAILED: {error}\n")
+                                error_count += 1
+
+                        # Handle cover art for ADB
+                        dest_dir = os.path.dirname(dest_path)
+                        if dest_dir not in processed_cover_dirs:
+                            processed_cover_dirs.add(dest_dir)
+                            # Check if cover already exists on device
+                            remote_cover = dest_dir + '/cover.jpg'
+                            if not self._adb_exists(remote_cover):
+                                # Try to find and push cover art
+                                cover_source = self._find_cover_art(source_path)
+                                if cover_source:
+                                    success, _ = self._adb_push(cover_source, remote_cover)
+                                    if success:
+                                        covers_count += 1
+                                elif self._source_has_embedded_art(source_path):
+                                    # Extract to temp then push
+                                    with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
+                                        tmp_cover = tmp.name
+                                    try:
+                                        if self._extract_cover_art(source_path, tmp_cover):
+                                            success, _ = self._adb_push(tmp_cover, remote_cover)
+                                            if success:
+                                                covers_count += 1
+                                    finally:
+                                        if os.path.exists(tmp_cover):
+                                            os.remove(tmp_cover)
                     else:
-                        if self._copy_file(source_path, dest_path):
-                            copied_count += 1
+                        # Local mode
+                        if skip_existing and os.path.exists(dest_path):
+                            skipped_count += 1
+                            # Still check for cover art even if audio is skipped
+                            dest_dir = os.path.dirname(dest_path)
+                            if dest_dir not in processed_cover_dirs:
+                                cover_result = self._ensure_cover_art(source_path, dest_dir, processed_cover_dirs)
+                                if cover_result:
+                                    covers_count += 1
+                            continue
+
+                        # Copy or convert
+                        if needs_conversion:
+                            self._append_sync_text(f"Converting: {filename}...")
+                            if self._convert_to_opus(source_path, dest_path):
+                                self._append_sync_text(" OK\n")
+                                converted_count += 1
+                            else:
+                                self._append_sync_text(" FAILED\n")
+                                error_count += 1
                         else:
-                            self._append_sync_text(f"✗ Failed to copy: {filename}\n")
-                            error_count += 1
+                            if self._copy_file(source_path, dest_path):
+                                copied_count += 1
+                            else:
+                                self._append_sync_text(f"✗ Failed to copy: {filename}\n")
+                                error_count += 1
+
+                        # Handle cover art for this destination folder
+                        dest_dir = os.path.dirname(dest_path)
+                        if dest_dir not in processed_cover_dirs:
+                            cover_result = self._ensure_cover_art(source_path, dest_dir, processed_cover_dirs)
+                            if cover_result:
+                                covers_count += 1
 
                 # Music sync summary
                 self._append_sync_text(f"\nMusic sync complete:\n")
                 self._append_sync_text(f"  Converted: {converted_count}\n")
-                self._append_sync_text(f"  Copied: {copied_count}\n")
+                if is_adb_mode:
+                    self._append_sync_text(f"  Pushed: {pushed_count}\n")
+                else:
+                    self._append_sync_text(f"  Copied: {copied_count}\n")
                 self._append_sync_text(f"  Skipped (existing): {skipped_count}\n")
+                self._append_sync_text(f"  Cover art added: {covers_count}\n")
                 if error_count > 0:
                     self._append_sync_text(f"  Errors: {error_count}\n")
                 self._append_sync_text("\n" + "=" * 50 + "\n\n")
@@ -1345,8 +1934,122 @@ class PowerAmpSyncApp:
                     self.root.after(0, self._sync_complete)
                     return
 
-            # Phase 2: Write playlists
-            phase_num = "2" if sync_music else "1"
+            # Phase 2: Mirror sync - delete orphaned files
+            if mirror_sync and sync_music and self.syncing:
+                phase_num = "2"
+                self._append_sync_text(f"PHASE {phase_num}: Cleaning up orphaned files...\n")
+
+                deleted_count = 0
+                deleted_dirs = 0
+
+                if is_adb_mode:
+                    # Get existing files from device
+                    self._append_sync_text("Scanning device for existing files...\n")
+                    existing_files = self._adb_list_files(music_dest)
+                    self._append_sync_text(f"Found {len(existing_files)} files on device\n")
+
+                    # Find orphaned files (exclude cover art from deletion consideration)
+                    orphaned = []
+                    for f in existing_files:
+                        # Skip cover art files - they're cleaned up with empty folders
+                        if os.path.basename(f).lower() in ['cover.jpg', 'cover.png', 'folder.jpg', 'folder.png']:
+                            continue
+                        if f not in expected_files:
+                            orphaned.append(f)
+
+                    if orphaned:
+                        self._append_sync_text(f"Found {len(orphaned)} orphaned files to delete\n")
+                        for orphan in orphaned:
+                            if not self.syncing:
+                                break
+                            full_path = music_dest + '/' + orphan
+                            if self._adb_delete(full_path):
+                                self._append_sync_text(f"  Deleted: {orphan}\n")
+                                deleted_count += 1
+                            else:
+                                self._append_sync_text(f"  Failed to delete: {orphan}\n")
+
+                        # Clean up empty directories
+                        self._append_sync_text("\nCleaning up empty directories...\n")
+                        # Get unique parent directories of deleted files
+                        deleted_parents = set()
+                        for orphan in orphaned:
+                            parent = os.path.dirname(orphan)
+                            while parent:
+                                deleted_parents.add(parent)
+                                parent = os.path.dirname(parent)
+
+                        # Sort by depth (deepest first) to clean from bottom up
+                        for parent in sorted(deleted_parents, key=lambda x: x.count('/'), reverse=True):
+                            full_dir = music_dest + '/' + parent
+                            # Try to delete cover art in the directory first
+                            for cover_name in ['cover.jpg', 'cover.png', 'folder.jpg']:
+                                self._adb_delete(full_dir + '/' + cover_name)
+                            if self._adb_rmdir_empty(full_dir):
+                                deleted_dirs += 1
+                    else:
+                        self._append_sync_text("No orphaned files found\n")
+                else:
+                    # Local mode mirror sync
+                    local_music_dest = self.music_dest_var.get().strip()
+                    self._append_sync_text("Scanning local folder for existing files...\n")
+
+                    existing_files = []
+                    for root, dirs, files in os.walk(local_music_dest):
+                        for f in files:
+                            full_path = os.path.join(root, f)
+                            rel_path = os.path.relpath(full_path, local_music_dest).replace('\\', '/')
+                            existing_files.append(rel_path)
+
+                    self._append_sync_text(f"Found {len(existing_files)} files locally\n")
+
+                    # Find orphaned files
+                    orphaned = []
+                    for f in existing_files:
+                        # Skip cover art files
+                        if os.path.basename(f).lower() in ['cover.jpg', 'cover.png', 'folder.jpg', 'folder.png']:
+                            continue
+                        if f not in expected_files:
+                            orphaned.append(f)
+
+                    if orphaned:
+                        self._append_sync_text(f"Found {len(orphaned)} orphaned files to delete\n")
+                        for orphan in orphaned:
+                            if not self.syncing:
+                                break
+                            full_path = os.path.join(local_music_dest, orphan)
+                            try:
+                                os.remove(full_path)
+                                self._append_sync_text(f"  Deleted: {orphan}\n")
+                                deleted_count += 1
+                            except OSError as e:
+                                self._append_sync_text(f"  Failed to delete {orphan}: {e}\n")
+
+                        # Clean up empty directories
+                        self._append_sync_text("\nCleaning up empty directories...\n")
+                        for orphan in orphaned:
+                            parent_dir = os.path.dirname(os.path.join(local_music_dest, orphan))
+                            while parent_dir and parent_dir != local_music_dest:
+                                try:
+                                    # Remove cover art first
+                                    for cover_name in ['cover.jpg', 'cover.png', 'folder.jpg']:
+                                        cover_path = os.path.join(parent_dir, cover_name)
+                                        if os.path.exists(cover_path):
+                                            os.remove(cover_path)
+                                    # Try to remove directory if empty
+                                    os.rmdir(parent_dir)
+                                    deleted_dirs += 1
+                                    parent_dir = os.path.dirname(parent_dir)
+                                except OSError:
+                                    break
+                    else:
+                        self._append_sync_text("No orphaned files found\n")
+
+                self._append_sync_text(f"\nCleanup complete: {deleted_count} files deleted, {deleted_dirs} empty directories removed\n")
+                self._append_sync_text("=" * 50 + "\n\n")
+
+            # Phase 3: Write playlists
+            phase_num = "3" if (mirror_sync and sync_music) else ("2" if sync_music else "1")
             self._append_sync_text(f"PHASE {phase_num}: Writing playlists...\n\n")
 
             for i, playlist_name in enumerate(selected_playlists):
@@ -1360,21 +2063,47 @@ class PowerAmpSyncApp:
                 playlist_info = self.playlist_data.get(playlist_name, {})
                 track_ids = playlist_info.get('track_ids', [])
 
-                # Create output path
+                # Create output filename
                 output_filename = f"{playlist_name}.m3u"
                 output_filename = re.sub(r'[<>:"/\\|?*]', '_', output_filename)
-                output_path = os.path.join(playlist_dest, output_filename)
 
-                # Use path mapping if music was synced, otherwise None
-                mapping = path_mapping if sync_music else None
-                success, tracks_written = self._write_m3u8_playlist(playlist_name, track_ids, output_path, mapping)
+                if is_adb_mode:
+                    # Write to temp file then push
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.m3u', delete=False, encoding='utf-8-sig') as tmp:
+                        tmp_path = tmp.name
 
-                if success:
-                    playlist_success += 1
-                    self._append_sync_text(f"✓ {playlist_name} ({tracks_written} tracks)\n")
+                    # Use path mapping for playlist
+                    mapping = path_mapping if sync_music else None
+                    success, tracks_written = self._write_m3u8_playlist(playlist_name, track_ids, tmp_path, mapping)
+
+                    if success:
+                        remote_path = playlist_dest + '/' + output_filename
+                        push_success, push_error = self._adb_push(tmp_path, remote_path)
+                        if push_success:
+                            playlist_success += 1
+                            self._append_sync_text(f"✓ {playlist_name} ({tracks_written} tracks)\n")
+                        else:
+                            playlist_error += 1
+                            self._append_sync_text(f"✗ {playlist_name} - Push failed: {push_error}\n")
+                    else:
+                        playlist_error += 1
+                        self._append_sync_text(f"✗ {playlist_name} - Failed to write\n")
+
+                    # Clean up temp file
+                    if os.path.exists(tmp_path):
+                        os.remove(tmp_path)
                 else:
-                    playlist_error += 1
-                    self._append_sync_text(f"✗ {playlist_name} - Failed to write\n")
+                    # Local mode
+                    output_path = os.path.join(playlist_dest, output_filename)
+                    mapping = path_mapping if sync_music else None
+                    success, tracks_written = self._write_m3u8_playlist(playlist_name, track_ids, output_path, mapping)
+
+                    if success:
+                        playlist_success += 1
+                        self._append_sync_text(f"✓ {playlist_name} ({tracks_written} tracks)\n")
+                    else:
+                        playlist_error += 1
+                        self._append_sync_text(f"✗ {playlist_name} - Failed to write\n")
 
             # Final summary
             self._append_sync_text("\n" + "=" * 50 + "\n")

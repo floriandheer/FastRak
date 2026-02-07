@@ -69,8 +69,11 @@ modules/woocommerce_monitor_data/config.json
 modules/woocommerce_monitor_data/processed_orders.json
 modules/woocommerce_monitor_data/*.log
 
-# Tools directory (download externally)
-tools/
+# Tools directory - binaries downloaded externally, keep README
+tools/*
+!tools/platform-tools/
+tools/platform-tools/*
+!tools/platform-tools/README.txt
 
 # Old/backup Python files
 *_OLD.py

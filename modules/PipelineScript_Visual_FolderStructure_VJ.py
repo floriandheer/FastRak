@@ -35,7 +35,7 @@ from shared_form_keyboard import (
     create_software_chip_row, get_active_software,
     add_name_validation
 )
-from shared_folder_tree_parser import parse_tree_file, create_structure as tree_create_structure, create_gitkeep_files
+from shared_folder_tree_parser import parse_tree_file, create_structure as tree_create_structure
 
 logger = get_logger(__name__)
 
@@ -373,7 +373,6 @@ class VJFolderStructureCreator(FormKeyboardMixin):
             # Create folder structure from tree file
             tree = parse_tree_file(self.tree_file)
             created = tree_create_structure(project_dir, tree)
-            create_gitkeep_files(project_dir, created)
 
             # Create specifications file
             self.create_specs_file(project_dir, project_name, client_name, date)

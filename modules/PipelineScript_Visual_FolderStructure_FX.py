@@ -36,7 +36,7 @@ from shared_form_keyboard import (
     create_software_chip_row, get_active_software,
     add_name_validation
 )
-from shared_folder_tree_parser import parse_tree_file, create_structure as tree_create_structure, create_gitkeep_files
+from shared_folder_tree_parser import parse_tree_file, create_structure as tree_create_structure
 
 logger = get_logger(__name__)
 
@@ -360,7 +360,6 @@ class FolderStructureCreator(FormKeyboardMixin):
             replacements = {'YYY-MM-DD': date}
             conditionals = {'shots': include_shots}
             created = tree_create_structure(project_dir, tree, replacements, conditionals)
-            create_gitkeep_files(project_dir, created)
 
             docs_dir = os.path.join(project_dir, '_LIBRARY', 'Documents')
             os.makedirs(docs_dir, exist_ok=True)
