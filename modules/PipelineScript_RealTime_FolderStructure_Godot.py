@@ -32,7 +32,7 @@ from shared_form_keyboard import (
     create_software_chip_row, get_active_software,
     add_name_validation
 )
-from shared_folder_tree_parser import parse_tree_file, create_structure as tree_create_structure, create_gitkeep_files
+from shared_folder_tree_parser import parse_tree_file, create_structure as tree_create_structure
 
 TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates")
 
