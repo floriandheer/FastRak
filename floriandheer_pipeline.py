@@ -1939,7 +1939,18 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
             script_data = category.get("scripts", {}).get(script_key)
             config_key = script_key
 
-        if not script_data or "path" not in script_data:
+        if not script_data:
+            self.update_status(f"Script not found: {script_key}", "error")
+            return
+
+        # Handle URL shortcuts - open in browser
+        if "url" in script_data:
+            import webbrowser
+            webbrowser.open(script_data["url"])
+            self.update_status(f"Opened: {script_data['name']}", "info")
+            return
+
+        if "path" not in script_data:
             self.update_status(f"Script not found: {script_key}", "error")
             return
 

@@ -19,6 +19,11 @@
         "name": "scripts",
         "source": "{config_dir}/scripts",
         "mapped": "Blender/{version}/scripts"
+      },
+      {
+        "name": "extensions",
+        "source": "{config_dir}/extensions",
+        "mapped": "Blender/{version}/extensions"
       }
     ]
   },

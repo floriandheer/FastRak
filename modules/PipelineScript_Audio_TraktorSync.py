@@ -1697,21 +1697,15 @@ class PlaylistSyncUI:
         return sanitized
 
     def find_album_art(self, track_path):
-        """Find album art for a track - either embedded or external cover files"""
-        album_art_path = None
-        
-        # First check for external cover files in the same directory
+        """Find album art image in the same folder as the track."""
         track_dir = os.path.dirname(track_path)
-        cover_files = ['cover.jpg', 'cover.jpeg', 'cover.png', 'folder.jpg', 'folder.png', 
-                      'albumart.jpg', 'albumart.png', 'Cover.jpg', 'Cover.png']
-        
-        for cover_file in cover_files:
-            potential_cover = os.path.join(track_dir, cover_file)
-            if os.path.exists(potential_cover):
-                album_art_path = potential_cover
-                break
-        
-        return album_art_path
+        try:
+            for f in os.listdir(track_dir):
+                if f.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff', '.tif', '.webp')):
+                    return os.path.join(track_dir, f)
+        except OSError:
+            pass
+        return None
 
     def read_flac_comment_metadata(self, flac_path):
         """Read the COMMENT metadata field from a FLAC file using metaflac"""
