@@ -1365,33 +1365,14 @@ TROUBLESHOOTING
         return os.path.join(music_dest, relative_path)
 
     def _find_cover_art(self, source_path: str) -> Optional[str]:
-        """Find cover art file in the same folder as the source file."""
+        """Find cover art image in the same folder as the source file."""
         source_dir = os.path.dirname(source_path)
-
-        # Common cover art filenames (in priority order)
-        cover_names = [
-            'cover.jpg', 'cover.jpeg', 'cover.png',
-            'folder.jpg', 'folder.jpeg', 'folder.png',
-            'album.jpg', 'album.jpeg', 'album.png',
-            'front.jpg', 'front.jpeg', 'front.png',
-            'albumart.jpg', 'albumart.jpeg', 'albumart.png',
-            'Cover.jpg', 'Cover.jpeg', 'Cover.png',
-            'Folder.jpg', 'Folder.jpeg', 'Folder.png',
-        ]
-
-        for name in cover_names:
-            cover_path = os.path.join(source_dir, name)
-            if os.path.exists(cover_path):
-                return cover_path
-
-        # Also check for any jpg/png in the folder as fallback
         try:
             for f in os.listdir(source_dir):
-                if f.lower().endswith(('.jpg', '.jpeg', '.png')):
+                if f.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff', '.tif', '.webp')):
                     return os.path.join(source_dir, f)
         except OSError:
             pass
-
         return None
 
     def _source_has_embedded_art(self, source_path: str) -> bool:

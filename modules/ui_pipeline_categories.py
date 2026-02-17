@@ -189,6 +189,12 @@ BUSINESS_CATEGORIES = {
                 "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Bookkeeping_InvoiceRenamer.py"),
                 "description": "Automatically rename invoices to standardized format: FAC_YY-MM-DD_CompanyName",
                 "icon": "📄"
+            },
+            "inside_tracker": {
+                "name": "Inside Tracker",
+                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Business_InsideTracker.py"),
+                "description": "Monitor and download politician stock trade filings (PTR) from House Clerk",
+                "icon": "📊"
             }
         },
         "subcategories": {}
@@ -216,6 +222,18 @@ BUSINESS_CATEGORIES = {
                 "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Global_SoftwareLauncher.py"),
                 "description": "Download, update, and launch portable software tools from GitHub releases",
                 "icon": "🚀"
+            },
+            "homebox": {
+                "name": "Homebox",
+                "url": "http://169.254.132.127:3100/home",
+                "description": "Personal inventory management",
+                "icon": "📦"
+            },
+            "inventree": {
+                "name": "InvenTree",
+                "url": "http://169.254.132.127:8080/web/home",
+                "description": "Work inventory management",
+                "icon": "🏭"
             }
         },
         "subcategories": {}
