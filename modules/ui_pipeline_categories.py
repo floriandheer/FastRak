@@ -165,6 +165,12 @@ CREATIVE_CATEGORIES = {
                 "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Web_BackupLaragon.py"),
                 "description": "Create a timestamped backup of Laragon installation",
                 "icon": "💾"
+            },
+            "publish_static": {
+                "name": "Publish Static Site",
+                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Web_PublishStatic.py"),
+                "description": "Upload Staatic exports to FTP, sync DokuWiki, and create dated archives",
+                "icon": "🚀"
             }
         },
         "subcategories": {}

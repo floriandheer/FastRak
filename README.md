@@ -153,6 +153,7 @@ The Pipeline Manager includes 14+ specialized scripts organized by category:
 #### 🌐 Web Development
 - **New Web Project** - Standardized web development structure
 - **Backup Laragon** - Backup local web development environment
+- [**Publish Static Site**](README_STATIC_SITE_PUBLISHER.md) - Upload Staatic exports to FTP, sync DokuWiki, and create dated archives
 
 #### 🖨️ 3D Printing
 - **New 3D Printing Project** - Organize 3D printing files and iterations
