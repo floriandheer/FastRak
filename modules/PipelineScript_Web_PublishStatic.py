@@ -9,6 +9,7 @@ Description: Upload Staatic exports to FTP via WinSCP, sync DokuWiki, and create
 
 import os
 import sys
+import glob
 import json
 import shutil
 import zipfile
@@ -78,7 +79,8 @@ class WebPublishConfig:
                     }
                 }
             },
-            "winscp_path": ""
+            "winscp_path": "",
+            "backup_max_per_project": 5
         }
 
     def _load_config(self) -> Dict:
@@ -127,6 +129,13 @@ class WebPublishConfig:
 
     def set_winscp_path(self, path: str):
         self.config["winscp_path"] = path
+        self._save()
+
+    def get_max_backups(self) -> int:
+        return self.config.get("backup_max_per_project", 5)
+
+    def set_max_backups(self, value: int):
+        self.config["backup_max_per_project"] = value
         self._save()
 
 
@@ -589,8 +598,8 @@ class PublishWorkflow:
         site_archive_dir = os.path.join(archive_base, self.site_key)
         os.makedirs(site_archive_dir, exist_ok=True)
 
-        date_str = datetime.now().strftime("%Y-%m-%d")
-        zip_name = f"{self.site_key}_{date_str}.zip"
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        zip_name = f"pub_{self.site_key}_{timestamp}.zip"
         zip_path = os.path.join(site_archive_dir, zip_name)
 
         self._output(f"Creating archive: {zip_path}")
@@ -605,6 +614,19 @@ class PublishWorkflow:
 
             size_mb = os.path.getsize(zip_path) / (1024 * 1024)
             self._output(f"Archive created: {zip_name} ({size_mb:.1f} MB)")
+
+            # Rotate old backups
+            max_keep = self.config.get_max_backups()
+            pattern = os.path.join(site_archive_dir, f"pub_{self.site_key}_*.zip")
+            backups = sorted(glob.glob(pattern))
+            if len(backups) > max_keep:
+                for old in backups[:len(backups) - max_keep]:
+                    try:
+                        os.remove(old)
+                        self._output(f"Rotated: {os.path.basename(old)}")
+                    except OSError as e:
+                        logger.warning(f"Failed to remove {old}: {e}")
+
             return True
         except Exception as e:
             self._output(f"Archive failed: {e}")
@@ -737,6 +759,17 @@ class FTPSettingsDialog:
         tk.Button(winscp_frame, text="...", width=3,
                   command=self._browse_winscp).grid(row=0, column=2, padx=5, pady=4)
 
+        # Backup frame
+        backup_frame = ttk.LabelFrame(self.dialog, text="Backup")
+        backup_frame.pack(fill=tk.X, **pad)
+
+        max_row = tk.Frame(backup_frame)
+        max_row.pack(fill=tk.X, padx=10, pady=4)
+        tk.Label(max_row, text="Max backups per project:").pack(side=tk.LEFT)
+        self.max_backup_var = tk.StringVar(value=str(self.config.get_max_backups()))
+        tk.Spinbox(max_row, from_=1, to=50, textvariable=self.max_backup_var,
+                   width=5).pack(side=tk.LEFT, padx=5)
+
         # Buttons
         btn_frame = tk.Frame(self.dialog)
         btn_frame.pack(fill=tk.X, pady=10, padx=10)
@@ -796,6 +829,10 @@ class FTPSettingsDialog:
     def _save(self):
         self._save_current_to_memory()
         self.config.config["winscp_path"] = self.winscp_var.get()
+        try:
+            self.config.config["backup_max_per_project"] = int(self.max_backup_var.get())
+        except ValueError:
+            pass
         self.config.save()
         self.dialog.destroy()
 
