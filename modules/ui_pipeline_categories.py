@@ -162,7 +162,7 @@ CREATIVE_CATEGORIES = {
         "scripts": {
             "backup_laragon": {
                 "name": "Laragon Workspace Manager",
-                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Web_BackupLaragon.py"),
+                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Web_LaragonWorkspace.py"),
                 "description": "Manage Laragon project junctions to work drive",
                 "icon": "🔗"
             },
