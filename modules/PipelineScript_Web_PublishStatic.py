@@ -16,6 +16,7 @@ import zipfile
 import threading
 import subprocess
 import tempfile
+import time
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, scrolledtext
 from datetime import datetime
@@ -185,7 +186,7 @@ class WinSCPManager:
         user = ftp_cfg["username"]
         password = quote(ftp_cfg["password"], safe="")
         url = f"{protocol}://{user}:{password}@{host}:{port}"
-        return f'open "{url}" -passive=on -timeout=30'
+        return f'open "{url}" -passive=on -timeout=60'
 
     def build_upload_script(self, ftp_cfg: Dict, local_dir: str, remote_path: str,
                             exclude_wiki: bool = False) -> str:
@@ -476,17 +477,24 @@ class PublishWorkflow:
         if exclude_wiki:
             self._output("(excluding /wiki/ directory)")
 
-        exit_code = self.winscp_mgr.execute_script(
-            winscp_path, script, on_output=self._output
-        )
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            if attempt > 1:
+                self._output(f"Retry attempt {attempt}/{max_attempts} ...")
+            exit_code = self.winscp_mgr.execute_script(
+                winscp_path, script, on_output=self._output
+            )
+            if exit_code == 0:
+                self._output("FTP upload completed")
+                return True
+            if attempt < max_attempts:
+                wait_sec = attempt * 10
+                self._output(f"FTP upload failed (exit code {exit_code}), retrying in {wait_sec}s ...")
+                time.sleep(wait_sec)
 
-        if exit_code != 0:
-            self._output(f"FTP upload failed (exit code {exit_code})")
-            self._complete(False, f"FTP upload failed (exit code {exit_code})")
-            return False
-
-        self._output("FTP upload completed")
-        return True
+        self._output(f"FTP upload failed after {max_attempts} attempts (exit code {exit_code})")
+        self._complete(False, f"FTP upload failed (exit code {exit_code})")
+        return False
 
     def _copy_wiki_to_export(self) -> bool:
         wiki_latest = self.site_cfg.get("wiki_latest_dir", "")
@@ -555,22 +563,27 @@ class PublishWorkflow:
         wiki_remote = self.site_cfg.get("wiki_remote_path", "/wiki")
         winscp_path = self.winscp_mgr.find_winscp()
 
-        self._output(f"Syncing wiki from server ({wiki_remote}) ...")
-
         script = self.winscp_mgr.build_wiki_download_script(
             ftp_cfg, wiki_remote, wiki_local
         )
-        exit_code = self.winscp_mgr.execute_script(
-            winscp_path, script, on_output=self._output
-        )
 
-        if exit_code != 0:
-            self._output(f"Wiki sync failed (exit code {exit_code})")
-            self._complete(False, f"Wiki sync failed (exit code {exit_code})")
-            return False
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            self._output(f"Syncing wiki from server ({wiki_remote}) ... (attempt {attempt}/{max_attempts})")
+            exit_code = self.winscp_mgr.execute_script(
+                winscp_path, script, on_output=self._output
+            )
+            if exit_code == 0:
+                self._output("Wiki synced from online")
+                return True
+            if attempt < max_attempts:
+                wait_sec = attempt * 10
+                self._output(f"Wiki sync failed (exit code {exit_code}), retrying in {wait_sec}s ...")
+                time.sleep(wait_sec)
 
-        self._output("Wiki synced from online")
-        return True
+        self._output(f"Wiki sync failed after {max_attempts} attempts (exit code {exit_code})")
+        self._complete(False, f"Wiki sync failed (exit code {exit_code})")
+        return False
 
     def _update_wiki_latest(self) -> bool:
         export_dir = self.site_cfg["export_dir"]
