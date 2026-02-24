@@ -150,6 +150,12 @@ CREATIVE_CATEGORIES = {
                 "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Photo_NewCollection.py"),
                 "description": "Create a photo collection folder in E:/_photo with date, location, and activity",
                 "icon": "📸"
+            },
+            "raw_cleanup": {
+                "name": "RAW Cleanup",
+                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Photo_RawCleanup.py"),
+                "description": "Delete orphaned RAW files that have no matching JPG in the same folder",
+                "icon": "🧹"
             }
         },
         "subcategories": {}

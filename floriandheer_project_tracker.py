@@ -1391,6 +1391,20 @@ class ProjectTrackerApp:
         )
         self.unarchive_btn.pack(side=tk.LEFT, padx=5)
 
+        self.raw_cleanup_btn = tk.Button(
+            button_frame,
+            text="🧹 RAW Cleanup",
+            command=self._raw_cleanup,
+            bg="#1c2128",
+            fg="white",
+            font=("Arial", 9),
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=15,
+            pady=6
+        )
+        self.raw_cleanup_btn.pack(side=tk.LEFT, padx=5)
+
         # Store reference to right frame for FAB positioning
         self.right_frame = right_frame
 
@@ -2583,6 +2597,8 @@ class ProjectTrackerApp:
             self.archive_btn.config(state=tk.DISABLED)
             self.unarchive_btn.config(state=tk.NORMAL)
 
+        self.raw_cleanup_btn.config(state=tk.NORMAL)
+
     def _copy_path_to_clipboard(self, path_type: str):
         """Copy the specified path to clipboard."""
         if path_type == "active" and self._current_active_path:
@@ -2666,6 +2682,32 @@ class ProjectTrackerApp:
         except Exception as e:
             logger.error(f"Failed to open folder: {e}")
             messagebox.showerror("Error", f"Failed to open folder:\n{str(e)}")
+
+    def _raw_cleanup(self):
+        """Launch RAW Cleanup tool, pointed at the selected project's folder if available."""
+        import subprocess
+
+        args = [sys.executable, os.path.join(os.path.dirname(__file__), "modules", "PipelineScript_Photo_RawCleanup.py")]
+
+        if self.selected_project:
+            stored_path = self.selected_project["path"]
+            status = self.selected_project.get("status", "active")
+
+            if status == "active":
+                try:
+                    settings = get_rak_settings()
+                    folder = settings.convert_to_work_drive_path(stored_path)
+                    if not Path(folder).exists():
+                        folder = stored_path
+                except Exception:
+                    folder = stored_path
+            else:
+                folder = stored_path
+
+            args.append(folder)
+
+        subprocess.Popen(args)
+        logger.info(f"Launched RAW Cleanup")
 
     def _archive_project(self):
         """Archive the selected project."""
