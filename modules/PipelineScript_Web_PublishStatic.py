@@ -46,43 +46,75 @@ class WebPublishConfig:
         self.config = self._load_config()
 
     def _default_config(self) -> Dict:
-        work = get_rak_settings().get_work_drive()
         return {
-            "sites": {
-                "floriandheer": {
-                    "label": "floriandheer.com",
-                    "export_dir": f"{work}\\Web\\_Personal\\floriandheer\\03_publish\\floriandheer",
-                    "has_wiki": True,
-                    "wiki_latest_dir": f"{work}\\Web\\_Personal\\floriandheer\\_wiki_latest",
-                    "wiki_remote_path": "/wiki",
-                    "ftp": {
-                        "protocol": "ftp",
-                        "host": "",
-                        "port": 21,
-                        "username": "",
-                        "password": "",
-                        "remote_path": "/"
-                    }
-                },
-                "hyphen-v": {
-                    "label": "hyphen-v.com",
-                    "export_dir": f"{work}\\Web\\_Personal\\hyphen-v\\03_publish\\hyphen-v",
-                    "has_wiki": False,
-                    "wiki_latest_dir": "",
-                    "wiki_remote_path": "",
-                    "ftp": {
-                        "protocol": "ftp",
-                        "host": "",
-                        "port": 21,
-                        "username": "",
-                        "password": "",
-                        "remote_path": "/"
-                    }
-                }
-            },
+            "sites": self._discover_sites(),
             "winscp_path": "",
             "backup_max_per_project": 5
         }
+
+    def _discover_sites(self) -> Dict:
+        """Scan Web\\_Personal folder for site directories."""
+        work = get_rak_settings().get_work_drive()
+        personal_dir = os.path.join(work, "Web", "_Personal")
+        sites = {}
+
+        if not os.path.isdir(personal_dir):
+            logger.warning(f"Personal web directory not found: {personal_dir}")
+            return sites
+
+        for entry in sorted(os.listdir(personal_dir)):
+            site_path = os.path.join(personal_dir, entry)
+            if not os.path.isdir(site_path) or entry.startswith("_"):
+                continue
+
+            # Find the publish folder (case-insensitive)
+            publish_dir = ""
+            for name in os.listdir(site_path):
+                if name.lower() == "03_publish":
+                    publish_dir = os.path.join(site_path, name)
+                    break
+
+            # Determine export_dir: look for a subfolder inside publish dir
+            export_dir = publish_dir
+            if publish_dir and os.path.isdir(publish_dir):
+                subdirs = [d for d in os.listdir(publish_dir)
+                           if os.path.isdir(os.path.join(publish_dir, d))]
+                if len(subdirs) == 1:
+                    export_dir = os.path.join(publish_dir, subdirs[0])
+
+            # Detect wiki support
+            has_wiki = any(
+                d.lower() == "_wiki_latest"
+                for d in os.listdir(site_path)
+                if os.path.isdir(os.path.join(site_path, d))
+            )
+
+            wiki_latest_dir = ""
+            wiki_remote_path = ""
+            if has_wiki:
+                for d in os.listdir(site_path):
+                    if d.lower() == "_wiki_latest":
+                        wiki_latest_dir = os.path.join(site_path, d)
+                        break
+                wiki_remote_path = "/wiki"
+
+            sites[entry] = {
+                "label": entry,
+                "export_dir": export_dir,
+                "has_wiki": has_wiki,
+                "wiki_latest_dir": wiki_latest_dir,
+                "wiki_remote_path": wiki_remote_path,
+                "ftp": {
+                    "protocol": "ftp",
+                    "host": "",
+                    "port": 21,
+                    "username": "",
+                    "password": "",
+                    "remote_path": "/"
+                }
+            }
+
+        return sites
 
     def _load_config(self) -> Dict:
         default = self._default_config()
@@ -91,6 +123,12 @@ class WebPublishConfig:
                 with open(self.config_file, 'r', encoding='utf-8') as f:
                     loaded = json.load(f)
                 self._merge(default, loaded)
+                # Remove sites that no longer exist on disk
+                discovered = self._discover_sites()
+                default["sites"] = {
+                    k: v for k, v in default["sites"].items()
+                    if k in discovered
+                }
                 return default
             except Exception as e:
                 logger.error(f"Error loading config: {e}")
@@ -197,6 +235,9 @@ class WinSCPManager:
             "option reconnecttime 15",
             self._build_open_command(ftp_cfg),
         ]
+        lines.append("option batch continue")
+        lines.append(f'mkdir "{remote_path}"')
+        lines.append("option batch abort")
         excludes = ""
         if exclude_wiki:
             excludes = ' -filemask="|wiki/"'
@@ -654,7 +695,8 @@ class PublishWorkflow:
 class FTPSettingsDialog:
     """Modal dialog for configuring FTP settings."""
 
-    def __init__(self, parent: tk.Tk, config: WebPublishConfig, winscp_mgr: WinSCPManager):
+    def __init__(self, parent: tk.Tk, config: WebPublishConfig, winscp_mgr: WinSCPManager,
+                 initial_site_key: str = ""):
         self.config = config
         self.winscp_mgr = winscp_mgr
         self.dialog = tk.Toplevel(parent)
@@ -662,10 +704,12 @@ class FTPSettingsDialog:
         self.dialog.transient(parent)
         self.dialog.grab_set()
         self.dialog.resizable(False, False)
-        self.dialog.geometry("550x555")
+        self.dialog.geometry("550x590")
 
         self._build_ui()
-        self._load_site(self.config.get_site_keys()[0])
+        site_keys = self.config.get_site_keys()
+        start_key = initial_site_key if initial_site_key in site_keys else site_keys[0]
+        self._load_site(start_key)
 
         # Center on parent
         self.dialog.update_idletasks()
@@ -692,6 +736,23 @@ class FTPSettingsDialog:
         self.site_combo.bind("<<ComboboxSelected>>", self._on_site_changed)
         self._site_labels = labels
         self._site_keys = site_keys
+
+        self._clipboard = None
+        tk.Button(top, text="Copy Settings", command=self._copy_settings,
+                  width=12).pack(side=tk.LEFT, padx=(10, 2))
+        self.paste_btn = tk.Button(top, text="Paste Settings", command=self._paste_settings,
+                                   width=12, state=tk.DISABLED)
+        self.paste_btn.pack(side=tk.LEFT, padx=2)
+
+        # Site label + wiki toggle
+        site_opts = tk.Frame(self.dialog)
+        site_opts.pack(fill=tk.X, **pad)
+        tk.Label(site_opts, text="Display Label:").pack(side=tk.LEFT)
+        self.label_var = tk.StringVar()
+        tk.Entry(site_opts, textvariable=self.label_var, width=25).pack(side=tk.LEFT, padx=5)
+        self.wiki_check_var = tk.BooleanVar()
+        tk.Checkbutton(site_opts, text="Has Wiki", variable=self.wiki_check_var,
+                       command=self._toggle_wiki_fields).pack(side=tk.RIGHT)
 
         # FTP frame
         ftp_frame = ttk.LabelFrame(self.dialog, text="FTP Connection")
@@ -805,6 +866,7 @@ class FTPSettingsDialog:
         ftp = cfg.get("ftp", {})
 
         self.site_var.set(self._site_labels.get(site_key, site_key))
+        self.label_var.set(cfg.get("label", site_key))
         self.protocol_var.set(ftp.get("protocol", "ftp"))
         self.host_var.set(ftp.get("host", ""))
         self.port_var.set(str(ftp.get("port", 21)))
@@ -816,15 +878,15 @@ class FTPSettingsDialog:
         self.wiki_remote_var.set(cfg.get("wiki_remote_path", "/wiki"))
 
         has_wiki = cfg.get("has_wiki", False)
-        state = tk.NORMAL if has_wiki else tk.DISABLED
-        self.wiki_entry.config(state=state)
-        self.wiki_browse_btn.config(state=state)
-        self.wiki_remote_entry.config(state=state)
+        self.wiki_check_var.set(has_wiki)
+        self._toggle_wiki_fields()
 
     def _save_current_to_memory(self):
         """Save current form values back to config dict (in memory)."""
         key = self._current_key
         site = self.config.config["sites"][key]
+        site["label"] = self.label_var.get() or key
+        site["has_wiki"] = self.wiki_check_var.get()
         site["export_dir"] = self.export_var.get()
         site["wiki_latest_dir"] = self.wiki_var.get()
         site["wiki_remote_path"] = self.wiki_remote_var.get()
@@ -848,6 +910,35 @@ class FTPSettingsDialog:
             pass
         self.config.save()
         self.dialog.destroy()
+
+    def _toggle_wiki_fields(self):
+        state = tk.NORMAL if self.wiki_check_var.get() else tk.DISABLED
+        self.wiki_entry.config(state=state)
+        self.wiki_browse_btn.config(state=state)
+        self.wiki_remote_entry.config(state=state)
+
+    def _copy_settings(self):
+        """Copy current site's FTP settings to clipboard."""
+        self._clipboard = {
+            "protocol": self.protocol_var.get(),
+            "host": self.host_var.get(),
+            "port": self.port_var.get(),
+            "username": self.user_var.get(),
+            "password": self.pass_var.get(),
+            "remote_path": self.remote_var.get(),
+        }
+        self.paste_btn.config(state=tk.NORMAL)
+
+    def _paste_settings(self):
+        """Paste copied FTP settings into current site."""
+        if not self._clipboard:
+            return
+        self.protocol_var.set(self._clipboard["protocol"])
+        self.host_var.set(self._clipboard["host"])
+        self.port_var.set(self._clipboard["port"])
+        self.user_var.set(self._clipboard["username"])
+        self.pass_var.set(self._clipboard["password"])
+        self.remote_var.set(self._clipboard["remote_path"])
 
     def _browse_export(self):
         path = filedialog.askdirectory(title="Select Export Directory", parent=self.dialog)
@@ -1073,11 +1164,26 @@ class PublishStaticUI:
         self.output_text.config(state=tk.DISABLED)
 
     def _open_settings(self):
-        dialog = FTPSettingsDialog(self.root, self.config, self.winscp_mgr)
+        dialog = FTPSettingsDialog(self.root, self.config, self.winscp_mgr,
+                                   initial_site_key=self._get_current_site_key())
         self.root.wait_window(dialog.dialog)
-        # Reload after settings close
+        # Reload after settings close (re-scans for new site folders)
         self.config = WebPublishConfig()
         self.winscp_mgr = WinSCPManager(self.config)
+        self._refresh_site_list()
+
+    def _refresh_site_list(self):
+        """Rebuild the site combo box from current config."""
+        site_keys = self.config.get_site_keys()
+        self.site_labels_map = {}
+        combo_values = []
+        for k in site_keys:
+            label = self.config.get_site_config(k).get("label", k)
+            self.site_labels_map[label] = k
+            combo_values.append(label)
+        self.site_combo["values"] = combo_values
+        if combo_values and self.site_var.get() not in combo_values:
+            self.site_var.set(combo_values[0])
         self._on_site_changed()
 
     def _start_publish(self):
