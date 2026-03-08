@@ -87,11 +87,11 @@ Use `--dry-run` to preview changes without modifying anything. See [docs/INSTALL
 
 **Method 1: Python script**
 ```bash
-python floriandheer_pipeline.py
+python fastrak_hub.py
 ```
 
 **Method 2: VBS Launcher (Windows only)**
-- Double-click `floriandheer_pipeline_launcher.vbs`
+- Double-click `fastrak_launcher.vbs`
 - This method hides the console window for a cleaner experience
 
 ### Creating a Taskbar Shortcut (Windows)
@@ -102,7 +102,7 @@ To pin a VBS launcher shortcut to your Windows taskbar:
 2. Right-click the shortcut and select **Properties**
 3. In the **Target** field, add `explorer` before the path:
    ```
-   explorer C:\path\to\floriandheer_pipeline_launcher.vbs
+   explorer C:\path\to\fastrak_launcher.vbs
    ```
 4. Click **OK** to save
 5. Right-click the shortcut and select **Pin to taskbar**
@@ -171,7 +171,7 @@ The Pipeline Manager includes 14+ specialized scripts organized by category:
 
 ### Customizing Base Paths
 
-Edit the category definitions in `floriandheer_pipeline.py` to customize base folder paths:
+Edit the category definitions in `fastrak_hub.py` to customize base folder paths:
 
 ```python
 CREATIVE_CATEGORIES = {
@@ -187,7 +187,7 @@ CREATIVE_CATEGORIES = {
 
 1. Create your script in the `modules/` directory
 2. Follow the naming convention: `PipelineScript_Category_Name.py`
-3. Add the script reference in `floriandheer_pipeline.py` under the appropriate category
+3. Add the script reference in `fastrak_hub.py` under the appropriate category
 
 ## Troubleshooting
 

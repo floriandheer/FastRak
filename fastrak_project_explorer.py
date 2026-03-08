@@ -563,7 +563,10 @@ class ProjectImporter:
                     "base_directory": folder_info["base_dir"],
                     "status": folder_info.get("status", "active"),
                     "notes": "",
-                    "metadata": {"is_personal": parsed.get("is_personal", False)}
+                    "metadata": {
+                        "is_personal": parsed.get("is_personal", False),
+                        "location": parsed.get("location", "")
+                    }
                 }, auto_save=False)
                 stats["imported"] += 1
 
@@ -744,16 +747,28 @@ class ProjectImporter:
                     "is_personal": True
                 }
 
-        # Photo: Date_Location_Description
+        # Photo: Date_Location_Activity
         elif base_category == "Photo":
+            match = re.match(r'^(\d{4}-\d{2}-\d{2})_([^_]+)_(.+)$', folder_name)
+            if match:
+                return {
+                    "date": match.group(1),
+                    "client": "Personal" if is_personal else "Photo",
+                    "project": match.group(3),
+                    "location": match.group(2),
+                    "type": "Photo",
+                    "is_personal": is_personal
+                }
+            # Fallback: no location separator found
             match = re.match(r'^(\d{4}-\d{2}-\d{2})_(.+)$', folder_name)
             if match:
                 return {
                     "date": match.group(1),
-                    "client": "Photo",
+                    "client": "Personal" if is_personal else "Photo",
                     "project": match.group(2),
+                    "location": "",
                     "type": "Photo",
-                    "is_personal": False
+                    "is_personal": is_personal
                 }
 
         # Web: Just project name (no date prefix typically)
@@ -1289,6 +1304,7 @@ class ProjectTrackerApp:
         detail_fields = [
             ("Client", "client_name"),
             ("Project", "project_name"),
+            ("Location", "location"),
             ("Type", "project_type"),
             ("Date", "date_created"),
         ]
@@ -2218,11 +2234,16 @@ class ProjectTrackerApp:
                              font=("Arial", name_size, "bold"), wraplength=card_size-10)
         name_label.pack(pady=(0, 2))
 
-        # Client name - smaller
-        client_name = project.get("client_name", "")[:client_max]
-        if len(project.get("client_name", "")) > client_max:
-            client_name += "..."
-        client_label = tk.Label(card, text=client_name, bg="#1c2128", fg="#8b949e",
+        # Subtitle - location for Photo, client name for others
+        if project_type == "Photo":
+            location = project.get("metadata", {}).get("location", "")
+            subtitle = f"📍 {location}" if location else ""
+        else:
+            subtitle = project.get("client_name", "")
+        subtitle_display = subtitle[:client_max]
+        if len(subtitle) > client_max:
+            subtitle_display += "..."
+        client_label = tk.Label(card, text=subtitle_display, bg="#1c2128", fg="#8b949e",
                                font=("Arial", small_size))
         client_label.pack(pady=(0, 2))
 
@@ -2536,12 +2557,18 @@ class ProjectTrackerApp:
         """Display project details in right panel."""
         # Update detail labels
         for key, label in self.detail_labels.items():
-            value = project.get(key, "")
-
-            # Format type with icon
-            if key == "project_type":
+            if key == "location":
+                location = project.get("metadata", {}).get("location", "")
+                if location:
+                    value = f"📍 {location}"
+                else:
+                    value = "-"
+            elif key == "project_type":
+                value = project.get(key, "")
                 type_info = PROJECT_TYPES.get(value, {"name": value})
                 value = type_info["name"]
+            else:
+                value = project.get(key, "")
 
             label.config(text=str(value))
 

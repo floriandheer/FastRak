@@ -181,7 +181,7 @@ def main():
     
     if not args.web_only:
         print("To start the desktop application:")
-        print("  python floriandheer_pipeline.py")
+        print("  python fastrak_hub.py")
         print()
     
     print("Dependency installation complete!")

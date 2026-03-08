@@ -15,11 +15,11 @@ Press `y` when asked to install packages.
 ## 2. Launch the Application (1 minute)
 
 **Windows (Easy Way):**
-- Double-click `floriandheer_pipeline_launcher.vbs`
+- Double-click `fastrak_launcher.vbs`
 
 **Any Platform:**
 ```bash
-python floriandheer_pipeline.py
+python fastrak_hub.py
 ```
 
 ## 3. Use Your First Script (2 minutes)
@@ -58,7 +58,7 @@ python floriandheer_pipeline.py
 
 ### Change Base Paths
 
-Edit the paths in `floriandheer_pipeline.py`:
+Edit the paths in `fastrak_hub.py`:
 
 ```python
 "folder_path": "I:\\Audio",  # ← Change to your path

@@ -5,7 +5,7 @@ Pipeline Management System - Professional UI
 Author: Florian Dheer
 Version: 0.5.0
 Description: Main launcher for various pipeline scripts with professional UI
-Location: P:\\_Scripts\floriandheer_pipeline.py
+Location: P:\\_Scripts\\fastrak_hub.py
 """
 
 import os
@@ -45,7 +45,7 @@ from ui_keyboard_navigator import KeyboardNavigatorMixin
 logger = get_logger("pipeline")
 
 # Import Project Tracker for embedded use (from top-level file)
-from floriandheer_project_tracker import ProjectTrackerApp
+from fastrak_project_explorer import ProjectTrackerApp
 
 # ====================================
 # CUSTOM WIDGETS
@@ -330,10 +330,11 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
 
         # Configure grid for proper layout
         inner_header.grid_columnconfigure(1, weight=1)
+        inner_header.grid_rowconfigure(0, weight=1)
 
         # Logo section (left side)
         logo_frame = tk.Frame(inner_header, bg=COLORS["bg_secondary"], width=100)
-        logo_frame.grid(row=0, column=0, padx=20, sticky="w")
+        logo_frame.grid(row=0, column=0, padx=20, sticky="ns")
         logo_frame.grid_propagate(False)
 
         # Try to load the logo
@@ -363,16 +364,16 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
 
         # Title section (center-left)
         title_container = tk.Frame(inner_header, bg=COLORS["bg_secondary"])
-        title_container.grid(row=0, column=1, sticky="w", padx=20)
+        title_container.grid(row=0, column=1, sticky="w")
 
         # Main title
         title_font = font.Font(family="Segoe UI", size=26, weight="bold")
         title_label = tk.Label(title_container,
-                              text="PIPELINE MANAGER",
+                              text="FASTRAK",
                               font=title_font,
                               fg=COLORS["text_primary"],
                               bg=COLORS["bg_secondary"])
-        title_label.pack(anchor="w", pady=(20, 0))
+        title_label.pack(anchor="w")
 
         # Header buttons (right side of header)
         buttons_frame = tk.Frame(inner_header, bg=COLORS["bg_secondary"])
@@ -445,6 +446,22 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
         help_btn.pack(side=tk.LEFT, padx=(0, 0), pady=20)
         self._add_header_hint(help_btn, "Keyboard Shortcuts (F1)")
 
+        # Exit button (red)
+        exit_btn = tk.Button(
+            buttons_frame,
+            text="Exit",
+            command=self.root.destroy,
+            bg="#c0392b",
+            fg="white",
+            activebackground="#e74c3c",
+            activeforeground="white",
+            font=btn_font,
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=15,
+            pady=8
+        )
+        exit_btn.pack(side=tk.LEFT, padx=(5, 0), pady=20)
 
     def create_main_notebook(self):
         """Create the main content area (single unified view, no tabs needed)."""

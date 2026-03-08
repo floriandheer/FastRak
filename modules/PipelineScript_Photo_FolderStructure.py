@@ -8,6 +8,7 @@ Keyboard Navigation:
 - Shift+Tab: Move to previous field
 - Ctrl+Enter: Create project (from anywhere)
 - Escape: Close form
+- P: Toggle Personal checkbox (when not typing)
 - S: Toggle Sandbox checkbox (when not typing)
 """
 
@@ -37,11 +38,12 @@ TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__f
 class PhotoFolderStructureCreator(FormKeyboardMixin):
     """Creates folder structure for photo projects with keyboard-first navigation."""
 
-    def __init__(self, root_or_frame, embedded=False, on_project_created=None, on_cancel=None):
+    def __init__(self, root_or_frame, embedded=False, on_project_created=None, on_cancel=None, project_db=None):
         """Initialize the Photo Folder Structure Creator."""
         self.embedded = embedded
         self.on_project_created = on_project_created
         self.on_cancel = on_cancel
+        self.project_db = project_db
         self._in_text_field = False
 
         if embedded:
@@ -99,9 +101,15 @@ class PhotoFolderStructureCreator(FormKeyboardMixin):
         self.activity_entry = create_styled_entry(row1, textvariable=self.activity_var, width=20)
         self.activity_entry.grid(row=0, column=5, sticky="ew")
 
-        # ==================== ROW 2: Sandbox option ====================
+        # ==================== ROW 2: Personal and Sandbox options ====================
         row2 = create_styled_frame(main_frame)
         row2.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+
+        self.personal_var = tk.BooleanVar(value=False)
+        self.personal_check = create_styled_checkbox(
+            row2, text="Personal (P)", variable=self.personal_var, command=self.on_personal_toggle
+        )
+        self.personal_check.pack(side=tk.LEFT, padx=(0, 20))
 
         self.sandbox_var = tk.BooleanVar(value=False)
         self.sandbox_check = create_styled_checkbox(
@@ -162,22 +170,30 @@ class PhotoFolderStructureCreator(FormKeyboardMixin):
         self.date_var.trace_add("write", lambda *args: self.update_preview())
         self.location_var.trace_add("write", lambda *args: self.update_preview())
         self.activity_var.trace_add("write", lambda *args: self.update_preview())
+        self.personal_var.trace_add("write", lambda *args: self.update_preview())
         self.sandbox_var.trace_add("write", lambda *args: self.update_preview())
 
     def _collect_focusable_widgets(self):
         """Collect widgets for keyboard navigation."""
         self._focusable_widgets = [
             self.date_entry, self.location_entry, self.activity_entry,
-            self.sandbox_check, self.notes_text,
+            self.personal_check, self.sandbox_check, self.notes_text,
         ]
         self._create_btn = self.create_btn
         self._browse_btn = self.browse_btn
         self._notes_widget = self.notes_text
-        self._personal_checkbox = self.sandbox_check
-        self._personal_var = self.sandbox_var
+        self._personal_checkbox = self.personal_check
+        self._personal_var = self.personal_var
 
-        # Add Enter binding for sandbox checkbox to toggle it
+        # Add Enter binding for checkboxes to toggle them
+        self.personal_check.bind("<Return>", lambda e: self._toggle_personal_checkbox())
         self.sandbox_check.bind("<Return>", lambda e: self._toggle_sandbox_checkbox())
+
+    def _toggle_personal_checkbox(self):
+        """Toggle personal checkbox when Enter is pressed."""
+        self.personal_var.set(not self.personal_var.get())
+        self.on_personal_toggle()
+        return "break"
 
     def _toggle_sandbox_checkbox(self):
         """Toggle sandbox checkbox when Enter is pressed."""
@@ -186,13 +202,10 @@ class PhotoFolderStructureCreator(FormKeyboardMixin):
         return "break"
 
     def _setup_keyboard_navigation(self):
-        """Set up keyboard navigation with S key for Sandbox toggle."""
+        """Set up keyboard navigation with P for Personal and S for Sandbox."""
         super()._setup_keyboard_navigation()
 
-        # Override P key to use S for Sandbox instead
         root = self.parent.winfo_toplevel()
-        root.unbind("<p>")
-        root.unbind("<P>")
         root.bind("<s>", self._on_s_key)
         root.bind("<S>", self._on_s_key)
 
@@ -202,6 +215,10 @@ class PhotoFolderStructureCreator(FormKeyboardMixin):
             return
         self.sandbox_var.set(not self.sandbox_var.get())
         return "break"
+
+    def on_personal_toggle(self):
+        """Handle personal checkbox toggle."""
+        self.update_preview()
 
     def on_sandbox_toggle(self):
         """Handle sandbox checkbox toggle."""
@@ -231,6 +248,8 @@ class PhotoFolderStructureCreator(FormKeyboardMixin):
     def get_target_directory(self):
         """Determine the target directory based on checkbox selections."""
         base_dir = self.base_dir_var.get()
+        if self.personal_var.get():
+            return os.path.join(base_dir, "_Personal")
         if self.sandbox_var.get():
             return os.path.join(base_dir, "_Sandbox")
         return base_dir
@@ -250,14 +269,16 @@ class PhotoFolderStructureCreator(FormKeyboardMixin):
 
         self.preview_text.insert(tk.END, f"Path: {full_path}\n\n")
 
-        if self.sandbox_var.get():
+        if self.personal_var.get():
+            self.preview_text.insert(tk.END, "Directory: Personal\n\n")
+        elif self.sandbox_var.get():
             self.preview_text.insert(tk.END, "Directory: Sandbox\n\n")
         else:
             self.preview_text.insert(tk.END, "Directory: Main Photo folder\n\n")
 
         self.preview_text.insert(tk.END, "Structure:\n")
         self.preview_text.insert(tk.END, f"  {folder_name}/\n")
-        self.preview_text.insert(tk.END, f"    RAW/\n")
+        self.preview_text.insert(tk.END, f"    _export/\n")
 
         self.preview_text.configure(state=tk.DISABLED)
 
@@ -316,8 +337,8 @@ class PhotoFolderStructureCreator(FormKeyboardMixin):
             self.status_var.set(f"Created project structure: {folder_name}")
 
             project_data = {
-                'client_name': 'Personal',
-                'project_name': folder_name,
+                'client_name': 'Personal' if self.personal_var.get() else 'Photo',
+                'project_name': self.activity_var.get().strip(),
                 'project_type': 'Photo',
                 'date_created': self.date_var.get(),
                 'path': project_path,
@@ -325,8 +346,9 @@ class PhotoFolderStructureCreator(FormKeyboardMixin):
                 'status': 'active',
                 'notes': self.notes_text.get(1.0, tk.END).strip(),
                 'metadata': {
-                    'location': self.location_var.get(),
-                    'activity': self.activity_var.get(),
+                    'location': self.location_var.get().strip(),
+                    'activity': self.activity_var.get().strip(),
+                    'is_personal': self.personal_var.get(),
                     'is_sandbox': self.sandbox_var.get()
                 }
             }

@@ -8,7 +8,7 @@ The Pipeline Manager can be customized by editing configuration values in the ma
 
 ### Customizing Base Paths
 
-Edit `floriandheer_pipeline.py` to change the base folder paths for each category:
+Edit `fastrak_hub.py` to change the base folder paths for each category:
 
 ```python
 CREATIVE_CATEGORIES = {
@@ -59,7 +59,7 @@ CATEGORY_COLORS = {
    - Follow naming: `PipelineScript_Category_ScriptName.py`
    - Include proper docstring and description
 
-2. **Register the script** in `floriandheer_pipeline.py`:
+2. **Register the script** in `fastrak_hub.py`:
 
 ```python
 "your_script": {

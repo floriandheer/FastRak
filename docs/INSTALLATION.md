@@ -216,7 +216,7 @@ After installation, verify everything is working:
 
 1. **Test the main application**
    ```bash
-   python floriandheer_pipeline.py
+   python fastrak_hub.py
    ```
 
 2. **Check installed packages**
