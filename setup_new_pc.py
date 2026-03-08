@@ -17,7 +17,7 @@ import argparse
 import subprocess
 from pathlib import Path
 
-# Add modules/ to path (same pattern as floriandheer_pipeline.py)
+# Add modules/ to path (same pattern as fastrak_hub.py)
 SCRIPT_FILE_DIR = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS_DIR = os.path.join(SCRIPT_FILE_DIR, "modules")
 sys.path.insert(0, SCRIPTS_DIR)

@@ -124,7 +124,7 @@ if __name__ == "__main__":
 
 ### 3. Register the Script
 
-Add your script to `floriandheer_pipeline.py`:
+Add your script to `fastrak_hub.py`:
 
 ```python
 "your_script": {
