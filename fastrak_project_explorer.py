@@ -650,7 +650,7 @@ class ProjectImporter:
 
         # Physical: 3DPrint or Technical pattern
         elif base_category == "Physical":
-            # 3DPrint pattern
+            # 3DPrint pattern with client: YYYY-MM-DD_3DPrint_Client_Project
             match = re.match(cls.PATTERNS["Physical"], folder_name)
             if match:
                 return {
@@ -659,6 +659,26 @@ class ProjectImporter:
                     "project": match.group(3),
                     "type": "Physical",
                     "is_personal": is_personal
+                }
+            # 3DPrint pattern without client: YYYY-MM-DD_3DPrint_Project
+            match = re.match(r'^(\d{4}-\d{2}-\d{2})_3DPrint_(.+)$', folder_name)
+            if match:
+                return {
+                    "date": match.group(1),
+                    "client": "Personal",
+                    "project": match.group(2),
+                    "type": "Physical",
+                    "is_personal": True
+                }
+            # Architecture pattern: YYYY-MM-DD_Arch_Project
+            match = re.match(r'^(\d{4}-\d{2}-\d{2})_Arch_(.+)$', folder_name)
+            if match:
+                return {
+                    "date": match.group(1),
+                    "client": "Personal",
+                    "project": match.group(2),
+                    "type": "Physical",
+                    "is_personal": True
                 }
             # Technical pattern (older archive format)
             match = re.match(r'^(\d{4}-\d{2}-\d{2})_Technical_(.+)$', folder_name)
@@ -861,7 +881,8 @@ class ProjectTrackerApp:
         self._drag_start_x = None
 
         # Grid view selection tracking
-        self.grid_selected_index = -1
+        self.grid_selected_index = -1  # Last selected (for details panel + keyboard nav anchor)
+        self.grid_selected_indices = set()  # All selected indices (for multi-select)
         self.grid_cards = []  # List of card frames for keyboard navigation
         self.grid_projects = []  # List of projects in grid order
         self.grid_cols = 1  # Current number of columns
@@ -1207,8 +1228,9 @@ class ProjectTrackerApp:
                        bordercolor="#0d1117",
                        arrowcolor="#8b949e")
 
-        # Base row height (scaled later)
+        # Base row height and font size (scaled later)
         self.base_row_height = 32
+        self.base_list_font_size = 10
 
         self.tree_style.configure("Dark.Treeview",
                        background="#0d1117",
@@ -1232,9 +1254,12 @@ class ProjectTrackerApp:
             displaycolumns=self.column_order,
             show="headings",
             yscrollcommand=scrollbar.set,
-            selectmode="browse",
+            selectmode="extended",
             style="Dark.Treeview"
         )
+
+        # Tag styling for archived projects in list view
+        self.project_tree.tag_configure("archived", foreground="#8b949e")
 
         # Column display names
         self.column_names = {"date": "Date", "client": "Client", "project": "Project"}
@@ -1248,10 +1273,10 @@ class ProjectTrackerApp:
         self.project_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.config(command=self.project_tree.yview)
 
-        # Bind column header drag events
-        self.project_tree.bind('<Button-1>', self._on_tree_click)
-        self.project_tree.bind('<B1-Motion>', self._on_tree_drag)
-        self.project_tree.bind('<ButtonRelease-1>', self._on_tree_release)
+        # Bind column header drag events (use add=True to preserve default selection behavior)
+        self.project_tree.bind('<Button-1>', self._on_tree_click, add=True)
+        self.project_tree.bind('<B1-Motion>', self._on_tree_drag, add=True)
+        self.project_tree.bind('<ButtonRelease-1>', self._on_tree_release, add=True)
 
         # Store project IDs mapped to tree items
         self.tree_item_to_project = {}
@@ -1851,7 +1876,9 @@ class ProjectTrackerApp:
         # Apply list scale to treeview
         scale = saved_list_scale / 100.0
         new_row_height = int(self.base_row_height * scale)
-        self.tree_style.configure("Dark.Treeview", rowheight=new_row_height)
+        new_font_size = max(7, int(self.base_list_font_size * scale))
+        self.tree_style.configure("Dark.Treeview", rowheight=new_row_height,
+                                  font=("Arial", new_font_size))
 
         # Apply view mode
         saved_view_mode = self.settings.get("view_mode", "list")
@@ -2033,12 +2060,13 @@ class ProjectTrackerApp:
             # Store mapping from tree item to project
             self.tree_item_to_project[item_id] = project
 
-        # Update count label
+        # Update count label (total and selected)
         count = len(category_projects)
-        if self.selected_category:
-            self.count_label.config(text=f"({count})")
+        selected = len(self.project_tree.selection())
+        if selected > 0:
+            self.count_label.config(text=f"{selected}/{count}")
         else:
-            self.count_label.config(text=f"({count})")
+            self.count_label.config(text=f"{count}")
 
         logger.debug(f"Refreshed project list: {count} projects" +
                     (f" in {self.selected_category}" if self.selected_category else ""))
@@ -2088,10 +2116,12 @@ class ProjectTrackerApp:
                 self._select_grid_card(0)
 
     def _on_list_scale_changed(self, value):
-        """Handle list scale slider change - update row height."""
+        """Handle list scale slider change - update row height and font size."""
         scale = int(value) / 100.0  # Convert to multiplier (0.5 - 1.5)
         new_row_height = int(self.base_row_height * scale)
-        self.tree_style.configure("Dark.Treeview", rowheight=new_row_height)
+        new_font_size = max(7, int(self.base_list_font_size * scale))
+        self.tree_style.configure("Dark.Treeview", rowheight=new_row_height,
+                                  font=("Arial", new_font_size))
         # Save scale preference
         self.settings.set("list_scale", int(value))
 
@@ -2151,6 +2181,7 @@ class ProjectTrackerApp:
         # Reset grid tracking BEFORE destroying widgets
         self.grid_cards = []
         self.grid_projects = []
+        self.grid_selected_indices = set()
 
         # Clear existing grid items
         for widget in self.grid_inner.winfo_children():
@@ -2217,14 +2248,16 @@ class ProjectTrackerApp:
         card.grid_propagate(False)  # Keep fixed size
         card.pack_propagate(False)  # Keep fixed size
 
-        # Add border for archived projects
-        if status == "archived":
-            card.configure(highlightbackground="#8b949e", highlightthickness=1)
 
-        # Icon - scales with card size (folder icon for all types)
-        icon_label = tk.Label(card, text="📁", bg="#1c2128", fg="white",
+        # Icon - fixed-size container to keep both folder icons aligned
+        folder_icon = "📁" if status == "archived" else "📂"
+        icon_container_size = int(icon_size * 2.2)
+        icon_frame = tk.Frame(card, bg="#1c2128", width=icon_container_size, height=icon_container_size)
+        icon_frame.pack(pady=(int(15 * font_scale), int(5 * font_scale)))
+        icon_frame.pack_propagate(False)
+        icon_label = tk.Label(icon_frame, text=folder_icon, bg="#1c2128", fg="white",
                              font=("Arial", icon_size))
-        icon_label.pack(pady=(int(15 * font_scale), int(5 * font_scale)))
+        icon_label.place(relx=0.5, rely=0.5, anchor="center")
 
         # Project name - truncate based on card size
         project_name = project.get("project_name", "")[:name_max]
@@ -2260,15 +2293,42 @@ class ProjectTrackerApp:
         card_index = len(self.grid_cards)  # Current index (before this card is added)
 
         def on_card_click(e, p=project, idx=card_index):
-            self.grid_selected_index = idx
+            ctrl = e.state & 0x4   # Ctrl held
+            shift = e.state & 0x1  # Shift held
+
+            if ctrl:
+                # Toggle this card in selection
+                if idx in self.grid_selected_indices:
+                    self.grid_selected_indices.discard(idx)
+                    if self.grid_selected_indices:
+                        self.grid_selected_index = max(self.grid_selected_indices)
+                    else:
+                        self.grid_selected_index = -1
+                else:
+                    self.grid_selected_indices.add(idx)
+                    self.grid_selected_index = idx
+            elif shift and self.grid_selected_index >= 0:
+                # Range select from last selected to this card
+                start = min(self.grid_selected_index, idx)
+                end = max(self.grid_selected_index, idx)
+                self.grid_selected_indices = set(range(start, end + 1))
+                self.grid_selected_index = idx
+            else:
+                # Normal click - single select
+                self.grid_selected_indices = {idx}
+                self.grid_selected_index = idx
+
+            # Update details for last clicked
             self.selected_project = p
             self._display_project_details(p)
-            self._highlight_grid_card(idx)
+            self._highlight_grid_cards()
+            self._update_grid_count_label()
             # Set focus to canvas for keyboard navigation
             self.grid_canvas.focus_set()
 
         def on_card_double_click(e, p=project, idx=card_index):
             self.grid_selected_index = idx
+            self.grid_selected_indices = {idx}
             self.selected_project = p
             self._open_folder()
 
@@ -2277,56 +2337,69 @@ class ProjectTrackerApp:
         for child in card.winfo_children():
             child.bind("<Button-1>", on_card_click)
             child.bind("<Double-1>", on_card_double_click)
+            for grandchild in child.winfo_children():
+                grandchild.bind("<Button-1>", on_card_click)
+                grandchild.bind("<Double-1>", on_card_double_click)
 
         return card
 
-    def _highlight_grid_card(self, index: int):
-        """Highlight the card at given index and unhighlight others."""
+    def _update_grid_count_label(self):
+        """Update count label based on grid selection."""
+        total = len(self.grid_projects)
+        selected = len(self.grid_selected_indices)
+        if selected > 0:
+            self.count_label.config(text=f"{selected}/{total}")
+        else:
+            self.count_label.config(text=f"{total}")
+
+    def _highlight_grid_cards(self):
+        """Highlight all selected cards and unhighlight others."""
         for i, card in enumerate(self.grid_cards):
-            # Check if card still exists
             if not card.winfo_exists():
                 continue
             try:
-                if i == index:
-                    card.configure(bg="#2d333b")
-                    for child in card.winfo_children():
-                        child.configure(bg="#2d333b")
-                else:
-                    card.configure(bg="#1c2128")
-                    for child in card.winfo_children():
-                        child.configure(bg="#1c2128")
+                bg = "#2d333b" if i in self.grid_selected_indices else "#1c2128"
+                card.configure(bg=bg)
+                for child in card.winfo_children():
+                    child.configure(bg=bg)
+                    for grandchild in child.winfo_children():
+                        grandchild.configure(bg=bg)
             except tk.TclError:
                 continue
 
-        # Scroll to make selected card visible
+        # Scroll to make last selected card visible
+        if self.grid_selected_index >= 0:
+            self._scroll_to_grid_card(self.grid_selected_index)
+
+    def _scroll_to_grid_card(self, index: int):
+        """Scroll to make card at index visible."""
         if index >= 0 and index < len(self.grid_cards):
             card = self.grid_cards[index]
-            # Check if card still exists
             if not card.winfo_exists():
                 return
             try:
-                # Get card position relative to canvas
                 self.grid_canvas.update_idletasks()
                 card_y = card.winfo_y()
                 card_height = card.winfo_height()
                 canvas_height = self.grid_canvas.winfo_height()
-
-                # Get current scroll position
                 bbox = self.grid_canvas.bbox("all")
                 if bbox:
                     content_height = bbox[3] - bbox[1]
                     if content_height > canvas_height:
-                        # Calculate visible region
                         scroll_top = self.grid_canvas.yview()[0] * content_height
                         scroll_bottom = scroll_top + canvas_height
-
-                        # Scroll if card is outside visible region
                         if card_y < scroll_top:
                             self.grid_canvas.yview_moveto(card_y / content_height)
                         elif card_y + card_height > scroll_bottom:
                             self.grid_canvas.yview_moveto((card_y + card_height - canvas_height) / content_height)
             except tk.TclError:
                 pass
+
+    def _highlight_grid_card(self, index: int):
+        """Highlight the card at given index and unhighlight others (single select)."""
+        self.grid_selected_indices = {index} if index >= 0 else set()
+        self._highlight_grid_cards()
+        self._update_grid_count_label()
 
     def _on_grid_left(self, event):
         """Navigate left in grid."""
@@ -2522,13 +2595,21 @@ class ProjectTrackerApp:
         """Handle project selection."""
         selection = self.project_tree.selection()
 
+        # Update selection count in count label
+        total = len(self.tree_item_to_project)
+        selected = len(selection)
+        if selected > 0:
+            self.count_label.config(text=f"{selected}/{total}")
+        else:
+            self.count_label.config(text=f"{total}")
+
         if not selection:
             self.selected_project = None
             self._clear_details()
             return
 
-        # Get project from our mapping
-        item = selection[0]
+        # Get project from our mapping (show details for last selected)
+        item = selection[-1]
         project = self.tree_item_to_project.get(item)
 
         if not project:
