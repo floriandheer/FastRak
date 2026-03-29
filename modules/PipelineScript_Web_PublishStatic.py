@@ -96,7 +96,7 @@ class WebPublishConfig:
                     if d.lower() == "_wiki_latest":
                         wiki_latest_dir = os.path.join(site_path, d)
                         break
-                wiki_remote_path = "/wiki"
+                wiki_remote_path = "/brainii"
 
             sites[entry] = {
                 "label": entry,
@@ -177,6 +177,13 @@ class WebPublishConfig:
         self.config["backup_max_per_project"] = value
         self._save()
 
+    def get_last_selected_site(self) -> str:
+        return self.config.get("last_selected_site", "")
+
+    def set_last_selected_site(self, site_key: str):
+        self.config["last_selected_site"] = site_key
+        self._save()
+
 
 # ====================================
 # WINSCP MANAGER
@@ -228,32 +235,40 @@ class WinSCPManager:
 
     def build_upload_script(self, ftp_cfg: Dict, local_dir: str, remote_path: str,
                             exclude_wiki: bool = False) -> str:
-        """Build WinSCP script for uploading (synchronize remote)."""
+        """Build WinSCP script for uploading (synchronize remote -delete).
+
+        Uses synchronize with -delete to make the remote match the local,
+        ensuring a completely fresh upload. Wiki folder is excluded when needed.
+        """
         lines = [
             "option batch abort",
             "option confirm off",
             "option reconnecttime 15",
             self._build_open_command(ftp_cfg),
         ]
-        lines.append("option batch continue")
-        lines.append(f'mkdir "{remote_path}"')
-        lines.append("option batch abort")
+        # synchronize remote -delete makes the remote match the local,
+        # removing any extra files on the server for a fresh upload
         excludes = ""
         if exclude_wiki:
-            excludes = ' -filemask="|wiki/"'
-        lines.append(f'synchronize remote "{local_dir}" "{remote_path}"{excludes}')
+            excludes = ' -filemask="|brainii/"'
+        lines.append(f'synchronize remote -delete "{local_dir}" "{remote_path}"{excludes}')
         lines.append("exit")
         return "\n".join(lines)
 
     def build_wiki_download_script(self, ftp_cfg: Dict, remote_wiki_path: str,
                                    local_wiki_dir: str) -> str:
-        """Build WinSCP script for downloading wiki (synchronize local)."""
+        """Build WinSCP script for downloading wiki (synchronize local).
+
+        Excludes bulky DokuWiki directories (attic, cache, tmp, locks, index)
+        that aren't needed for a local backup.
+        """
+        exclude = '|*/attic/;*/cache/;*/tmp/;*/locks/;*/index/'
         lines = [
             "option batch abort",
             "option confirm off",
             "option reconnecttime 15",
             self._build_open_command(ftp_cfg),
-            f'synchronize local -delete "{local_wiki_dir}" "{remote_wiki_path}"',
+            f'synchronize local -delete -filemask="{exclude}" "{local_wiki_dir}" "{remote_wiki_path}"',
             "exit",
         ]
         return "\n".join(lines)
@@ -318,9 +333,7 @@ class PublishWorkflow:
             return [
                 "Validate",
                 "FTP Upload (excl. wiki)",
-                "Copy wiki from _wiki_latest",
-                "Sync wiki from online",
-                "Update _wiki_latest",
+                "Download wiki",
                 "Archive",
             ]
         else:
@@ -347,44 +360,6 @@ class PublishWorkflow:
 
     def _complete(self, success: bool, msg: str):
         self.root.after(0, lambda: self.cb["on_complete"](success, msg))
-
-    def _prompt_user_sync(self, title: str, message: str, choices: List[str]) -> str:
-        """Thread-safe user prompt. Blocks until user responds."""
-        result_event = threading.Event()
-        result_holder = [None]
-
-        def show_dialog():
-            dialog = tk.Toplevel(self.root)
-            dialog.title(title)
-            dialog.transient(self.root)
-            dialog.grab_set()
-            dialog.resizable(False, False)
-
-            tk.Label(dialog, text=message, wraplength=400, justify=tk.LEFT,
-                     padx=20, pady=15).pack()
-
-            btn_frame = tk.Frame(dialog)
-            btn_frame.pack(pady=(0, 15))
-
-            def on_choice(choice):
-                result_holder[0] = choice
-                dialog.destroy()
-                result_event.set()
-
-            for choice in choices:
-                tk.Button(btn_frame, text=choice, width=20,
-                          command=lambda c=choice: on_choice(c)).pack(side=tk.LEFT, padx=5)
-
-            dialog.protocol("WM_DELETE_WINDOW", lambda: on_choice("Cancel"))
-            dialog.update_idletasks()
-            # Center on parent
-            x = self.root.winfo_x() + (self.root.winfo_width() - dialog.winfo_width()) // 2
-            y = self.root.winfo_y() + (self.root.winfo_height() - dialog.winfo_height()) // 2
-            dialog.geometry(f"+{x}+{y}")
-
-        self.root.after(0, show_dialog)
-        result_event.wait()
-        return result_holder[0]
 
     def run(self):
         """Main workflow entry point. Call from a thread."""
@@ -446,31 +421,15 @@ class PublishWorkflow:
             return
         step += 1
 
-        # Step 2: Copy wiki from _wiki_latest
+        # Step 2: Download wiki from server to _wiki_latest
         self._step_start(step, steps[step])
-        ok = self._copy_wiki_to_export()
+        ok = self._download_wiki()
         self._step_done(step, ok)
-        if not ok or self._cancelled():
+        if self._cancelled():
             return
         step += 1
 
-        # Step 3: Sync wiki from online
-        self._step_start(step, steps[step])
-        ok = self._sync_wiki_from_online()
-        self._step_done(step, ok)
-        if not ok or self._cancelled():
-            return
-        step += 1
-
-        # Step 4: Update _wiki_latest
-        self._step_start(step, steps[step])
-        ok = self._update_wiki_latest()
-        self._step_done(step, ok)
-        if not ok or self._cancelled():
-            return
-        step += 1
-
-        # Step 5: Archive
+        # Step 3: Archive
         self._step_start(step, steps[step])
         ok = self._archive()
         self._step_done(step, ok)
@@ -516,7 +475,7 @@ class PublishWorkflow:
         script = self.winscp_mgr.build_upload_script(ftp_cfg, export_dir, remote_path, exclude_wiki)
         self._output(f"Uploading to {ftp_cfg['host']}:{remote_path} ...")
         if exclude_wiki:
-            self._output("(excluding /wiki/ directory)")
+            self._output("(excluding /brainii/ directory)")
 
         max_attempts = 3
         for attempt in range(1, max_attempts + 1):
@@ -537,114 +496,49 @@ class PublishWorkflow:
         self._complete(False, f"FTP upload failed (exit code {exit_code})")
         return False
 
-    def _copy_wiki_to_export(self) -> bool:
+    def _download_wiki(self) -> bool:
+        """Download wiki from server directly into _wiki_latest.
+
+        Retries on transient failures. Non-fatal: warns and continues
+        if the download cannot be completed so the publish is not blocked.
+        """
         wiki_latest = self.site_cfg.get("wiki_latest_dir", "")
-        export_dir = self.site_cfg["export_dir"]
-        wiki_dest = os.path.join(export_dir, "wiki")
+        if not wiki_latest:
+            self._output("No wiki_latest path configured, skipping")
+            return True
 
-        if not os.path.isdir(wiki_latest):
-            # _wiki_latest doesn't exist yet - prompt user
-            self._output(f"_wiki_latest not found: {wiki_latest}")
-            choice = self._prompt_user_sync(
-                "Wiki Not Found",
-                f"The wiki latest folder does not exist:\n{wiki_latest}\n\n"
-                "How would you like to proceed?",
-                ["Download from server", "Browse folder", "Cancel"]
-            )
-
-            if choice == "Download from server":
-                self._output("Will download wiki from server in the next step")
-                os.makedirs(wiki_latest, exist_ok=True)
-                # Don't copy anything, the sync step will populate it
-                return True
-            elif choice == "Browse folder":
-                # Use a thread-safe file dialog
-                result_event = threading.Event()
-                result_holder = [None]
-
-                def browse():
-                    path = filedialog.askdirectory(
-                        title="Select existing wiki folder",
-                        parent=self.root
-                    )
-                    result_holder[0] = path
-                    result_event.set()
-
-                self.root.after(0, browse)
-                result_event.wait()
-
-                selected = result_holder[0]
-                if not selected or not os.path.isdir(selected):
-                    self._output("No valid folder selected")
-                    self._complete(False, "Wiki setup cancelled")
-                    return False
-
-                # Copy selected folder to _wiki_latest
-                self._output(f"Copying selected wiki to {wiki_latest} ...")
-                shutil.copytree(selected, wiki_latest)
-                self._output("Wiki folder copied to _wiki_latest")
-            else:
-                self._complete(False, "Cancelled by user")
-                return False
-
-        # Now copy _wiki_latest into export_dir/wiki
-        if os.path.isdir(wiki_dest):
-            self._output("Removing existing wiki/ in export dir ...")
-            shutil.rmtree(wiki_dest)
-
-        self._output(f"Copying wiki from _wiki_latest to export dir ...")
-        shutil.copytree(wiki_latest, wiki_dest)
-        self._output("Wiki copied to export directory")
-        return True
-
-    def _sync_wiki_from_online(self) -> bool:
-        export_dir = self.site_cfg["export_dir"]
-        wiki_local = os.path.join(export_dir, "wiki")
         ftp_cfg = self.site_cfg["ftp"]
         wiki_remote = self.site_cfg.get("wiki_remote_path", "/wiki")
         winscp_path = self.winscp_mgr.find_winscp()
 
+        os.makedirs(wiki_latest, exist_ok=True)
+
         script = self.winscp_mgr.build_wiki_download_script(
-            ftp_cfg, wiki_remote, wiki_local
+            ftp_cfg, wiki_remote, wiki_latest
         )
 
         max_attempts = 3
+        exit_code = None
         for attempt in range(1, max_attempts + 1):
-            self._output(f"Syncing wiki from server ({wiki_remote}) ... (attempt {attempt}/{max_attempts})")
+            if self._cancelled():
+                return False
+            if attempt > 1:
+                wait_sec = attempt * 10
+                self._output(f"Wiki download failed (exit code {exit_code}), "
+                             f"retrying in {wait_sec}s ... ({attempt}/{max_attempts})")
+                time.sleep(wait_sec)
+
+            self._output(f"Downloading wiki from {wiki_remote} to _wiki_latest ...")
             exit_code = self.winscp_mgr.execute_script(
                 winscp_path, script, on_output=self._output
             )
             if exit_code == 0:
-                self._output("Wiki synced from online")
+                self._output("Wiki downloaded to _wiki_latest")
                 return True
-            if attempt < max_attempts:
-                wait_sec = attempt * 10
-                self._output(f"Wiki sync failed (exit code {exit_code}), retrying in {wait_sec}s ...")
-                time.sleep(wait_sec)
 
-        self._output(f"Wiki sync failed after {max_attempts} attempts (exit code {exit_code})")
-        self._complete(False, f"Wiki sync failed (exit code {exit_code})")
-        return False
-
-    def _update_wiki_latest(self) -> bool:
-        export_dir = self.site_cfg["export_dir"]
-        wiki_source = os.path.join(export_dir, "wiki")
-        wiki_latest = self.site_cfg.get("wiki_latest_dir", "")
-
-        if not wiki_latest:
-            self._output("No _wiki_latest path configured, skipping update")
-            return True
-
-        if not os.path.isdir(wiki_source):
-            self._output("No wiki/ folder in export dir to copy back")
-            return True
-
-        self._output(f"Updating _wiki_latest ...")
-        if os.path.isdir(wiki_latest):
-            shutil.rmtree(wiki_latest)
-        shutil.copytree(wiki_source, wiki_latest)
-        self._output("_wiki_latest updated")
-        return True
+        self._output(f"Wiki download failed after {max_attempts} attempts "
+                     f"(exit code {exit_code}) — continuing without wiki backup")
+        return True  # Non-fatal: don't block the publish
 
     def _archive(self) -> bool:
         export_dir = self.site_cfg["export_dir"]
@@ -665,6 +559,21 @@ class PublishWorkflow:
                         file_path = os.path.join(dirpath, filename)
                         arcname = os.path.relpath(file_path, export_dir)
                         zf.write(file_path, arcname)
+
+                # Include wiki from _wiki_latest (not in export_dir)
+                if self.has_wiki:
+                    wiki_latest = self.site_cfg.get("wiki_latest_dir", "")
+                    if wiki_latest and os.path.isdir(wiki_latest):
+                        self._output("Adding wiki to archive ...")
+                        # Skip bulky DokuWiki dirs that aren't essential
+                        skip_dirs = {"attic", "cache", "tmp", "locks", "index"}
+                        for dirpath, dirnames, filenames in os.walk(wiki_latest):
+                            dirnames[:] = [d for d in dirnames if d not in skip_dirs]
+                            for filename in filenames:
+                                file_path = os.path.join(dirpath, filename)
+                                arcname = os.path.join(
+                                    "brainii", os.path.relpath(file_path, wiki_latest))
+                                zf.write(file_path, arcname)
 
             size_mb = os.path.getsize(zip_path) / (1024 * 1024)
             self._output(f"Archive created: {zip_name} ({size_mb:.1f} MB)")
@@ -1051,7 +960,13 @@ class PublishStaticUI:
             self.site_labels_map[label] = k
             combo_values.append(label)
 
-        self.site_var = tk.StringVar(value=combo_values[0] if combo_values else "")
+        # Restore last selected site or default to first
+        last_site = self.config.get_last_selected_site()
+        last_label = self.site_labels_map and next(
+            (lbl for lbl, key in self.site_labels_map.items() if key == last_site), None)
+        initial = last_label if last_label and last_label in combo_values else (
+            combo_values[0] if combo_values else "")
+        self.site_var = tk.StringVar(value=initial)
         self.site_combo = ttk.Combobox(ctrl, textvariable=self.site_var,
                                        values=combo_values, state="readonly", width=25)
         self.site_combo.pack(side=tk.LEFT, padx=8)
@@ -1113,6 +1028,7 @@ class PublishStaticUI:
         site_key = self._get_current_site_key()
         if not site_key:
             return
+        self.config.set_last_selected_site(site_key)
         cfg = self.config.get_site_config(site_key)
         self.export_label.config(text=f"Export: {cfg.get('export_dir', '-')}")
         archive_base = get_rak_settings().get_archive_path("Web")
@@ -1131,9 +1047,7 @@ class PublishStaticUI:
             steps = [
                 "Validate",
                 "FTP Upload (excl. wiki)",
-                "Copy wiki from _wiki_latest",
-                "Sync wiki from online",
-                "Update _wiki_latest",
+                "Download wiki",
                 "Archive",
             ]
         else:
