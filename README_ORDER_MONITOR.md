@@ -1,362 +1,208 @@
-# WooCommerce Order Monitor & Auto-Organizer
+# WooCommerce Order Monitor & Invoice Manager
 
-## 🎯 What It Does
+Monitors WooCommerce orders, organizes project folders, and files invoices to the bookkeeping system.
 
-**Automatically creates organized folders for every WooCommerce order with invoices, labels, and order details!**
+## What It Does
 
 ```
-New Order → Auto Folder → Invoice + Label + Details
+Webshop Order  ──> Folder created  ──> Invoice filed to Boekhouding  ──> .lnk in project folder
+Project Work   ──> Manual invoice via WooCommerce API  ──> Same filing flow
 ```
 
-## ✨ Features
+**All invoices go through WooCommerce** — one source of truth, one sequential numbering from WCPDF.
 
-- 📁 **Auto-creates folders** for each order
-- 📄 **Generates professional PDF invoices**
-- 🏷️ **Downloads shipping labels** (bpost, etc.)
-- 📝 **Saves complete order details**
-- 🎨 **Customizable folder naming** (with customer names!)
-- ⚡ **Real-time monitoring** with GUI
-- 🔍 **Smart filtering** (status, shipping method, payment)
+## Setup
 
-## 🚀 Quick Start (3 Minutes!)
+### 1. WooCommerce REST API
 
-### 1. Install Dependencies
+1. WordPress Admin > WooCommerce > Settings > Advanced > REST API
+2. Add key with **Read/Write** permissions (write needed for manual orders)
+3. Copy the Consumer Key (`ck_...`) and Consumer Secret (`cs_...`)
+
+### 2. WordPress Invoice Endpoint
+
+The monitor downloads invoice PDFs via a custom WordPress endpoint. Add the contents of `woocommerce_monitor_data/pipeline-invoice-endpoint.php` to your theme's `functions.php` or as a micro-plugin:
+
+```
+wp-content/mu-plugins/pipeline-invoice-endpoint.php
+```
+
+This endpoint:
+- Serves invoice PDFs authenticated via `monitor_secret_key`
+- Auto-creates WCPDF invoice numbers if they don't exist yet
+- Returns invoice metadata (number, date) for the filing system
+
+**Requires:** [WooCommerce PDF Invoices & Packing Slips](https://wordpress.org/plugins/woocommerce-pdf-invoices-packing-slips/) plugin (free version works).
+
+### 3. Monitor Secret Key
+
+The endpoint uses the same secret as the bpost label integration. Set it in WordPress:
 
 ```bash
-cd modules
-pip install -r requirements.txt
+wp option update bpost_monitor_secret_key "your-secret-here"
 ```
 
-### 2. Configure
-
-```bash
-cp woocommerce_order_monitor_config.json.example woocommerce_order_monitor_config.json
+Or add to `wp-config.php`:
+```php
+define('BPOST_MONITOR_SECRET_KEY', 'your-secret-here');
 ```
 
-Edit the config:
+Then configure the same key in the monitor's Advanced Settings > Monitor Secret Key.
+
+### 4. Configure the Monitor
+
+First run creates `woocommerce_monitor_data/config.json`. Key settings:
+
 ```json
 {
     "woocommerce": {
-        "url": "https://yourstore.com",
-        "consumer_key": "ck_...",  // From WooCommerce → Settings → Advanced → REST API
-        "consumer_secret": "cs_..."
+        "url": "https://yourdomain.com",
+        "consumer_key": "ck_...",
+        "consumer_secret": "cs_...",
+        "monitor_secret_key": "your-secret-here"
     },
     "monitoring": {
-        "base_directory": "I:/Physical/Orders"  // Where to save folders
+        "base_directory": "I:/Physical/Order",
+        "download_invoices": true,
+        "download_labels": true
     }
 }
 ```
 
-### 3. Run
+Or configure everything via the GUI: **Advanced Settings** button.
 
-```bash
-python PipelineScript_Physical_WooCommerceOrderMonitor.py
+## Features
+
+### Order Monitoring
+
+Polls WooCommerce for new orders and for each one:
+1. Creates an order folder in `Physical/Order/`
+2. Downloads the invoice PDF via the custom endpoint
+3. Files it to `Boekhouding/{year}/Q{n}/Uitgaand/` as `3D_YYMMDD_Factuur{number}_{ClientName}.pdf`
+4. Creates a `.lnk` shortcut in the order's `03_Outgoing/` folder
+5. Downloads shipping labels (bpost) if available
+6. Saves order details as text file
+
+If the invoice endpoint isn't set up yet, falls back to legacy download methods.
+
+### File Quarter Invoices
+
+Catches up on any invoices that weren't filed during monitoring:
+
+1. Click **"File Quarter Invoices"**
+2. Select year and quarter
+3. Fetches all orders for that period from WooCommerce
+4. Files any missing invoices to the bookkeeping folder
+5. Skips orders that already have a `.lnk` in their outgoing folder
+
+### Create Project Invoice
+
+For projects that come in outside the webshop (in person, phone, email):
+
+1. Click **"Create Project Invoice"**
+2. Fill in customer details and line item (description + amount)
+3. Browse to the project folder
+4. Creates a WooCommerce order via API (triggers WCPDF numbering)
+5. Downloads and files the invoice, creates `.lnk` in project folder
+
+This keeps all invoices in one system with sequential numbering.
+
+## Folder Structure
+
+### Active orders
+```
+D:\_work\Active\Physical\Order\
+    Order_1001_JanJansens\
+        00_Incoming\
+        02_Production\
+        03_Outgoing\
+            3D_260315_Factuur012_Jansens.lnk  --> points to Boekhouding
 ```
 
-Click **"▶ Start Monitoring"** in the GUI!
-
-## 📁 Result
-
+### Bookkeeping (single source of truth)
 ```
-I:/Physical/Orders/
-├── Order_1001_John_Doe/
-│   ├── Invoice_1001.pdf              ✅ Professional invoice
-│   ├── Shipping_Label_1001.pdf       ✅ Ready to print
-│   └── Order_Details_1001.txt        ✅ Complete info
-├── Order_1002_Jane_Smith/
-│   ├── Invoice_1002.pdf
-│   └── Order_Details_1002.txt
-└── Order_1003_Bob_Wilson/
-    ├── Invoice_1003.pdf
-    ├── Shipping_Label_1003.pdf
-    └── Order_Details_1003.txt
+D:\_work\Active\_LIBRARY\Boekhouding\2026\
+    Q1\
+        Binnenkomend\       <-- incoming invoices (purchases)
+        Uitgaand\           <-- outgoing invoices (sales)
+            3D_260107_Factuur009_Meubeltjes.pdf
+            3D_260215_Factuur010_Pansen.pdf
+            3D_260315_Factuur012_Jansens.pdf
+    Q2\
+        ...
 ```
 
-## ⚙️ Configuration Options
-
-### Monitor All Orders
-```json
-"monitoring": {
-    "monitor_all_orders": true,
-    "download_invoices": true,
-    "download_labels": true
-}
+### Invoice naming convention
+```
+3D_YYMMDD_Factuur{number}_{ClientLastName}.pdf
+     |         |                |
+     |         |                └── From WooCommerce billing last name
+     |         └── From WCPDF invoice number
+     └── From WCPDF invoice date
 ```
 
-### Monitor Only bpost Orders
+## GUI Controls
+
+| Button | Description |
+|--------|-------------|
+| **Start Monitoring** | Begin polling for new orders |
+| **Stop Monitoring** | Pause monitoring |
+| **Check Now** | One-time check for new orders |
+| **File Quarter Invoices** | Batch-file invoices for a quarter |
+| **Create Project Invoice** | Create WooCommerce order + file invoice for non-webshop work |
+| **Advanced Settings** | API credentials, filters, paths |
+
+## Filters
+
+Configure in Advanced Settings > Filters tab:
+
 ```json
 "filters": {
-    "shipping_methods": ["bpost"]
+    "order_statuses": ["processing", "completed"],
+    "shipping_methods": [],
+    "payment_methods": []
 }
 ```
 
-### Monitor Specific Statuses
-```json
-"filters": {
-    "order_statuses": ["processing", "completed"]
-}
-```
+Empty arrays = accept all. Specify values to restrict (e.g. `["bpost"]` for shipping).
 
-### Custom Folder Naming
+## Troubleshooting
 
-**Option 1:** `Order_1001/`
-```json
-"folder_structure": {
-    "naming_format": "Order_{order_number}"
-}
-```
+### Invoice endpoint not working
 
-**Option 2:** `Order_1001_John_Doe/`
-```json
-"folder_structure": {
-    "naming_format": "Order_{order_number}_{customer_name}"
-}
-```
+1. Verify the PHP file is loaded: visit `yoursite.com/wp-admin/admin-ajax.php?action=pipeline_get_invoice_info&order_id=1&secret=your-key`
+2. Should return JSON with invoice number/date, or an error message
+3. Check that WCPDF plugin is active
+4. Verify `monitor_secret_key` matches between WordPress and monitor config
 
-**Option 3:** `20250128_Order_1001_John_Doe/`
-```json
-"folder_structure": {
-    "naming_format": "Order_{order_number}_{customer_name}",
-    "include_date": true
-}
-```
+### No orders found
 
-## 🔧 Features in Detail
+1. Check API credentials (test with **Check Now**)
+2. Verify `check_orders_since_hours` covers the time range
+3. Check order status filter matches actual order statuses
 
-### 📄 PDF Invoices
+### Shortcut creation fails
 
-Auto-generated with:
-- ✅ Order header (number, date, status)
-- ✅ Customer billing info
-- ✅ Shipping address
-- ✅ Product list with prices
-- ✅ Shipping costs
-- ✅ Tax breakdown
-- ✅ Total amount
-- ✅ Payment method
-
-### 🏷️ Shipping Labels
-
-Automatically downloads:
-- ✅ bpost labels (via WordPress plugin)
-- ✅ Other carrier labels from order metadata
-- ⚠️ Only if label already exists in WooCommerce
-
-### 📝 Order Details File
-
-Complete order information:
-- Customer contact details
-- Billing & shipping addresses
-- Product details with SKUs
-- Shipping & payment info
-- Customer notes
-
-## 🎮 GUI Controls
-
-- **▶ Start Monitoring** - Begin watching for new orders
-- **⏹ Stop Monitoring** - Pause monitoring
-- **🔄 Check Now** - Check immediately
-- **⚙ Advanced Settings** - Configure API, filters, etc.
-
-## 📊 Activity Log
-
-Real-time updates with color coding:
-- 🟢 **Green** - Success (order processed)
-- 🟡 **Orange** - Warning (label not available yet)
-- 🔴 **Red** - Error (connection issue, etc.)
-- ⚫ **Black** - Info (checking orders, etc.)
-
-## 🛠️ Troubleshooting
-
-### No orders appearing?
-
-1. Check WooCommerce API credentials
-2. Verify order status matches filter
-3. Ensure orders are within time window (48 hours)
-
-**Test connection:**
+Requires `pywin32`:
 ```bash
-curl -u "ck_xxx:cs_xxx" https://yourstore.com/wp-json/wc/v3/orders
+pip install pywin32
 ```
 
-### Invoices not generating?
-
-Check:
-```bash
-pip install reportlab
-```
-
-### Labels not downloading?
-
-**Labels require:**
-- Label already created in WooCommerce
-- For bpost: WordPress helper installed (see PLUGIN_UPDATE_GUIDE.md)
-
-## 📚 Complete Documentation
-
-- **`ORDER_MONITOR_SETUP.md`** - Complete setup guide
-- **`PLUGIN_UPDATE_GUIDE.md`** - bpost WordPress integration
-- **`woocommerce_order_monitor_config.json.example`** - Full configuration template
-
-## 🎯 Use Cases
-
-### 1. Print-on-Demand
-Monitor all orders, generate invoices instantly, process manually
-
-### 2. bpost Automation
-Monitor bpost orders only, auto-download labels, pack & ship!
-
-### 3. Wholesale/B2B
-Organize by date + customer name, bank transfer filter
-
-### 4. Multi-Channel
-Different filters for different order types
-
-## 🔄 Workflow Examples
-
-### Basic Workflow
-```
-1. Customer places order
-2. Monitor detects order (every 5 min)
-3. Creates folder with customer name
-4. Generates invoice PDF
-5. Downloads shipping label (if available)
-6. Saves order details
-7. Ready to process!
-```
-
-### bpost Workflow
-```
-1. Customer orders with bpost shipping
-2. You create label in WooCommerce
-3. Monitor detects label in database
-4. Downloads everything automatically
-5. Print label and invoice
-6. Pack and ship!
-```
-
-## ⚙️ Advanced Setup
-
-### Run as Background Service
-
-**Windows:**
-- Use Task Scheduler
-- Run at startup or specific times
-
-**Linux:**
-- Create systemd service
-- Auto-start on boot
-
-See ORDER_MONITOR_SETUP.md for details.
-
-### Monitor Multiple Stores
-
-1. Copy script for each store
-2. Create separate config files
-3. Run multiple instances
-
-## 🔒 Security
-
-- ✅ Read-only API access
-- ✅ HTTPS recommended
-- ✅ Credentials never logged
-- ✅ Local file storage only
-
-## 📈 Statistics
-
-Track:
-- Total orders processed
-- Documents generated
-- Labels downloaded
-- Processing success rate
-
-## 🆘 Support
-
-1. **Check log file:** `woocommerce_order_monitor.log`
-2. **Review setup guide:** `ORDER_MONITOR_SETUP.md`
-3. **Test API manually** (curl command above)
-4. **Verify configuration** (valid JSON syntax)
-
-## 📦 What's Included
+## Files
 
 ```
 modules/
-├── PipelineScript_Physical_WooCommerceOrderMonitor.py  ← Main script
-├── woocommerce_order_monitor_config.json.example      ← Config template
-├── requirements.txt                                    ← Dependencies
-├── processed_orders.json                              ← Tracking (auto-generated)
-└── woocommerce_order_monitor.log                      ← Activity log (auto-generated)
-
-_ref/
-├── ORDER_MONITOR_SETUP.md                             ← Complete guide
-├── PLUGIN_UPDATE_GUIDE.md                             ← bpost integration
-└── bpost-shipping-platform/                           ← WordPress files
+    PipelineScript_Physical_WooCommerceOrderMonitor.py   <-- Main script
+    woocommerce_monitor_data/
+        config.json                                       <-- Configuration (auto-created)
+        config.json.example                               <-- Config template
+        processed_orders.json                             <-- Tracking (auto-created)
+        pipeline-invoice-endpoint.php                     <-- WordPress endpoint (copy to WP)
+        README.txt
 ```
 
-## 🎨 Customization
+## Version History
 
-### Change Invoice Template
-Edit `generate_invoice()` method to customize:
-- Logo
-- Colors
-- Layout
-- Additional fields
-
-### Change Folder Structure
-Edit config:
-```json
-"folder_structure": {
-    "naming_format": "Custom_{order_number}",
-    "include_date": true,
-    "subfolder_documents": true
-}
-```
-
-### Add Custom Logic
-Extend `process_order()` method for:
-- Email notifications
-- External API calls
-- Custom document types
-- Integration with other tools
-
-## 🚦 Status Indicators
-
-**GUI Status:**
-- 🟢 **Running** - Actively monitoring
-- ⚫ **Stopped** - Not monitoring
-
-**Order Processing:**
-- ✓ Invoice created
-- ✓ Label downloaded
-- ⚠ No label available (not an error!)
-- ✗ Processing error
-
-## 💡 Pro Tips
-
-1. **Start small** - Monitor "processing" status only at first
-2. **Test with old orders** - Set check_orders_since_hours high
-3. **Use filters** - Avoid processing same orders multiple times
-4. **Check logs** - First place to look when troubleshooting
-5. **Backup processed_orders.json** - Prevents re-processing
-
-## 🎯 Next Steps
-
-1. ✅ Install dependencies
-2. ✅ Configure WooCommerce API
-3. ✅ Create config file
-4. ✅ Run monitor
-5. ✅ Test with sample order
-6. ✅ Customize folder naming
-7. ✅ Set up filters
-8. ✅ Configure as service (optional)
-
-## 📝 Version History
-
-- **v2.0** - General order monitor with invoices
+- **v3.0** - Invoice filing to Boekhouding, quarterly export, project invoicing via WooCommerce API
+- **v2.0** - General order monitor with folder creation and document downloads
 - **v1.0** - bpost label monitor only
-
----
-
-**Questions? Check `ORDER_MONITOR_SETUP.md` for detailed documentation!**
-
-**Ready to organize your orders? Run the script! 🚀**
