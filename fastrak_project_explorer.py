@@ -190,7 +190,7 @@ class ArchiveManager:
     """Handles archiving and unarchiving of project folders."""
 
     @staticmethod
-    def _get_archive_dir(project_type: str, is_personal: bool) -> Path:
+    def _get_archive_dir(project_type: str, is_personal: bool, metadata: Dict = None) -> Path:
         """Get the archive directory for a project type."""
         settings = get_rak_settings()
         archive_category = ARCHIVE_CATEGORIES.get(project_type, "Other")
@@ -199,11 +199,16 @@ class ArchiveManager:
 
         if is_personal:
             archive_dir = archive_dir / "_Personal"
+        elif project_type == "Physical" and metadata:
+            # Preserve Physical subdirectory (Order, Product, Project)
+            subtype = metadata.get("physical_subtype", "")
+            if subtype:
+                archive_dir = archive_dir / subtype
 
         return archive_dir
 
     @staticmethod
-    def _get_active_dir(project_type: str, is_personal: bool) -> Path:
+    def _get_active_dir(project_type: str, is_personal: bool, metadata: Dict = None) -> Path:
         """Get the active directory for a project type."""
         settings = get_rak_settings()
         archive_category = ARCHIVE_CATEGORIES.get(project_type, "Other")
@@ -212,6 +217,11 @@ class ArchiveManager:
 
         if is_personal:
             active_dir = active_dir / "_Personal"
+        elif project_type == "Physical" and metadata:
+            # Preserve Physical subdirectory (Order, Product, Project)
+            subtype = metadata.get("physical_subtype", "")
+            if subtype:
+                active_dir = active_dir / subtype
 
         return active_dir
 
@@ -245,7 +255,7 @@ class ArchiveManager:
             is_personal = metadata.get("is_personal", False)
 
             # Build archive path using RakSettings
-            archive_dir = ArchiveManager._get_archive_dir(project_type, is_personal)
+            archive_dir = ArchiveManager._get_archive_dir(project_type, is_personal, metadata)
             archive_dir.mkdir(parents=True, exist_ok=True)
 
             archive_path = archive_dir / source_path.name
@@ -325,7 +335,7 @@ class ArchiveManager:
             is_personal = metadata.get("is_personal", False)
 
             # Get the active directory for this project type
-            active_dir = ArchiveManager._get_active_dir(project_type, is_personal)
+            active_dir = ArchiveManager._get_active_dir(project_type, is_personal, metadata)
             active_path = active_dir / source_path.name
 
             # Check if active path is already occupied
@@ -416,8 +426,10 @@ class ProjectImporter:
             # Audio
             "Audio_InProgress": _get_platform_path(active_base + r"\Audio\01_Prod\01_InProgress"),
             "Audio_Finished": _get_platform_path(active_base + r"\Audio\01_Prod\03_Finished"),
-            # Physical
-            "Physical": _get_platform_path(active_base + r"\Physical\Project"),
+            # Physical (scan each subdirectory separately)
+            "Physical_Order": _get_platform_path(active_base + r"\Physical\Order"),
+            "Physical_Product": _get_platform_path(active_base + r"\Physical\Product"),
+            "Physical_Project": _get_platform_path(active_base + r"\Physical\Project"),
             "Physical_Personal": _get_platform_path(active_base + r"\Physical\_Personal"),
             # RealTime
             "RealTime": _get_platform_path(active_base + r"\RealTIme"),  # Note: folder has typo "RealTIme"
@@ -434,8 +446,10 @@ class ProjectImporter:
             # Visual
             "Visual": _get_platform_path(archive_base + r"\Visual"),
             "Visual_Personal": _get_platform_path(archive_base + r"\Visual\_Personal"),
-            # Physical
-            "Physical": _get_platform_path(archive_base + r"\Physical"),
+            # Physical (mirror active subdirectory structure)
+            "Physical_Order": _get_platform_path(archive_base + r"\Physical\Order"),
+            "Physical_Product": _get_platform_path(archive_base + r"\Physical\Product"),
+            "Physical_Project": _get_platform_path(archive_base + r"\Physical\Project"),
             "Physical_Personal": _get_platform_path(archive_base + r"\Physical\_Personal"),
             # RealTime
             "RealTime": _get_platform_path(archive_base + r"\RealTime"),
@@ -565,7 +579,8 @@ class ProjectImporter:
                     "notes": "",
                     "metadata": {
                         "is_personal": parsed.get("is_personal", False),
-                        "location": parsed.get("location", "")
+                        "location": parsed.get("location", ""),
+                        "physical_subtype": parsed.get("physical_subtype", "")
                     }
                 }, auto_save=False)
                 stats["imported"] += 1
@@ -593,7 +608,16 @@ class ProjectImporter:
         """
         # Check if this is a personal project
         is_personal = "_Personal" in category
+
+        # Extract physical subtype (Order, Product, Project) if present
+        physical_subtype = ""
+        if category.startswith("Physical_") and not is_personal:
+            physical_subtype = category.split("_", 1)[1]  # "Order", "Product", "Project"
+
         base_category = category.replace("_Personal", "")
+        # Normalize Physical subtypes back to "Physical" for pattern matching
+        if base_category.startswith("Physical"):
+            base_category = "Physical"
 
         # Visual: Try VJ pattern first, then VFX (CG_), then GD pattern
         if base_category == "Visual":
@@ -648,8 +672,19 @@ class ProjectImporter:
                     "is_personal": is_personal
                 }
 
-        # Physical: 3DPrint or Technical pattern
+        # Physical: 3DPrint, Order, or Technical pattern
         elif base_category == "Physical":
+            # Order pattern: Order_{order_number}_{customer_name}
+            match = re.match(r'^Order_(\d+)_(.+)$', folder_name)
+            if match:
+                return {
+                    "date": "",
+                    "client": match.group(2),
+                    "project": f"Order_{match.group(1)}",
+                    "type": "Physical",
+                    "is_personal": False,
+                    "physical_subtype": physical_subtype or "Order"
+                }
             # 3DPrint pattern with client: YYYY-MM-DD_3DPrint_Client_Project
             match = re.match(cls.PATTERNS["Physical"], folder_name)
             if match:
@@ -658,17 +693,29 @@ class ProjectImporter:
                     "client": "Personal" if is_personal else match.group(2),
                     "project": match.group(3),
                     "type": "Physical",
-                    "is_personal": is_personal
+                    "is_personal": is_personal,
+                    "physical_subtype": physical_subtype
                 }
             # 3DPrint pattern without client: YYYY-MM-DD_3DPrint_Project
+            # Product folders use this format with "alles3d" as implicit client
             match = re.match(r'^(\d{4}-\d{2}-\d{2})_3DPrint_(.+)$', folder_name)
             if match:
+                if physical_subtype == "Product":
+                    return {
+                        "date": match.group(1),
+                        "client": "alles3d",
+                        "project": match.group(2),
+                        "type": "Physical",
+                        "is_personal": False,
+                        "physical_subtype": "Product"
+                    }
                 return {
                     "date": match.group(1),
                     "client": "Personal",
                     "project": match.group(2),
                     "type": "Physical",
-                    "is_personal": True
+                    "is_personal": True,
+                    "physical_subtype": physical_subtype
                 }
             # Architecture pattern: YYYY-MM-DD_Arch_Project
             match = re.match(r'^(\d{4}-\d{2}-\d{2})_Arch_(.+)$', folder_name)
@@ -678,7 +725,8 @@ class ProjectImporter:
                     "client": "Personal",
                     "project": match.group(2),
                     "type": "Physical",
-                    "is_personal": True
+                    "is_personal": True,
+                    "physical_subtype": physical_subtype
                 }
             # Technical pattern (older archive format)
             match = re.match(r'^(\d{4}-\d{2}-\d{2})_Technical_(.+)$', folder_name)
@@ -688,7 +736,8 @@ class ProjectImporter:
                     "client": "Personal",
                     "project": match.group(2),
                     "type": "Physical",
-                    "is_personal": True
+                    "is_personal": True,
+                    "physical_subtype": physical_subtype
                 }
 
         # RealTime: Try various patterns
@@ -1145,6 +1194,56 @@ class ProjectTrackerApp:
         self.count_label.grid(row=0, column=4, sticky=tk.E, padx=(15, 0), pady=5)
 
         controls_frame.columnconfigure(4, weight=1)
+
+        # Physical subtype filter pills (row 2, hidden by default)
+        self.physical_subtype_frame = tk.Frame(controls_frame, bg="#0d1117")
+        self.filter_physical_subtype = tk.StringVar(value="all")
+        self.physical_subtype_buttons = {}
+
+        subtype_label = tk.Label(
+            self.physical_subtype_frame, text="Type:", bg="#0d1117", fg="#8b949e",
+            font=("Arial", 9)
+        )
+        subtype_label.pack(side=tk.LEFT, padx=(0, 5))
+
+        for value, text in [("all", "All"), ("Order", "Order"), ("Product", "Product"), ("Project", "Project")]:
+            btn = tk.Label(
+                self.physical_subtype_frame,
+                text=text,
+                font=("Arial", 9),
+                fg="white",
+                bg="#1c2128",
+                padx=10,
+                pady=3,
+                cursor="hand2"
+            )
+            btn.pack(side=tk.LEFT, padx=(0, 2))
+
+            def make_click(v):
+                def on_click(e):
+                    self.filter_physical_subtype.set(v)
+                    self._update_physical_subtype_styles()
+                    self.refresh_project_list()
+                return on_click
+
+            def make_enter(v, b):
+                def on_enter(e):
+                    if self.filter_physical_subtype.get() != v:
+                        b.configure(bg="#2d333b")
+                return on_enter
+
+            def make_leave(v, b):
+                def on_leave(e):
+                    if self.filter_physical_subtype.get() != v:
+                        b.configure(bg="#1c2128")
+                return on_leave
+
+            btn.bind("<Button-1>", make_click(value))
+            btn.bind("<Enter>", make_enter(value, btn))
+            btn.bind("<Leave>", make_leave(value, btn))
+            self.physical_subtype_buttons[value] = btn
+
+        self._update_physical_subtype_styles()
 
         # Middle: Project list header with view toggle
         list_header = tk.Frame(right_frame, bg="#0d1117")
@@ -1917,6 +2016,9 @@ class ProjectTrackerApp:
         # Update FAB visibility based on new category
         self._update_fab_visibility()
 
+        # Show/hide physical subtype pills
+        self._update_physical_subtype_visibility()
+
         # Refresh project list for this category
         self.refresh_project_list()
 
@@ -1945,6 +2047,9 @@ class ProjectTrackerApp:
 
         # Update FAB visibility (hidden when no category selected)
         self._update_fab_visibility()
+
+        # Hide physical subtype pills
+        self._update_physical_subtype_visibility()
 
         # Refresh project list to show all
         self.refresh_project_list()
@@ -2026,6 +2131,14 @@ class ProjectTrackerApp:
             category_projects = []
             for cat_info in categories.values():
                 category_projects.extend(cat_info["projects"])
+
+        # Filter by physical subtype if applicable
+        physical_subtype = self.filter_physical_subtype.get()
+        if self.selected_category == "Physical" and physical_subtype != "all":
+            category_projects = [
+                p for p in category_projects
+                if p.get("metadata", {}).get("physical_subtype", "") == physical_subtype
+            ]
 
         # Sort by selected column
         sort_key_map = {
@@ -2477,6 +2590,34 @@ class ProjectTrackerApp:
                 # Unselected state
                 btn.configure(bg="#1c2128", fg="white")
 
+    def _update_physical_subtype_styles(self):
+        """Update physical subtype button visual states."""
+        if not hasattr(self, 'physical_subtype_buttons'):
+            return
+        current = self.filter_physical_subtype.get()
+        for value, btn in self.physical_subtype_buttons.items():
+            if value == current:
+                btn.configure(bg="#58a6ff", fg="white")
+            else:
+                btn.configure(bg="#1c2128", fg="white")
+
+    def _update_physical_subtype_visibility(self):
+        """Show/hide physical subtype pills based on category and scope."""
+        if not hasattr(self, 'physical_subtype_frame'):
+            return
+        scope = self.filter_scope.get()
+        is_physical = self.selected_category == "Physical"
+        is_work_or_all = scope in ("client", "all")
+
+        if is_physical and is_work_or_all:
+            self.physical_subtype_frame.grid(row=1, column=0, columnspan=5, sticky=tk.W, pady=(2, 0))
+        else:
+            self.physical_subtype_frame.grid_forget()
+            # Reset filter when hidden so it doesn't silently filter
+            if self.filter_physical_subtype.get() != "all":
+                self.filter_physical_subtype.set("all")
+                self._update_physical_subtype_styles()
+
     def set_scope(self, scope: str):
         """Set the scope filter (called from external UI like pipeline)."""
         self.filter_scope.set(scope)
@@ -2488,6 +2629,7 @@ class ProjectTrackerApp:
         self.settings.set("filter_scope", self.filter_scope.get())
         # Update button styles (if buttons exist in this UI)
         self._update_scope_button_styles()
+        self._update_physical_subtype_visibility()
         self.refresh_project_list()
 
     def _update_scope_button_styles(self):
