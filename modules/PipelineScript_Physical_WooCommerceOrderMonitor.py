@@ -240,6 +240,138 @@ class WooCommerceClient:
             logger.error(f"Failed to get order {order_id}: {e}")
             return None
 
+    def update_order_status(self, order_id: int, status: str) -> Optional[Dict]:
+        """Update order status (e.g., 'processing', 'completed', 'on-hold')."""
+        try:
+            response = self.session.put(
+                f"{self.api_url}/orders/{order_id}",
+                json={"status": status}
+            )
+            response.raise_for_status()
+            logger.info(f"Order {order_id} status updated to '{status}'")
+            return response.json()
+        except Exception as e:
+            logger.error(f"Failed to update order {order_id} status: {e}")
+            return None
+
+    def get_orders_for_period(self, after: str, before: str) -> List[Dict]:
+        """Get all orders in a date range. Dates as ISO strings (YYYY-MM-DD)."""
+        all_orders = []
+        page = 1
+        try:
+            while True:
+                params = {
+                    'after': f"{after}T00:00:00",
+                    'before': f"{before}T23:59:59",
+                    'per_page': 100,
+                    'page': page,
+                    'orderby': 'date',
+                    'order': 'asc'
+                }
+                response = self.session.get(f"{self.api_url}/orders", params=params)
+                response.raise_for_status()
+                orders = response.json()
+                if not orders:
+                    break
+                all_orders.extend(orders)
+                page += 1
+            return all_orders
+        except Exception as e:
+            logger.error(f"Failed to get orders for period {after} to {before}: {e}")
+            return all_orders
+
+    def get_invoice_info(self, order_id: int) -> Optional[Dict]:
+        """Get invoice number and date from custom WordPress endpoint."""
+        try:
+            wc_config = self.config.config['woocommerce']
+            secret_key = wc_config.get('monitor_secret_key', '')
+            if not secret_key:
+                logger.warning("No monitor_secret_key configured for invoice endpoint")
+                return None
+
+            endpoint = f"{self.base_url}/wp-admin/admin-ajax.php"
+            params = {
+                'action': 'pipeline_get_invoice_info',
+                'order_id': order_id,
+                'secret': secret_key
+            }
+            response = requests.get(endpoint, params=params, timeout=15)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('success') and data.get('data'):
+                    return data['data']
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get invoice info for order {order_id}: {e}")
+            return None
+
+    def download_invoice_pdf(self, order_id: int, save_path: Path) -> bool:
+        """Download invoice PDF via custom WordPress endpoint."""
+        try:
+            wc_config = self.config.config['woocommerce']
+            secret_key = wc_config.get('monitor_secret_key', '')
+            if not secret_key:
+                logger.warning("No monitor_secret_key configured for invoice endpoint")
+                return False
+
+            endpoint = f"{self.base_url}/wp-admin/admin-ajax.php"
+            params = {
+                'action': 'pipeline_get_invoice',
+                'order_id': order_id,
+                'secret': secret_key
+            }
+            response = requests.get(endpoint, params=params, timeout=30)
+
+            if response.status_code != 200:
+                logger.error(f"Invoice endpoint returned {response.status_code}")
+                return False
+
+            content_type = response.headers.get('content-type', '')
+            if 'pdf' not in content_type:
+                # Might be a JSON error response
+                try:
+                    data = response.json()
+                    logger.error(f"Invoice endpoint error: {data.get('data', 'Unknown error')}")
+                except ValueError:
+                    logger.error(f"Unexpected response type: {content_type}")
+                return False
+
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(save_path, 'wb') as f:
+                f.write(response.content)
+
+            logger.info(f"Downloaded invoice PDF: {save_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to download invoice for order {order_id}: {e}")
+            return False
+
+    def create_manual_order(self, customer: Dict, line_items: List[Dict],
+                            status: str = "completed") -> Optional[Dict]:
+        """
+        Create a manual WooCommerce order for project invoicing.
+
+        Args:
+            customer: Dict with billing info (first_name, last_name, email, address_1, etc.)
+            line_items: List of dicts with name, quantity, total (price as string)
+            status: Order status (default 'completed' to trigger invoice generation)
+        """
+        try:
+            order_data = {
+                "status": status,
+                "billing": customer,
+                "line_items": line_items,
+                "set_paid": True
+            }
+            response = self.session.post(f"{self.api_url}/orders", json=order_data)
+            response.raise_for_status()
+            order = response.json()
+            logger.info(f"Created manual order #{order.get('number', order['id'])}")
+            return order
+        except Exception as e:
+            logger.error(f"Failed to create manual order: {e}")
+            return None
+
     def matches_filters(self, order: Dict) -> bool:
         """Check if order matches configured filters"""
         filters = self.config.config['filters']
@@ -603,6 +735,120 @@ class DocumentManager:
 
 
 # ====================================
+# INVOICE FILER
+# ====================================
+
+class InvoiceFiler:
+    """
+    Handles filing invoices to the bookkeeping folder and creating
+    .lnk shortcuts in order/project folders.
+
+    Bookkeeping structure: {library}/Boekhouding/{year}/Q{quarter}/Uitgaand/
+    Invoice naming: 3D_YYMMDD_Factuur{number}_{ClientName}.pdf
+    """
+
+    def __init__(self, config: Config, wc_client: WooCommerceClient):
+        self.config = config
+        self.wc_client = wc_client
+        settings = get_rak_settings()
+        self.library_base = Path(settings.get_active_base()) / "_LIBRARY" / "Boekhouding"
+
+    def _get_quarter_dir(self, date_str: str) -> Path:
+        """Get the Uitgaand folder for the quarter containing the given date."""
+        dt = datetime.strptime(date_str[:10], "%Y-%m-%d")
+        quarter = (dt.month - 1) // 3 + 1
+        return self.library_base / str(dt.year) / f"Q{quarter}" / "Uitgaand"
+
+    def _build_invoice_filename(self, invoice_number: str, invoice_date: str,
+                                client_name: str) -> str:
+        """Build filename: 3D_YYMMDD_Factuur{number}_{ClientName}.pdf"""
+        dt = datetime.strptime(invoice_date[:10], "%Y-%m-%d")
+        date_part = dt.strftime("%y%m%d")
+        # Clean client name for filesystem
+        clean_name = client_name.replace(" ", "").replace("_", "")
+        for ch in '<>:"/\\|?*':
+            clean_name = clean_name.replace(ch, "")
+        return f"3D_{date_part}_Factuur{invoice_number}_{clean_name}.pdf"
+
+    def _find_outgoing_folder(self, project_folder: Path) -> Optional[Path]:
+        """Find the outgoing folder (e.g. 03_Outgoing) in a project folder."""
+        try:
+            for item in project_folder.iterdir():
+                if item.is_dir() and "outgoing" in item.name.lower():
+                    return item
+        except Exception:
+            pass
+        return None
+
+    def _create_shortcut(self, shortcut_path: Path, target_path: Path):
+        """Create a Windows .lnk shortcut."""
+        try:
+            import win32com.client
+            shell = win32com.client.Dispatch("WScript.Shell")
+            shortcut = shell.CreateShortCut(str(shortcut_path))
+            shortcut.TargetPath = str(target_path)
+            shortcut.WorkingDirectory = str(target_path.parent)
+            shortcut.save()
+            logger.info(f"Created shortcut: {shortcut_path}")
+        except Exception as e:
+            logger.error(f"Failed to create shortcut: {e}")
+
+    def file_invoice(self, order: Dict, project_folder: Path) -> Optional[Path]:
+        """
+        Download invoice, copy to Boekhouding, create .lnk in project folder.
+
+        Args:
+            order: WooCommerce order dict
+            project_folder: Path to the order/project folder
+
+        Returns:
+            Path to the filed invoice in Boekhouding, or None on failure
+        """
+        order_id = order['id']
+
+        # Get invoice info (number + date) from WordPress
+        invoice_info = self.wc_client.get_invoice_info(order_id)
+        if not invoice_info:
+            logger.warning(f"No invoice info available for order {order_id}")
+            return None
+
+        invoice_number = invoice_info['invoice_number']
+        invoice_date = invoice_info['invoice_date']
+
+        # Get client name from billing
+        billing = order.get('billing', {})
+        client_name = f"{billing.get('last_name', '')}".strip()
+        if not client_name:
+            client_name = f"{billing.get('first_name', '')}".strip()
+        if not client_name:
+            client_name = "Unknown"
+
+        # Build paths
+        quarter_dir = self._get_quarter_dir(invoice_date)
+        quarter_dir.mkdir(parents=True, exist_ok=True)
+
+        filename = self._build_invoice_filename(invoice_number, invoice_date, client_name)
+        invoice_path = quarter_dir / filename
+
+        # Download invoice PDF directly to Boekhouding
+        if not self.wc_client.download_invoice_pdf(order_id, invoice_path):
+            return None
+
+        logger.info(f"Filed invoice: {invoice_path}")
+
+        # Create .lnk shortcut in the project's outgoing folder
+        outgoing = self._find_outgoing_folder(project_folder)
+        if outgoing:
+            outgoing.mkdir(parents=True, exist_ok=True)
+            shortcut_name = filename.replace(".pdf", ".lnk")
+            self._create_shortcut(outgoing / shortcut_name, invoice_path)
+        else:
+            logger.warning(f"No outgoing folder found in {project_folder}")
+
+        return invoice_path
+
+
+# ====================================
 # ORDER MONITOR
 # ====================================
 
@@ -613,6 +859,7 @@ class OrderMonitor:
         self.config = config
         self.wc_client = WooCommerceClient(config)
         self.doc_manager = DocumentManager(config, self.wc_client)
+        self.invoice_filer = InvoiceFiler(config, self.wc_client)
         self.tracker = ProcessedOrdersTracker(config)
         self.running = False
         self.callback = None
@@ -659,14 +906,20 @@ class OrderMonitor:
             # Generate/download documents based on configuration
             monitor_config = self.config.config['monitoring']
 
-            # Invoice
+            # Invoice — file to Boekhouding and create .lnk in order folder
             if monitor_config.get('download_invoices', True):
-                invoice_path = self.doc_manager.download_invoice(order, order_folder)
-                if invoice_path:
-                    documents['invoice'] = invoice_path
-                    self.log_status(f"✓ Invoice downloaded", "success")
+                filed_path = self.invoice_filer.file_invoice(order, order_folder)
+                if filed_path:
+                    documents['invoice'] = str(filed_path)
+                    self.log_status(f"✓ Invoice filed to {filed_path.parent.name}/", "success")
                 else:
-                    self.log_status(f"⚠ No invoice available yet", "warning")
+                    # Fallback: try legacy download directly to order folder
+                    invoice_path = self.doc_manager.download_invoice(order, order_folder)
+                    if invoice_path:
+                        documents['invoice'] = invoice_path
+                        self.log_status(f"✓ Invoice downloaded (legacy)", "success")
+                    else:
+                        self.log_status(f"⚠ No invoice available yet", "warning")
 
             # Shipping label
             if monitor_config.get('download_labels', True):
@@ -719,6 +972,119 @@ class OrderMonitor:
 
         except Exception as e:
             self.log_status(f"Error checking orders: {e}", "error")
+
+    def file_quarter_invoices(self, year: int, quarter: int):
+        """
+        Fetch all orders for a quarter and file their invoices to Boekhouding.
+        Useful for catching up on invoices that weren't filed during monitoring.
+        """
+        # Calculate quarter date range
+        start_month = (quarter - 1) * 3 + 1
+        after = f"{year}-{start_month:02d}-01"
+        if quarter == 4:
+            before = f"{year}-12-31"
+        else:
+            end_month = quarter * 3
+            # Last day of end_month
+            import calendar
+            last_day = calendar.monthrange(year, end_month)[1]
+            before = f"{year}-{end_month:02d}-{last_day:02d}"
+
+        self.log_status(f"Fetching orders for Q{quarter} {year} ({after} to {before})...", "info")
+
+        orders = self.wc_client.get_orders_for_period(after, before)
+        if not orders:
+            self.log_status(f"No orders found for Q{quarter} {year}", "info")
+            return
+
+        self.log_status(f"Found {len(orders)} orders for Q{quarter} {year}", "info")
+
+        filed_count = 0
+        skipped_count = 0
+        for order in orders:
+            order_number = order.get('number', order['id'])
+
+            # Find existing order folder if it exists
+            order_folder = self._find_order_folder(order)
+
+            if not order_folder:
+                # Create folder if it doesn't exist
+                order_folder = self.doc_manager.create_order_folder(order)
+                self.log_status(f"Created folder for order #{order_number}", "info")
+
+            # Check if invoice already filed (look for .lnk in outgoing)
+            outgoing = self.invoice_filer._find_outgoing_folder(order_folder)
+            if outgoing and any(f.suffix == '.lnk' for f in outgoing.iterdir() if f.is_file()):
+                skipped_count += 1
+                continue
+
+            filed_path = self.invoice_filer.file_invoice(order, order_folder)
+            if filed_path:
+                filed_count += 1
+                self.log_status(f"✓ Filed invoice for order #{order_number}", "success")
+            else:
+                self.log_status(f"⚠ Could not file invoice for order #{order_number}", "warning")
+
+        self.log_status(
+            f"Quarter done: {filed_count} filed, {skipped_count} already existed", "success"
+        )
+
+    def _find_order_folder(self, order: Dict) -> Optional[Path]:
+        """Try to find an existing folder for an order in the Order directory."""
+        base_dir = Path(self.config.config['monitoring']['base_directory'])
+        if not base_dir.exists():
+            return None
+
+        order_number = str(order.get('number', order['id']))
+        billing = order.get('billing', {})
+        customer_name = f"{billing.get('first_name', '')}_{billing.get('last_name', '')}".strip('_')
+
+        try:
+            for item in base_dir.iterdir():
+                if not item.is_dir():
+                    continue
+                name = item.name
+                # Match by order number in folder name
+                if order_number in name:
+                    return item
+                # Match by customer name
+                if customer_name and customer_name in name:
+                    return item
+        except Exception:
+            pass
+        return None
+
+    def create_project_invoice(self, customer: Dict, line_items: List[Dict],
+                               project_folder: Path) -> Optional[Path]:
+        """
+        Create a WooCommerce order for a project and file the invoice.
+
+        Args:
+            customer: Billing info dict (first_name, last_name, email, address_1, etc.)
+            line_items: List of dicts with name, quantity, total
+            project_folder: Path to the project folder
+
+        Returns:
+            Path to the filed invoice, or None on failure
+        """
+        self.log_status("Creating WooCommerce order for project invoice...", "info")
+
+        order = self.wc_client.create_manual_order(customer, line_items)
+        if not order:
+            self.log_status("Failed to create WooCommerce order", "error")
+            return None
+
+        order_number = order.get('number', order['id'])
+        self.log_status(f"Created order #{order_number}", "success")
+
+        # File the invoice
+        filed_path = self.invoice_filer.file_invoice(order, project_folder)
+        if filed_path:
+            self.log_status(f"✓ Invoice filed: {filed_path.name}", "success")
+        else:
+            self.log_status(f"⚠ Order created but invoice filing failed", "warning")
+
+        return filed_path
 
     def start_monitoring(self):
         """Start continuous monitoring"""
@@ -813,6 +1179,16 @@ class OrderMonitorGUI:
         self.check_now_button = ttk.Button(button_frame, text="🔄 Check Now",
                                           command=self.check_now, width=15)
         self.check_now_button.grid(row=0, column=2, padx=5)
+
+        # Invoice action buttons (second row)
+        invoice_frame = ttk.Frame(header_frame)
+        invoice_frame.grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=(8, 0))
+
+        ttk.Button(invoice_frame, text="📋 File Quarter Invoices",
+                  command=self.file_quarter_invoices, width=22).grid(row=0, column=0, padx=5)
+
+        ttk.Button(invoice_frame, text="📄 Create Project Invoice",
+                  command=self.create_project_invoice, width=22).grid(row=0, column=1, padx=5)
 
         header_frame.columnconfigure(1, weight=1)
 
@@ -950,6 +1326,135 @@ class OrderMonitorGUI:
         """Check for orders immediately"""
         self.save_current_config()
         threading.Thread(target=self.monitor.check_orders, daemon=True).start()
+
+    def file_quarter_invoices(self):
+        """Show quarter selection dialog and file invoices."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("File Quarter Invoices")
+        dialog.geometry("350x180")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        frame = ttk.Frame(dialog, padding="15")
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(frame, text="Select quarter to file invoices for:").pack(anchor=tk.W, pady=(0, 10))
+
+        row = ttk.Frame(frame)
+        row.pack(fill=tk.X, pady=5)
+
+        now = datetime.now()
+        ttk.Label(row, text="Year:").pack(side=tk.LEFT, padx=(0, 5))
+        year_var = tk.StringVar(value=str(now.year))
+        year_spin = ttk.Spinbox(row, from_=2020, to=2030, textvariable=year_var, width=6)
+        year_spin.pack(side=tk.LEFT, padx=(0, 20))
+
+        ttk.Label(row, text="Quarter:").pack(side=tk.LEFT, padx=(0, 5))
+        current_quarter = (now.month - 1) // 3 + 1
+        quarter_var = tk.StringVar(value=str(current_quarter))
+        quarter_spin = ttk.Spinbox(row, from_=1, to=4, textvariable=quarter_var, width=4)
+        quarter_spin.pack(side=tk.LEFT)
+
+        def run():
+            dialog.destroy()
+            self.save_current_config()
+            year = int(year_var.get())
+            quarter = int(quarter_var.get())
+            threading.Thread(
+                target=self.monitor.file_quarter_invoices,
+                args=(year, quarter), daemon=True
+            ).start()
+
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack(fill=tk.X, pady=(15, 0))
+        ttk.Button(btn_frame, text="File Invoices", command=run).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT)
+
+    def create_project_invoice(self):
+        """Show dialog to create a manual WooCommerce order and file the invoice."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Create Project Invoice")
+        dialog.geometry("500x480")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        frame = ttk.Frame(dialog, padding="15")
+        frame.pack(fill=tk.BOTH, expand=True)
+        frame.columnconfigure(1, weight=1)
+
+        # Customer info
+        ttk.Label(frame, text="Customer", font=('Arial', 10, 'bold')).grid(
+            row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 5))
+
+        fields = {}
+        customer_fields = [
+            ("First Name:", "first_name"),
+            ("Last Name:", "last_name"),
+            ("Email:", "email"),
+            ("Address:", "address_1"),
+            ("Postcode:", "postcode"),
+            ("City:", "city"),
+            ("Country:", "country"),
+        ]
+        for i, (label, key) in enumerate(customer_fields, start=1):
+            ttk.Label(frame, text=label).grid(row=i, column=0, sticky=tk.W, pady=2)
+            var = tk.StringVar(value="BE" if key == "country" else "")
+            ttk.Entry(frame, textvariable=var).grid(row=i, column=1, sticky=tk.EW, padx=5, pady=2)
+            fields[key] = var
+
+        # Line item
+        row_offset = len(customer_fields) + 1
+        ttk.Label(frame, text="Invoice Item", font=('Arial', 10, 'bold')).grid(
+            row=row_offset, column=0, columnspan=2, sticky=tk.W, pady=(10, 5))
+
+        ttk.Label(frame, text="Description:").grid(row=row_offset+1, column=0, sticky=tk.W, pady=2)
+        desc_var = tk.StringVar()
+        ttk.Entry(frame, textvariable=desc_var).grid(row=row_offset+1, column=1, sticky=tk.EW, padx=5, pady=2)
+
+        ttk.Label(frame, text="Amount (EUR):").grid(row=row_offset+2, column=0, sticky=tk.W, pady=2)
+        amount_var = tk.StringVar()
+        ttk.Entry(frame, textvariable=amount_var).grid(row=row_offset+2, column=1, sticky=tk.W, padx=5, pady=2)
+
+        # Project folder
+        ttk.Label(frame, text="Project Folder:").grid(row=row_offset+3, column=0, sticky=tk.W, pady=(10, 2))
+        folder_var = tk.StringVar()
+        folder_frame = ttk.Frame(frame)
+        folder_frame.grid(row=row_offset+3, column=1, sticky=tk.EW, padx=5, pady=(10, 2))
+        ttk.Entry(folder_frame, textvariable=folder_var).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        def browse():
+            from tkinter import filedialog
+            d = filedialog.askdirectory()
+            if d:
+                folder_var.set(d)
+        ttk.Button(folder_frame, text="...", command=browse, width=3).pack(side=tk.LEFT, padx=(5, 0))
+
+        def create():
+            customer = {k: v.get() for k, v in fields.items()}
+            line_items = [{
+                "name": desc_var.get(),
+                "quantity": 1,
+                "total": amount_var.get()
+            }]
+            project_path = Path(folder_var.get())
+
+            if not desc_var.get() or not amount_var.get():
+                messagebox.showwarning("Missing Info", "Please fill in description and amount.")
+                return
+            if not project_path.exists():
+                messagebox.showwarning("Invalid Path", "Project folder does not exist.")
+                return
+
+            dialog.destroy()
+            threading.Thread(
+                target=self.monitor.create_project_invoice,
+                args=(customer, line_items, project_path), daemon=True
+            ).start()
+
+        btn_frame = ttk.Frame(frame)
+        btn_frame.grid(row=row_offset+4, column=0, columnspan=2, sticky=tk.EW, pady=(15, 0))
+        ttk.Button(btn_frame, text="Create Invoice", command=create).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT)
 
     def save_current_config(self):
         """Save current configuration from GUI"""
