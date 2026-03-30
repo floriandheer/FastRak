@@ -551,7 +551,8 @@ class PhysicalFolderStructureCreator(FormKeyboardMixin):
                     'slicer': slicer_software,
                     'printer': printer_model,
                     'is_personal': self.personal_var.get(),
-                    'is_product': self.product_var.get()
+                    'is_product': self.product_var.get(),
+                    'physical_subtype': 'Product' if self.product_var.get() else 'Project' if self.project_var.get() else ''
                 }
             }
 
