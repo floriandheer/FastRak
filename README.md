@@ -58,13 +58,13 @@ Some pipeline scripts require additional external software:
 
 ### Quick Start
 
-1. **Clone or download this repository**
+1. **Clone the repository**
    ```bash
-   cd /path/to/floriandheer
+   git clone https://github.com/floriandheer/FastRak.git
+   cd FastRak
    ```
 
 2. **Install dependencies**
-
    ```bash
    python install_dependencies.py
    ```
