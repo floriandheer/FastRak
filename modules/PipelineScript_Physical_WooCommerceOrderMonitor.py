@@ -194,7 +194,7 @@ class WooCommerceClient:
     def test_connection(self) -> tuple[bool, str]:
         """Test WooCommerce API connection"""
         try:
-            response = self.session.get(f"{self.api_url}/system_status")
+            response = self.session.get(f"{self.api_url}/orders", params={'per_page': 1})
             if response.status_code == 200:
                 return True, "Connection successful"
             else:
@@ -280,38 +280,13 @@ class WooCommerceClient:
             logger.error(f"Failed to get orders for period {after} to {before}: {e}")
             return all_orders
 
-    def get_invoice_info(self, order_id: int) -> Optional[Dict]:
-        """Get invoice number and date from custom WordPress endpoint."""
-        try:
-            wc_config = self.config.config['woocommerce']
-            secret_key = wc_config.get('monitor_secret_key', '')
-            if not secret_key:
-                logger.warning("No monitor_secret_key configured for invoice endpoint")
-                return None
-
-            endpoint = f"{self.base_url}/wp-admin/admin-ajax.php"
-            params = {
-                'action': 'pipeline_get_invoice_info',
-                'order_id': order_id,
-                'secret': secret_key
-            }
-            response = requests.get(endpoint, params=params, timeout=15)
-            if response.status_code == 200:
-                data = response.json()
-                if data.get('success') and data.get('data'):
-                    return data['data']
-            return None
-        except Exception as e:
-            logger.error(f"Failed to get invoice info for order {order_id}: {e}")
-            return None
-
     def download_invoice_pdf(self, order_id: int, save_path: Path) -> bool:
-        """Download invoice PDF via custom WordPress endpoint."""
+        """Download invoice PDF via custom WordPress AJAX endpoint (pipeline_get_invoice)."""
         try:
             wc_config = self.config.config['woocommerce']
             secret_key = wc_config.get('monitor_secret_key', '')
             if not secret_key:
-                logger.warning("No monitor_secret_key configured for invoice endpoint")
+                logger.warning("monitor_secret_key not configured — cannot download invoice PDF")
                 return False
 
             endpoint = f"{self.base_url}/wp-admin/admin-ajax.php"
@@ -320,28 +295,41 @@ class WooCommerceClient:
                 'order_id': order_id,
                 'secret': secret_key
             }
-            response = requests.get(endpoint, params=params, timeout=30)
+            logger.debug(f"Requesting invoice from {endpoint} for order {order_id}")
+            response = requests.get(endpoint, params=params, timeout=30, allow_redirects=False)
+            logger.debug(f"Invoice response: HTTP {response.status_code}, content-type: {response.headers.get('content-type', 'unknown')}, size: {len(response.content)} bytes")
+
+            if response.status_code in (301, 302, 303, 307, 308):
+                redirect_url = response.headers.get('Location', 'unknown')
+                logger.error(f"Invoice endpoint redirected to {redirect_url} — check server config")
+                return False
 
             if response.status_code != 200:
-                logger.error(f"Invoice endpoint returned {response.status_code}")
+                logger.error(f"Invoice endpoint returned HTTP {response.status_code} for order {order_id}")
                 return False
 
             content_type = response.headers.get('content-type', '')
             if 'pdf' not in content_type:
-                # Might be a JSON error response
                 try:
                     data = response.json()
-                    logger.error(f"Invoice endpoint error: {data.get('data', 'Unknown error')}")
+                    error_msg = data.get('data', data.get('message', 'Unknown error'))
+                    logger.error(f"Invoice endpoint error for order {order_id}: {error_msg}")
                 except ValueError:
-                    logger.error(f"Unexpected response type: {content_type}")
+                    logger.error(f"Invoice endpoint returned unexpected content-type '{content_type}' for order {order_id}")
                 return False
 
             save_path.parent.mkdir(parents=True, exist_ok=True)
             with open(save_path, 'wb') as f:
                 f.write(response.content)
 
-            logger.info(f"Downloaded invoice PDF: {save_path}")
+            logger.info(f"Downloaded invoice PDF for order {order_id}: {save_path}")
             return True
+        except requests.exceptions.ConnectionError:
+            logger.error(f"Cannot reach invoice endpoint — check your store URL")
+            return False
+        except requests.exceptions.Timeout:
+            logger.error(f"Invoice download timed out for order {order_id}")
+            return False
         except Exception as e:
             logger.error(f"Failed to download invoice for order {order_id}: {e}")
             return False
@@ -371,6 +359,34 @@ class WooCommerceClient:
         except Exception as e:
             logger.error(f"Failed to create manual order: {e}")
             return None
+
+    def get_all_orders(self) -> List[Dict]:
+        """Get all orders matching configured status filters (paginated)."""
+        all_orders = []
+        page = 1
+        try:
+            filters = self.config.config['filters']
+            while True:
+                params = {
+                    'per_page': 100,
+                    'page': page,
+                    'orderby': 'date',
+                    'order': 'desc'
+                }
+                if filters.get('order_statuses'):
+                    params['status'] = ','.join(filters['order_statuses'])
+
+                response = self.session.get(f"{self.api_url}/orders", params=params)
+                response.raise_for_status()
+                orders = response.json()
+                if not orders:
+                    break
+                all_orders.extend(orders)
+                page += 1
+            return all_orders
+        except Exception as e:
+            logger.error(f"Failed to get orders: {e}")
+            return all_orders
 
     def matches_filters(self, order: Dict) -> bool:
         """Check if order matches configured filters"""
@@ -793,6 +809,36 @@ class InvoiceFiler:
         except Exception as e:
             logger.error(f"Failed to create shortcut: {e}")
 
+    def _get_invoice_info_from_meta(self, order: Dict) -> Optional[Dict]:
+        """Extract invoice number and date from order metadata (WooCommerce PDF Invoices plugin)."""
+        invoice_number = None
+        invoice_date = None
+        invoice_date_formatted = None
+        for meta in order.get('meta_data', []):
+            key = meta.get('key', '')
+            if key == '_wcpdf_invoice_number':
+                invoice_number = meta.get('value')
+            elif key == '_wcpdf_invoice_date':
+                invoice_date = meta.get('value')
+            elif key == '_wcpdf_invoice_date_formatted':
+                invoice_date_formatted = meta.get('value')
+        if invoice_number:
+            # Prefer formatted date if available
+            if invoice_date_formatted:
+                date_str = invoice_date_formatted
+            elif invoice_date:
+                # Plugin stores a Unix timestamp — convert to YYYY-MM-DD
+                try:
+                    dt = datetime.fromtimestamp(int(invoice_date))
+                    date_str = dt.strftime('%Y-%m-%d')
+                except (ValueError, TypeError):
+                    # Already a date string
+                    date_str = str(invoice_date)[:10]
+            else:
+                date_str = order.get('date_created', '')[:10]
+            return {'invoice_number': str(invoice_number), 'invoice_date': date_str}
+        return None
+
     def file_invoice(self, order: Dict, project_folder: Path) -> Optional[Path]:
         """
         Download invoice, copy to Boekhouding, create .lnk in project folder.
@@ -805,47 +851,54 @@ class InvoiceFiler:
             Path to the filed invoice in Boekhouding, or None on failure
         """
         order_id = order['id']
+        order_number = order.get('number', order_id)
 
-        # Get invoice info (number + date) from WordPress
-        invoice_info = self.wc_client.get_invoice_info(order_id)
-        if not invoice_info:
-            logger.warning(f"No invoice info available for order {order_id}")
-            return None
+        try:
+            # Get invoice info from order metadata (WooCommerce PDF Invoices plugin)
+            invoice_info = self._get_invoice_info_from_meta(order)
+            if not invoice_info:
+                logger.warning(f"No invoice metadata found for order #{order_number} — invoice may not be generated yet")
+                return None
 
-        invoice_number = invoice_info['invoice_number']
-        invoice_date = invoice_info['invoice_date']
+            invoice_number = invoice_info['invoice_number']
+            invoice_date = invoice_info['invoice_date']
+            logger.info(f"Order #{order_number}: invoice #{invoice_number} dated {invoice_date}")
 
-        # Get client name from billing
-        billing = order.get('billing', {})
-        client_name = f"{billing.get('last_name', '')}".strip()
-        if not client_name:
-            client_name = f"{billing.get('first_name', '')}".strip()
-        if not client_name:
-            client_name = "Unknown"
+            # Get client name from billing
+            billing = order.get('billing', {})
+            client_name = f"{billing.get('last_name', '')}".strip()
+            if not client_name:
+                client_name = f"{billing.get('first_name', '')}".strip()
+            if not client_name:
+                client_name = "Unknown"
 
-        # Build paths
-        quarter_dir = self._get_quarter_dir(invoice_date)
-        quarter_dir.mkdir(parents=True, exist_ok=True)
+            # Build paths
+            quarter_dir = self._get_quarter_dir(invoice_date)
+            quarter_dir.mkdir(parents=True, exist_ok=True)
 
-        filename = self._build_invoice_filename(invoice_number, invoice_date, client_name)
-        invoice_path = quarter_dir / filename
+            filename = self._build_invoice_filename(invoice_number, invoice_date, client_name)
+            invoice_path = quarter_dir / filename
 
-        # Download invoice PDF directly to Boekhouding
-        if not self.wc_client.download_invoice_pdf(order_id, invoice_path):
-            return None
+            # Download invoice PDF directly to Boekhouding
+            if not self.wc_client.download_invoice_pdf(order_id, invoice_path):
+                return None
 
-        logger.info(f"Filed invoice: {invoice_path}")
+            logger.info(f"Filed invoice: {invoice_path}")
 
-        # Create .lnk shortcut in the project's outgoing folder
-        outgoing = self._find_outgoing_folder(project_folder)
-        if outgoing:
-            outgoing.mkdir(parents=True, exist_ok=True)
+            # Create .lnk shortcut in the order/project folder
+            outgoing = self._find_outgoing_folder(project_folder)
+            if not outgoing:
+                # Create an Outgoing folder if one doesn't exist
+                outgoing = project_folder / "03_Outgoing"
+                outgoing.mkdir(parents=True, exist_ok=True)
             shortcut_name = filename.replace(".pdf", ".lnk")
             self._create_shortcut(outgoing / shortcut_name, invoice_path)
-        else:
-            logger.warning(f"No outgoing folder found in {project_folder}")
 
-        return invoice_path
+            return invoice_path
+
+        except Exception as e:
+            logger.error(f"Failed to file invoice for order #{order_number}: {e}")
+            return None
 
 
 # ====================================
@@ -863,10 +916,15 @@ class OrderMonitor:
         self.tracker = ProcessedOrdersTracker(config)
         self.running = False
         self.callback = None
+        self.order_list_callback = None
 
     def set_callback(self, callback):
         """Set callback function for status updates"""
         self.callback = callback
+
+    def set_order_list_callback(self, callback):
+        """Set callback to push full order list to GUI"""
+        self.order_list_callback = callback
 
     def log_status(self, message: str, level: str = "info"):
         """Log status message"""
@@ -947,18 +1005,21 @@ class OrderMonitor:
             return False
 
     def check_orders(self):
-        """Check for new orders"""
+        """Check for new orders by status filter"""
         try:
-            self.log_status("Checking for new orders...", "info")
+            self.log_status("Checking for orders...", "info")
 
-            hours = self.config.config['monitoring']['check_orders_since_hours']
-            orders = self.wc_client.get_recent_orders(hours)
+            orders = self.wc_client.get_all_orders()
+
+            # Push full order list to GUI
+            if self.order_list_callback:
+                self.order_list_callback(orders)
 
             if not orders:
-                self.log_status("No recent orders found", "info")
+                self.log_status("No orders found", "info")
                 return
 
-            self.log_status(f"Found {len(orders)} recent orders", "info")
+            self.log_status(f"Found {len(orders)} order(s)", "info")
 
             processed_count = 0
             for order in orders:
@@ -966,7 +1027,7 @@ class OrderMonitor:
                     processed_count += 1
 
             if processed_count > 0:
-                self.log_status(f"✓ Processed {processed_count} new order(s)", "success")
+                self.log_status(f"Processed {processed_count} new order(s)", "success")
             else:
                 self.log_status("No new orders to process", "info")
 
@@ -1126,7 +1187,9 @@ class OrderMonitorGUI:
         self.config = Config()
         self.monitor = OrderMonitor(self.config)
         self.monitor.set_callback(self.update_status)
+        self.monitor.set_order_list_callback(self.update_order_list)
         self.monitor_thread = None
+        self.orders_cache = []  # cached order data for double-click etc.
 
         # Setup logging
         self.setup_logging()
@@ -1154,91 +1217,122 @@ class OrderMonitorGUI:
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         main_frame.columnconfigure(0, weight=1)
-        main_frame.rowconfigure(2, weight=1)
+        main_frame.rowconfigure(1, weight=3)  # order table gets most space
+        main_frame.rowconfigure(3, weight=1)  # activity log gets less
 
         # Header
         header_frame = ttk.LabelFrame(main_frame, text="WooCommerce Order Monitor", padding="10")
         header_frame.grid(row=0, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
 
         # Status indicator
-        self.status_label = ttk.Label(header_frame, text="⚫ Stopped", font=('Arial', 12, 'bold'))
+        self.status_label = ttk.Label(header_frame, text="Stopped", font=('Arial', 12, 'bold'))
         self.status_label.grid(row=0, column=0, sticky=tk.W)
 
         # Control buttons
         button_frame = ttk.Frame(header_frame)
         button_frame.grid(row=0, column=1, sticky=tk.E)
 
-        self.start_button = ttk.Button(button_frame, text="▶ Start Monitoring",
-                                       command=self.start_monitoring, width=20)
+        self.start_button = ttk.Button(button_frame, text="Start Monitoring",
+                                       command=self.start_monitoring, width=18)
         self.start_button.grid(row=0, column=0, padx=5)
 
-        self.stop_button = ttk.Button(button_frame, text="⏹ Stop Monitoring",
-                                      command=self.stop_monitoring, state=tk.DISABLED, width=20)
+        self.stop_button = ttk.Button(button_frame, text="Stop Monitoring",
+                                      command=self.stop_monitoring, state=tk.DISABLED, width=18)
         self.stop_button.grid(row=0, column=1, padx=5)
 
-        self.check_now_button = ttk.Button(button_frame, text="🔄 Check Now",
-                                          command=self.check_now, width=15)
+        self.check_now_button = ttk.Button(button_frame, text="Refresh",
+                                          command=self.check_now, width=12)
         self.check_now_button.grid(row=0, column=2, padx=5)
+
+        ttk.Button(button_frame, text="Settings",
+                  command=self.open_settings, width=10).grid(row=0, column=3, padx=5)
 
         # Invoice action buttons (second row)
         invoice_frame = ttk.Frame(header_frame)
         invoice_frame.grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=(8, 0))
 
-        ttk.Button(invoice_frame, text="📋 File Quarter Invoices",
+        ttk.Button(invoice_frame, text="File Quarter Invoices",
                   command=self.file_quarter_invoices, width=22).grid(row=0, column=0, padx=5)
 
-        ttk.Button(invoice_frame, text="📄 Create Project Invoice",
+        ttk.Button(invoice_frame, text="Create Project Invoice",
                   command=self.create_project_invoice, width=22).grid(row=0, column=1, padx=5)
 
         header_frame.columnconfigure(1, weight=1)
 
-        # Configuration section
-        config_frame = ttk.LabelFrame(main_frame, text="Configuration", padding="10")
-        config_frame.grid(row=1, column=0, sticky=(tk.W, tk.E), pady=(0, 10))
-        config_frame.columnconfigure(1, weight=1)
+        # Orders table
+        orders_frame = ttk.LabelFrame(main_frame, text="Orders", padding="10")
+        orders_frame.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 10))
+        orders_frame.columnconfigure(0, weight=1)
+        orders_frame.rowconfigure(0, weight=1)
 
-        # Store URL
-        ttk.Label(config_frame, text="Store URL:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        self.url_var = tk.StringVar(value=self.config.config['woocommerce']['url'])
-        url_entry = ttk.Entry(config_frame, textvariable=self.url_var)
-        url_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=5, pady=5)
+        columns = ("order_num", "date", "customer", "city", "status", "total", "processed")
+        self.order_tree = ttk.Treeview(orders_frame, columns=columns, show="headings", height=12)
 
-        # Poll interval
-        ttk.Label(config_frame, text="Check Interval (seconds):").grid(row=1, column=0, sticky=tk.W, pady=5)
-        self.interval_var = tk.StringVar(value=str(self.config.config['monitoring']['poll_interval']))
-        interval_entry = ttk.Entry(config_frame, textvariable=self.interval_var, width=10)
-        interval_entry.grid(row=1, column=1, sticky=tk.W, padx=5, pady=5)
+        self.order_tree.heading("order_num", text="Order #")
+        self.order_tree.heading("date", text="Date")
+        self.order_tree.heading("customer", text="Customer")
+        self.order_tree.heading("city", text="City")
+        self.order_tree.heading("status", text="Status")
+        self.order_tree.heading("total", text="Total")
+        self.order_tree.heading("processed", text="Processed")
 
-        # Base directory
-        ttk.Label(config_frame, text="Save Location:").grid(row=2, column=0, sticky=tk.W, pady=5)
-        self.base_dir_var = tk.StringVar(value=self.config.config['monitoring']['base_directory'])
-        base_dir_entry = ttk.Entry(config_frame, textvariable=self.base_dir_var)
-        base_dir_entry.grid(row=2, column=1, sticky=(tk.W, tk.E), padx=5, pady=5)
-        ttk.Button(config_frame, text="Browse", command=self.browse_directory).grid(row=2, column=2, padx=5)
+        self.order_tree.column("order_num", width=80, anchor="center")
+        self.order_tree.column("date", width=100, anchor="center")
+        self.order_tree.column("customer", width=180)
+        self.order_tree.column("city", width=120)
+        self.order_tree.column("status", width=100, anchor="center")
+        self.order_tree.column("total", width=80, anchor="e")
+        self.order_tree.column("processed", width=80, anchor="center")
 
-        # Monitor options
-        options_frame = ttk.Frame(config_frame)
-        options_frame.grid(row=3, column=1, sticky=tk.W, pady=5)
+        tree_scroll = ttk.Scrollbar(orders_frame, orient="vertical", command=self.order_tree.yview)
+        self.order_tree.config(yscrollcommand=tree_scroll.set)
+        self.order_tree.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        tree_scroll.grid(row=0, column=1, sticky="ns")
 
-        self.download_invoices_var = tk.BooleanVar(value=self.config.config['monitoring'].get('download_invoices', True))
-        ttk.Checkbutton(options_frame, text="Generate Invoices",
-                       variable=self.download_invoices_var).grid(row=0, column=0, padx=5)
+        # Color tags for statuses
+        self.order_tree.tag_configure("processing", foreground="#3b82f6")
+        self.order_tree.tag_configure("completed", foreground="#22c55e")
+        self.order_tree.tag_configure("on-hold", foreground="#f59e0b")
+        self.order_tree.tag_configure("cancelled", foreground="#ef4444")
+        self.order_tree.tag_configure("refunded", foreground="#a855f7")
+        self.order_tree.tag_configure("pending", foreground="#8b949e")
 
-        self.download_labels_var = tk.BooleanVar(value=self.config.config['monitoring'].get('download_labels', True))
-        ttk.Checkbutton(options_frame, text="Download Labels",
-                       variable=self.download_labels_var).grid(row=0, column=1, padx=5)
+        # Double-click to open folder
+        self.order_tree.bind("<Double-1>", self.on_order_double_click)
 
-        # Settings button
-        ttk.Button(config_frame, text="⚙ Advanced Settings",
-                  command=self.open_settings).grid(row=4, column=1, sticky=tk.E, pady=5)
+        # Status change bar below table
+        status_bar = ttk.Frame(orders_frame)
+        status_bar.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(8, 0))
 
-        # Status log
+        ttk.Label(status_bar, text="Change status to:").pack(side=tk.LEFT, padx=(0, 5))
+        self.status_change_var = tk.StringVar(value="completed")
+        status_combo = ttk.Combobox(status_bar, textvariable=self.status_change_var,
+                                    values=["processing", "completed", "on-hold", "cancelled", "refunded", "pending"],
+                                    state="readonly", width=14)
+        status_combo.pack(side=tk.LEFT, padx=(0, 5))
+
+        ttk.Button(status_bar, text="Update Status",
+                  command=self.change_order_status, width=14).pack(side=tk.LEFT, padx=5)
+
+        # Separator
+        ttk.Separator(status_bar, orient="vertical").pack(side=tk.LEFT, fill="y", padx=10, pady=2)
+
+        ttk.Button(status_bar, text="View Invoice",
+                  command=self.view_invoice, width=12).pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(status_bar, text="Create Folder",
+                  command=self.create_order_folder, width=12).pack(side=tk.LEFT, padx=5)
+
+        self.order_count_label = ttk.Label(status_bar, text="")
+        self.order_count_label.pack(side=tk.RIGHT)
+
+        # Activity log (smaller)
         log_frame = ttk.LabelFrame(main_frame, text="Activity Log", padding="10")
-        log_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        log_frame.grid(row=3, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
 
-        self.log_text = scrolledtext.ScrolledText(log_frame, height=20, wrap=tk.WORD)
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=8, wrap=tk.WORD)
         self.log_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 
         # Configure text tags for colors
@@ -1249,17 +1343,195 @@ class OrderMonitorGUI:
 
         # Statistics panel
         stats_frame = ttk.Frame(main_frame)
-        stats_frame.grid(row=3, column=0, sticky=(tk.W, tk.E), pady=(10, 0))
+        stats_frame.grid(row=4, column=0, sticky=(tk.W, tk.E), pady=(10, 0))
 
         self.stats_label = ttk.Label(stats_frame, text="Ready to start monitoring")
         self.stats_label.pack(side=tk.LEFT)
 
-    def browse_directory(self):
-        """Browse for save directory"""
-        from tkinter import filedialog
-        directory = filedialog.askdirectory(initialdir=self.base_dir_var.get())
-        if directory:
-            self.base_dir_var.set(directory)
+    def update_order_list(self, orders: List[Dict]):
+        """Update the order table from background thread"""
+        self.orders_cache = orders
+        self.root.after(0, self._refresh_order_tree, orders)
+
+    def _refresh_order_tree(self, orders: List[Dict]):
+        """Refresh the Treeview with order data (must run on main thread)"""
+        # Remember selection
+        selected_ids = set()
+        for item in self.order_tree.selection():
+            vals = self.order_tree.item(item, "values")
+            if vals:
+                selected_ids.add(vals[0])  # order number
+
+        self.order_tree.delete(*self.order_tree.get_children())
+
+        for order in orders:
+            order_number = str(order.get('number', order['id']))
+            date_str = order.get('date_created', '')[:10]
+            billing = order.get('billing', {})
+            customer = f"{billing.get('first_name', '')} {billing.get('last_name', '')}".strip()
+            city = billing.get('city', '')
+            status = order.get('status', '')
+            currency = order.get('currency_symbol', order.get('currency', ''))
+            total = f"{currency}{order.get('total', '0.00')}"
+            is_processed = "Yes" if self.monitor.tracker.is_processed(str(order['id'])) else ""
+
+            item_id = self.order_tree.insert("", "end", values=(
+                order_number, date_str, customer, city, status, total, is_processed
+            ), tags=(status,))
+
+            # Restore selection
+            if order_number in selected_ids:
+                self.order_tree.selection_add(item_id)
+
+        self.order_count_label.config(text=f"{len(orders)} order(s)")
+
+    def on_order_double_click(self, event):
+        """Open order folder on double-click"""
+        selection = self.order_tree.selection()
+        if not selection:
+            return
+        values = self.order_tree.item(selection[0], "values")
+        if not values:
+            return
+
+        order_id_str = values[0]  # order number
+
+        # Find the order in cache to look up folder
+        for order in self.orders_cache:
+            if str(order.get('number', order['id'])) == order_id_str:
+                # Check tracker for folder path
+                tracker_data = self.monitor.tracker.processed_orders.get(str(order['id']))
+                if tracker_data and tracker_data.get('folder_path'):
+                    folder = Path(tracker_data['folder_path'])
+                    if folder.exists():
+                        os.startfile(str(folder))
+                        return
+                # Try to find folder by order number
+                found = self.monitor._find_order_folder(order)
+                if found and found.exists():
+                    os.startfile(str(found))
+                    return
+
+        self.update_status("No folder found for this order", "warning")
+
+    def change_order_status(self):
+        """Change status of selected order(s)"""
+        selection = self.order_tree.selection()
+        if not selection:
+            messagebox.showinfo("No Selection", "Please select one or more orders.")
+            return
+
+        new_status = self.status_change_var.get()
+        order_numbers = []
+        for item in selection:
+            vals = self.order_tree.item(item, "values")
+            if vals:
+                order_numbers.append(vals[0])
+
+        if not messagebox.askyesno("Confirm",
+                f"Change status of {len(order_numbers)} order(s) to '{new_status}'?"):
+            return
+
+        def do_update():
+            for order_num in order_numbers:
+                for order in self.orders_cache:
+                    if str(order.get('number', order['id'])) == order_num:
+                        result = self.monitor.wc_client.update_order_status(order['id'], new_status)
+                        if result:
+                            self.update_status(f"Order #{order_num} -> {new_status}", "success")
+                        else:
+                            self.update_status(f"Failed to update order #{order_num}", "error")
+                        break
+            # Refresh the order list
+            self.monitor.check_orders()
+
+        threading.Thread(target=do_update, daemon=True).start()
+
+    def _get_selected_order(self) -> Optional[Dict]:
+        """Get the first selected order from cache"""
+        selection = self.order_tree.selection()
+        if not selection:
+            messagebox.showinfo("No Selection", "Please select an order.")
+            return None
+        values = self.order_tree.item(selection[0], "values")
+        if not values:
+            return None
+        order_num = values[0]
+        for order in self.orders_cache:
+            if str(order.get('number', order['id'])) == order_num:
+                return order
+        return None
+
+    def view_invoice(self):
+        """Download and open invoice PDF for the selected order"""
+        order = self._get_selected_order()
+        if not order:
+            return
+
+        order_number = order.get('number', order['id'])
+
+        # Check if invoice already exists locally (in tracker)
+        tracker_data = self.monitor.tracker.processed_orders.get(str(order['id']))
+        if tracker_data and tracker_data.get('documents', {}).get('invoice'):
+            invoice_path = Path(tracker_data['documents']['invoice'])
+            if invoice_path.exists():
+                self.update_status(f"Opening local invoice for order #{order_number}", "info")
+                os.startfile(str(invoice_path))
+                return
+
+        # Check if monitor_secret_key is configured
+        secret = self.config.config['woocommerce'].get('monitor_secret_key', '')
+        if not secret:
+            self.update_status(
+                "Cannot download invoice: monitor_secret_key not configured in Advanced Settings",
+                "error")
+            return
+
+        # Download to temp and open
+        self.update_status(f"Downloading invoice for order #{order_number}...", "info")
+
+        def do_download():
+            import tempfile
+            temp_path = Path(tempfile.gettempdir()) / f"Invoice_{order_number}.pdf"
+            if self.monitor.wc_client.download_invoice_pdf(order['id'], temp_path):
+                self.update_status(f"Invoice #{order_number} downloaded and opened", "success")
+                os.startfile(str(temp_path))
+            else:
+                self.update_status(
+                    f"Failed to download invoice for order #{order_number} — "
+                    "check that the pipeline_get_invoice PHP endpoint is set up on your server",
+                    "error")
+
+        threading.Thread(target=do_download, daemon=True).start()
+
+    def create_order_folder(self):
+        """Create folder structure and download documents for selected order(s)"""
+        selection = self.order_tree.selection()
+        if not selection:
+            messagebox.showinfo("No Selection", "Please select one or more orders.")
+            return
+
+        order_numbers = []
+        for item in selection:
+            vals = self.order_tree.item(item, "values")
+            if vals:
+                order_numbers.append(vals[0])
+
+        def do_process():
+            for order_num in order_numbers:
+                for order in self.orders_cache:
+                    if str(order.get('number', order['id'])) == order_num:
+                        order_id = str(order['id'])
+                        if self.monitor.tracker.is_processed(order_id):
+                            self.update_status(f"Order #{order_num} already processed", "info")
+                        else:
+                            self.monitor.process_order(order)
+                        break
+            # Refresh the table to update Processed column
+            if self.orders_cache:
+                self.update_order_list(self.orders_cache)
+
+        threading.Thread(target=do_process, daemon=True).start()
 
     def check_initial_config(self):
         """Check if configuration is complete"""
@@ -1457,13 +1729,8 @@ class OrderMonitorGUI:
         ttk.Button(btn_frame, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT)
 
     def save_current_config(self):
-        """Save current configuration from GUI"""
+        """Save current configuration"""
         try:
-            self.config.config['woocommerce']['url'] = self.url_var.get()
-            self.config.config['monitoring']['poll_interval'] = int(self.interval_var.get())
-            self.config.config['monitoring']['base_directory'] = self.base_dir_var.get()
-            self.config.config['monitoring']['download_invoices'] = self.download_invoices_var.get()
-            self.config.config['monitoring']['download_labels'] = self.download_labels_var.get()
             self.config.save_config()
         except Exception as e:
             self.update_status(f"Error saving config: {e}", "error")
@@ -1516,7 +1783,7 @@ class SettingsDialog:
             "1. Log in to WordPress admin\n"
             "2. Go to WooCommerce → Settings → Advanced → REST API\n"
             "3. Click 'Add key'\n"
-            "4. Set description and permissions to 'Read'\n"
+            "4. Set description and permissions to 'Read/Write'\n"
             "5. Copy Consumer Key and Secret here\n\n"
             "Monitor Secret Key (optional):\n"
             "Only needed for bpost label database queries.\n"
@@ -1530,9 +1797,21 @@ class SettingsDialog:
 
         monitor_config = self.config.config['monitoring']
 
-        ttk.Label(monitor_frame, text="Check orders from last (hours):").grid(row=0, column=0, sticky=tk.W, pady=5)
-        self.check_hours_var = tk.StringVar(value=str(monitor_config['check_orders_since_hours']))
-        ttk.Entry(monitor_frame, textvariable=self.check_hours_var, width=10).grid(row=0, column=1, sticky=tk.W, pady=5)
+        ttk.Label(monitor_frame, text="Poll Interval (seconds):").grid(row=0, column=0, sticky=tk.W, pady=5)
+        self.poll_interval_var = tk.StringVar(value=str(monitor_config.get('poll_interval', 300)))
+        ttk.Entry(monitor_frame, textvariable=self.poll_interval_var, width=10).grid(row=0, column=1, sticky=tk.W, pady=5)
+
+        ttk.Label(monitor_frame, text="Save Location:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.base_dir_var = tk.StringVar(value=monitor_config.get('base_directory', ''))
+        ttk.Entry(monitor_frame, textvariable=self.base_dir_var, width=50).grid(row=1, column=1, sticky=tk.W, pady=5)
+
+        self.download_invoices_var = tk.BooleanVar(value=monitor_config.get('download_invoices', True))
+        ttk.Checkbutton(monitor_frame, text="Download/File Invoices",
+                       variable=self.download_invoices_var).grid(row=2, column=1, sticky=tk.W, pady=5)
+
+        self.download_labels_var = tk.BooleanVar(value=monitor_config.get('download_labels', True))
+        ttk.Checkbutton(monitor_frame, text="Download Shipping Labels",
+                       variable=self.download_labels_var).grid(row=3, column=1, sticky=tk.W, pady=5)
 
         # Filters tab
         filter_frame = ttk.Frame(notebook, padding="10")
@@ -1559,7 +1838,10 @@ class SettingsDialog:
             self.config.config['woocommerce']['consumer_key'] = self.consumer_key_var.get()
             self.config.config['woocommerce']['consumer_secret'] = self.consumer_secret_var.get()
             self.config.config['woocommerce']['monitor_secret_key'] = self.monitor_secret_var.get()
-            self.config.config['monitoring']['check_orders_since_hours'] = int(self.check_hours_var.get())
+            self.config.config['monitoring']['poll_interval'] = int(self.poll_interval_var.get())
+            self.config.config['monitoring']['base_directory'] = self.base_dir_var.get()
+            self.config.config['monitoring']['download_invoices'] = self.download_invoices_var.get()
+            self.config.config['monitoring']['download_labels'] = self.download_labels_var.get()
 
             statuses = [s.strip() for s in self.statuses_var.get().split(',') if s.strip()]
             self.config.config['filters']['order_statuses'] = statuses
