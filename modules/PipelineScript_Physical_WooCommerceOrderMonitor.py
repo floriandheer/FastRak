@@ -408,6 +408,38 @@ class WooCommerceClient:
 
         return True
 
+    def update_invoice_number(self, order_id: int, new_number: str) -> Optional[Dict]:
+        """Update the invoice number on a WooCommerce order (WooCommerce PDF Invoices plugin).
+
+        Updates both _wcpdf_invoice_number (formatted string) and
+        _wcpdf_invoice_number_data (structured data the plugin reads when
+        generating the PDF).
+        """
+        try:
+            # Build the number_data structure that WCPDF expects
+            number_data = {
+                "number": int(new_number) if new_number.isdigit() else new_number,
+                "formatted_number": str(new_number),
+                "prefix": "",
+                "suffix": "",
+            }
+
+            response = self.session.put(
+                f"{self.api_url}/orders/{order_id}",
+                json={
+                    "meta_data": [
+                        {"key": "_wcpdf_invoice_number", "value": str(new_number)},
+                        {"key": "_wcpdf_invoice_number_data", "value": number_data},
+                    ]
+                }
+            )
+            response.raise_for_status()
+            logger.info(f"Updated invoice number for order {order_id} to '{new_number}'")
+            return response.json()
+        except Exception as e:
+            logger.error(f"Failed to update invoice number for order {order_id}: {e}")
+            return None
+
     def has_bpost_shipping(self, order: Dict) -> bool:
         """Check if order uses bpost shipping"""
         for shipping_line in order.get('shipping_lines', []):
@@ -784,7 +816,7 @@ class InvoiceFiler:
         clean_name = client_name.replace(" ", "").replace("_", "")
         for ch in '<>:"/\\|?*':
             clean_name = clean_name.replace(ch, "")
-        return f"3D_{date_part}_Factuur{invoice_number}_{clean_name}.pdf"
+        return f"3D_{date_part}_Factuur{int(invoice_number):03d}_{clean_name}.pdf"
 
     def _find_outgoing_folder(self, project_folder: Path) -> Optional[Path]:
         """Find the outgoing folder (e.g. 03_Outgoing) in a project folder."""
@@ -899,6 +931,66 @@ class InvoiceFiler:
         except Exception as e:
             logger.error(f"Failed to file invoice for order #{order_number}: {e}")
             return None
+
+    def refile_invoice(self, order: Dict, project_folder: Path) -> Optional[Path]:
+        """
+        Re-download and re-file an invoice, removing the old PDF and shortcut first.
+
+        Useful after changing the invoice number or when the invoice content
+        has been updated on the server.
+        """
+        order_id = order['id']
+        order_number = order.get('number', order_id)
+
+        try:
+            # Remove old invoice PDF and shortcut from Boekhouding / project folder
+            self._cleanup_old_invoice(order, project_folder)
+
+            # File the (new) invoice
+            return self.file_invoice(order, project_folder)
+
+        except Exception as e:
+            logger.error(f"Failed to refile invoice for order #{order_number}: {e}")
+            return None
+
+    def _cleanup_old_invoice(self, order: Dict, project_folder: Path):
+        """Remove existing invoice PDF in Boekhouding and .lnk shortcut in project folder."""
+        order_number = order.get('number', order['id'])
+        try:
+            # Look for any invoice PDF matching this order in the Boekhouding tree
+            invoice_date = order.get('date_created', '')[:10]
+            if not invoice_date:
+                return
+            quarter_dir = self._get_quarter_dir(invoice_date)
+            if quarter_dir.exists():
+                for f in quarter_dir.iterdir():
+                    # Match by order number or old invoice number in filename
+                    if f.is_file() and f.suffix == '.pdf' and f.name.startswith('3D_'):
+                        # Check if this PDF belongs to the order — the filename
+                        # contains the client name which we can match
+                        billing = order.get('billing', {})
+                        client_name = (billing.get('last_name', '') or
+                                       billing.get('first_name', '') or '')
+                        clean_name = client_name.replace(" ", "").replace("_", "")
+                        if clean_name and clean_name in f.name:
+                            logger.info(f"Removing old invoice: {f}")
+                            f.unlink()
+
+            # Remove old .lnk shortcuts in outgoing folder
+            outgoing = self._find_outgoing_folder(project_folder)
+            if outgoing and outgoing.exists():
+                for f in outgoing.iterdir():
+                    if f.is_file() and f.suffix == '.lnk' and 'Factuur' in f.name:
+                        billing = order.get('billing', {})
+                        client_name = (billing.get('last_name', '') or
+                                       billing.get('first_name', '') or '')
+                        clean_name = client_name.replace(" ", "").replace("_", "")
+                        if clean_name and clean_name in f.name:
+                            logger.info(f"Removing old shortcut: {f}")
+                            f.unlink()
+
+        except Exception as e:
+            logger.warning(f"Cleanup of old invoice for order #{order_number} failed: {e}")
 
 
 # ====================================
@@ -1265,10 +1357,11 @@ class OrderMonitorGUI:
         orders_frame.columnconfigure(0, weight=1)
         orders_frame.rowconfigure(0, weight=1)
 
-        columns = ("order_num", "date", "customer", "city", "status", "total", "processed")
+        columns = ("order_num", "invoice_num", "date", "customer", "city", "status", "total", "processed")
         self.order_tree = ttk.Treeview(orders_frame, columns=columns, show="headings", height=12)
 
         self.order_tree.heading("order_num", text="Order #")
+        self.order_tree.heading("invoice_num", text="Invoice #")
         self.order_tree.heading("date", text="Date")
         self.order_tree.heading("customer", text="Customer")
         self.order_tree.heading("city", text="City")
@@ -1277,6 +1370,7 @@ class OrderMonitorGUI:
         self.order_tree.heading("processed", text="Processed")
 
         self.order_tree.column("order_num", width=80, anchor="center")
+        self.order_tree.column("invoice_num", width=80, anchor="center")
         self.order_tree.column("date", width=100, anchor="center")
         self.order_tree.column("customer", width=180)
         self.order_tree.column("city", width=120)
@@ -1319,6 +1413,12 @@ class OrderMonitorGUI:
 
         ttk.Button(status_bar, text="View Invoice",
                   command=self.view_invoice, width=12).pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(status_bar, text="Change Invoice #",
+                  command=self.change_invoice_number, width=14).pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(status_bar, text="Refile Invoice",
+                  command=self.refile_invoices, width=12).pack(side=tk.LEFT, padx=5)
 
         ttk.Button(status_bar, text="Create Folder",
                   command=self.create_order_folder, width=12).pack(side=tk.LEFT, padx=5)
@@ -1364,6 +1464,8 @@ class OrderMonitorGUI:
 
         self.order_tree.delete(*self.order_tree.get_children())
 
+        invoice_numbers_seen = []  # (int_value, order_number) for consistency check
+
         for order in orders:
             order_number = str(order.get('number', order['id']))
             date_str = order.get('date_created', '')[:10]
@@ -1375,8 +1477,20 @@ class OrderMonitorGUI:
             total = f"{currency}{order.get('total', '0.00')}"
             is_processed = "Yes" if self.monitor.tracker.is_processed(str(order['id'])) else ""
 
+            # Extract invoice number from WooCommerce PDF Invoices metadata
+            invoice_num = ""
+            for meta in order.get('meta_data', []):
+                if meta.get('key') == '_wcpdf_invoice_number':
+                    invoice_num = str(meta.get('value', ''))
+                    break
+            if invoice_num:
+                try:
+                    invoice_numbers_seen.append((int(invoice_num), order_number))
+                except ValueError:
+                    pass
+
             item_id = self.order_tree.insert("", "end", values=(
-                order_number, date_str, customer, city, status, total, is_processed
+                order_number, invoice_num, date_str, customer, city, status, total, is_processed
             ), tags=(status,))
 
             # Restore selection
@@ -1384,6 +1498,18 @@ class OrderMonitorGUI:
                 self.order_tree.selection_add(item_id)
 
         self.order_count_label.config(text=f"{len(orders)} order(s)")
+
+        # Invoice number consistency check — detect gaps in the sequence
+        if invoice_numbers_seen:
+            invoice_numbers_seen.sort(key=lambda x: x[0])
+            nums = [n for n, _ in invoice_numbers_seen]
+            expected = set(range(min(nums), max(nums) + 1))
+            missing = sorted(expected - set(nums))
+            if missing:
+                gap_str = ", ".join(str(n) for n in missing)
+                self.update_status(
+                    f"Invoice gap detected! Missing invoice number(s): {gap_str}",
+                    "warning")
 
     def on_order_double_click(self, event):
         """Open order folder on double-click"""
@@ -1504,6 +1630,139 @@ class OrderMonitorGUI:
 
         threading.Thread(target=do_download, daemon=True).start()
 
+    def change_invoice_number(self):
+        """Show dialog to change the invoice number for the selected order."""
+        order = self._get_selected_order()
+        if not order:
+            return
+
+        order_number = order.get('number', order['id'])
+
+        # Get current invoice number from metadata
+        current_invoice = ""
+        for meta in order.get('meta_data', []):
+            if meta.get('key') == '_wcpdf_invoice_number':
+                current_invoice = str(meta.get('value', ''))
+                break
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"Change Invoice # — Order #{order_number}")
+        dialog.geometry("380x150")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        frame = ttk.Frame(dialog, padding="15")
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(frame, text=f"Order #{order_number}").pack(anchor=tk.W)
+
+        row = ttk.Frame(frame)
+        row.pack(fill=tk.X, pady=(10, 0))
+        ttk.Label(row, text="Invoice number:").pack(side=tk.LEFT, padx=(0, 5))
+        invoice_var = tk.StringVar(value=current_invoice)
+        entry = ttk.Entry(row, textvariable=invoice_var, width=20)
+        entry.pack(side=tk.LEFT)
+        entry.select_range(0, tk.END)
+        entry.focus_set()
+
+        def apply():
+            new_number = invoice_var.get().strip()
+            if not new_number:
+                messagebox.showwarning("Empty", "Please enter an invoice number.", parent=dialog)
+                return
+            if new_number == current_invoice:
+                dialog.destroy()
+                return
+            dialog.destroy()
+
+            def do_update():
+                self.update_status(f"Updating invoice number for order #{order_number} to {new_number}...", "info")
+                result = self.monitor.wc_client.update_invoice_number(order['id'], new_number)
+                if result:
+                    # Update the cached order meta so subsequent actions see the new number
+                    for meta in order.get('meta_data', []):
+                        if meta.get('key') == '_wcpdf_invoice_number':
+                            meta['value'] = new_number
+                            break
+                    else:
+                        order.setdefault('meta_data', []).append(
+                            {'key': '_wcpdf_invoice_number', 'value': new_number})
+                    self.update_status(
+                        f"Invoice number for order #{order_number} changed to {new_number}", "success")
+                else:
+                    self.update_status(
+                        f"Failed to update invoice number for order #{order_number}", "error")
+
+            threading.Thread(target=do_update, daemon=True).start()
+
+        dialog.bind("<Return>", lambda e: apply())
+
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack(fill=tk.X, pady=(15, 0))
+        ttk.Button(btn_frame, text="Apply", command=apply).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT)
+
+    def refile_invoices(self):
+        """Re-download and re-file invoices for selected order(s)."""
+        selection = self.order_tree.selection()
+        if not selection:
+            messagebox.showinfo("No Selection", "Please select one or more orders.")
+            return
+
+        order_numbers = []
+        for item in selection:
+            vals = self.order_tree.item(item, "values")
+            if vals:
+                order_numbers.append(vals[0])
+
+        count = len(order_numbers)
+        if not messagebox.askyesno("Confirm",
+                f"Re-download and refile invoice{'s' if count > 1 else ''} "
+                f"for {count} order{'s' if count > 1 else ''}?\n\n"
+                "This will fetch fresh data from WooCommerce,\n"
+                "remove the old PDF from Boekhouding, and file the new one."):
+            return
+
+        def do_refile():
+            success = 0
+            failed = 0
+            for order_num in order_numbers:
+                for cached_order in self.orders_cache:
+                    if str(cached_order.get('number', cached_order['id'])) == order_num:
+                        order_id = cached_order['id']
+
+                        # Re-fetch order from API to get current metadata
+                        self.update_status(f"Fetching order #{order_num} from WooCommerce...", "info")
+                        order = self.monitor.wc_client.get_order_details(order_id)
+                        if not order:
+                            self.update_status(f"Failed to fetch order #{order_num}", "error")
+                            failed += 1
+                            break
+
+                        # Find or create the order folder
+                        project_folder = self.monitor._find_order_folder(order)
+                        if not project_folder:
+                            project_folder = self.monitor.doc_manager.create_order_folder(order)
+                            self.update_status(f"Created folder for order #{order_num}", "info")
+
+                        # Refile
+                        filed_path = self.monitor.invoice_filer.refile_invoice(order, project_folder)
+                        if filed_path:
+                            success += 1
+                            self.update_status(
+                                f"✓ Refiled invoice for order #{order_num}: {filed_path.name}",
+                                "success")
+                        else:
+                            failed += 1
+                            self.update_status(
+                                f"✗ Failed to refile invoice for order #{order_num}", "error")
+                        break
+
+            self.update_status(
+                f"Refile complete: {success} succeeded, {failed} failed", "success" if not failed else "warning")
+
+        threading.Thread(target=do_refile, daemon=True).start()
+
     def create_order_folder(self):
         """Create folder structure and download documents for selected order(s)"""
         selection = self.order_tree.selection()
@@ -1534,13 +1793,16 @@ class OrderMonitorGUI:
         threading.Thread(target=do_process, daemon=True).start()
 
     def check_initial_config(self):
-        """Check if configuration is complete"""
+        """Check if configuration is complete and auto-refresh"""
         wc_config = self.config.config['woocommerce']
         if not wc_config['consumer_key'] or not wc_config['consumer_secret']:
             if messagebox.askyesno("Configuration Required",
                                    "WooCommerce API credentials not configured.\n\n"
                                    "Would you like to configure them now?"):
                 self.open_settings()
+        else:
+            # Auto-refresh order list on startup
+            self.check_now()
 
     def open_settings(self):
         """Open settings dialog"""
