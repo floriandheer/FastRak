@@ -24,7 +24,11 @@ CORE_PACKAGES = [
 
 # Desktop-specific dependencies (tkinter app)
 # Note: tkinter is included with Python by default
-DESKTOP_PACKAGES = []
+DESKTOP_PACKAGES = [
+    {"name": "setuptools", "pip_name": "setuptools<81", "description": "Required by invoice2data (pkg_resources)"},
+    {"name": "pdfplumber", "pip_name": "pdfplumber>=0.9.0", "description": "PDF text extraction for invoice processing"},
+    {"name": "invoice2data", "pip_name": "invoice2data>=0.4.0", "description": "Template-based invoice data extraction"},
+]
 
 # Web-specific dependencies (not currently used)
 WEB_PACKAGES = []

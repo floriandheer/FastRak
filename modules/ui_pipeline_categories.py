@@ -196,17 +196,17 @@ BUSINESS_CATEGORIES = {
                 "description": "Create folder structure for bookkeeping and financial records",
                 "icon": "📋"
             },
-            "invoice_renamer": {
-                "name": "Invoice Renamer",
-                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Bookkeeping_InvoiceRenamer.py"),
-                "description": "Automatically rename invoices to standardized format: FAC_YY-MM-DD_CompanyName",
-                "icon": "📄"
-            },
             "inside_tracker": {
                 "name": "Inside Tracker",
                 "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Business_InsideTracker.py"),
                 "description": "Monitor and download politician stock trade filings (PTR) from House Clerk",
                 "icon": "📊"
+            },
+            "invoice_checker": {
+                "name": "Invoice Checker",
+                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Business_InvoiceChecker.py"),
+                "description": "Check of alle verwachte kwartaalfacturen aanwezig zijn",
+                "icon": "🔍"
             }
         },
         "subcategories": {}

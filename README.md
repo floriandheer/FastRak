@@ -27,6 +27,9 @@ The Pipeline-Manager is a toolkit designed to streamline various creative and bu
 ### Python Dependencies
 - `pillow>=10.0.0` - Image processing and logo display
 - `pyexiv2>=2.8.0` - EXIF metadata handling for images
+- `setuptools<81` - Required by invoice2data (Python 3.13+ removed `pkg_resources`)
+- `pdfplumber>=0.9.0` - PDF text extraction for invoice processing
+- `invoice2data>=0.4.0` - Template-based invoice data extraction
 - `tkinter` - GUI framework (included with Python)
 
 ### External Software Dependencies
@@ -162,6 +165,7 @@ The Pipeline Manager includes 14+ specialized scripts organized by category:
 #### 📊 Business & Bookkeeping
 - **Create Bookkeeping Folder Structure** - Financial organization structure
 - **Invoice Renamer** - Automatically rename and organize invoices
+- **Invoice Checker** - Quarterly & yearly invoice verification with duplicate detection, naming validation, and auto-rename using [invoice2data](https://github.com/invoice-x/invoice2data) templates
 
 #### 🔧 Global Utilities
 - **Cleanup Tool** - System-wide cleanup and maintenance utilities

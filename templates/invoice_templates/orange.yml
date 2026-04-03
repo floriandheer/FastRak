@@ -1,0 +1,25 @@
+issuer: Orange
+keywords:
+  - Orange
+required_fields:
+  - date
+  - issuer
+fields:
+  date:
+    parser: regex
+    regex:
+      - (?:Factuurdatum|Datum factuur|aanrekening van|Date de facturation)[:\s]*(\d{1,2}\s*\w+\s*\d{4})
+      - (?:Factuurdatum|Datum|Date)[:\s]*(\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{4})
+      - (?:Voor|Date)[:\s]*(\d{1,2}\s+\w+\s+\d{4})
+    type: date
+  invoice_number:
+    parser: regex
+    regex: (?:Documentnummer|Factuurnummer|Nummer)[:\s]*(\S+)
+options:
+  currency: EUR
+  date_formats:
+    - '%d %B %Y'
+    - '%d %b %Y'
+    - '%d/%m/%Y'
+    - '%d-%m-%Y'
+    - '%d.%m.%Y'

@@ -1,0 +1,23 @@
+issuer: Bpost
+keywords:
+  - bpost
+required_fields:
+  - date
+  - issuer
+fields:
+  date:
+    parser: regex
+    regex:
+      - (?:Datum)[:\s]*(\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4})
+      - (?:Datum)[:\s]*(\d{1,2}\s*\w+\s*\d{4})
+    type: date
+  invoice_number:
+    parser: regex
+    regex: (?:Factuur|Factuurnummer)[:\s]*(\S+)
+options:
+  currency: EUR
+  date_formats:
+    - '%d-%m-%y'
+    - '%d-%m-%Y'
+    - '%d/%m/%Y'
+    - '%d %B %Y'

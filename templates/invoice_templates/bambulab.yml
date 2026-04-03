@@ -1,0 +1,25 @@
+issuer: BambuLab
+keywords:
+  - Bambu Lab
+required_fields:
+  - date
+  - issuer
+fields:
+  date:
+    parser: regex
+    regex:
+      - (?:Invoice date|Date|Order date)[:\s]*(\w+\s+\d{1,2},?\s+\d{4})
+      - (?:Invoice date|Date)[:\s]*(\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{4})
+      - (?:Date)[:\s]*(\d{4}[/\-\.]\d{1,2}[/\-\.]\d{1,2})
+      - (?:aanrekening van)[:\s]*(\d{1,2}\s*\w+\s*\d{4})
+    type: date
+  invoice_number:
+    parser: regex
+    regex: (?:Invoice|Order|Invoice #)[:\s]*(\S+)
+options:
+  currency: EUR
+  date_formats:
+    - '%B %d, %Y'
+    - '%b %d, %Y'
+    - '%Y-%m-%d'
+    - '%d/%m/%Y'
