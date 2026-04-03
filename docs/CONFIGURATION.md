@@ -140,13 +140,9 @@ MUSICBEE_PATH = "C:\\Program Files (x86)\\MusicBee"
 ONEDRIVE_PATH = "C:\\Users\\YourName\\OneDrive\\MusicBee"
 ```
 
-### Invoice Renamer Script
+### Invoice Checker
 
-Edit paths in `PipelineScript_Bookkeeping_InvoiceRenamer.py`:
-```python
-DEFAULT_INVOICE_PATH = "I:\\Business\\Invoices"
-ARCHIVE_PATH = "I:\\Business\\Archive"
-```
+The Invoice Checker uses invoice2data with custom YAML templates for automatic invoice renaming. Templates are stored in `templates/invoice_templates/`. To add a new vendor, create a `.yml` file with `issuer`, `keywords`, and `fields.date` entries.
 
 ## Logging Configuration
 

@@ -1,0 +1,24 @@
+issuer: OVHcloud
+keywords:
+  - OVH
+required_fields:
+  - date
+  - issuer
+fields:
+  date:
+    parser: regex
+    regex:
+      - (?:Factuurdatum|Date|Datum)[:\s]*(\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{4})
+      - (?:Date|Datum)[:\s]*(\d{1,2}\s*\w+\s*\d{4})
+      - (?:aanrekening van)[:\s]*(\d{1,2}\s*\w+\s*\d{4})
+    type: date
+  invoice_number:
+    parser: regex
+    regex: (?:Factuurnummer|Invoice|Factuur)[:\s#]*(\S+)
+options:
+  currency: EUR
+  date_formats:
+    - '%d/%m/%Y'
+    - '%d-%m-%Y'
+    - '%d %B %Y'
+    - '%d %b %Y'

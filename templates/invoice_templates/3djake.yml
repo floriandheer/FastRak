@@ -1,0 +1,22 @@
+issuer: 3DJake
+keywords:
+  - 3djake
+required_fields:
+  - date
+  - issuer
+fields:
+  date:
+    parser: regex
+    regex:
+      - (?:Rech\.-Datum|Datum|Date)\s*(\d{1,2}\.\d{1,2}\.\d{4})
+      - (?:Rech\.-Datum|Datum|Date)\s*(\d{1,2}[/\-]\d{1,2}[/\-]\d{4})
+    type: date
+  invoice_number:
+    parser: regex
+    regex: (?:Rech\.-Nr\.|Rechnungsnummer|Invoice)\s*\.?\s*(\S+)
+options:
+  currency: EUR
+  date_formats:
+    - '%d.%m.%Y'
+    - '%d/%m/%Y'
+    - '%d-%m-%Y'

@@ -1,0 +1,23 @@
+issuer: Apple
+keywords:
+  - Apple Distribution
+required_fields:
+  - date
+  - issuer
+fields:
+  date:
+    parser: regex
+    regex:
+      - (?:Factuurdatum|Invoice date)[:\s]*(\d{1,2}[\.\/\-]\d{1,2}[\.\/\-]\d{4})
+      - (?:Factuurdatum|Invoice date)[:\s]*(\d{1,2}\s*\w+\s*\d{4})
+    type: date
+  invoice_number:
+    parser: regex
+    regex: (?:Factuurnummer|Invoice number)[:\s]*(\S+)
+options:
+  currency: EUR
+  date_formats:
+    - '%d.%m.%Y'
+    - '%d/%m/%Y'
+    - '%d-%m-%Y'
+    - '%d %B %Y'

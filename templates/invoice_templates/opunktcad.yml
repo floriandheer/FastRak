@@ -1,0 +1,22 @@
+issuer: OPunktCAD
+keywords:
+  - O-Punkt CAD
+required_fields:
+  - date
+  - issuer
+fields:
+  date:
+    parser: regex
+    regex:
+      - (?:Datum|Date)[:\s]*(\d{1,2}[\.\/\-]\d{1,2}[\.\/\-]\d{4})
+      - (?:Datum|Date)[:\s]*(\d{1,2}\s*\w+\s*\d{4})
+    type: date
+  invoice_number:
+    parser: regex
+    regex: (?:Rechnung Nr\.|Rechnungsnummer|Invoice)[:\s\.]*(\S+)
+options:
+  currency: EUR
+  date_formats:
+    - '%d.%m.%Y'
+    - '%d/%m/%Y'
+    - '%d-%m-%Y'
