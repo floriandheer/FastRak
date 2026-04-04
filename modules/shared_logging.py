@@ -120,7 +120,9 @@ def setup_logging(
     module_name: str,
     level: int = logging.INFO,
     include_console: bool = True,
-    log_dir: str = None
+    log_dir: str = None,
+    file_level: int = None,
+    console_level: int = None
 ) -> logging.Logger:
     """
     Configure logging for a module. Call this in main().
@@ -130,18 +132,25 @@ def setup_logging(
 
     Args:
         module_name: Name of the module (used in log filename and logger name)
-        level: Logging level (default: INFO)
+        level: Logging level for the logger itself (default: INFO)
         include_console: Whether to also log to console (default: True)
         log_dir: Custom log directory (default: ~/AppData/Local/PipelineManager/logs)
+        file_level: Logging level for the file handler (default: same as level)
+        console_level: Logging level for the console handler (default: same as level)
 
     Returns:
         Configured logger instance
     """
     if log_dir is None:
         log_dir = LOG_DIR
+    if file_level is None:
+        file_level = level
+    if console_level is None:
+        console_level = level
 
     logger = logging.getLogger(module_name)
-    logger.setLevel(level)
+    # Set logger to the lowest level so both handlers can filter independently
+    logger.setLevel(min(level, file_level, console_level))
 
     # Clear any existing handlers to avoid duplicates
     logger.handlers = []
@@ -152,14 +161,14 @@ def setup_logging(
     # Add deferred file handler (creates file only when first log message is written)
     file_handler = DeferredFileHandler(log_dir, module_name)
     file_handler.setFormatter(formatter)
-    file_handler.setLevel(level)
+    file_handler.setLevel(file_level)
     logger.addHandler(file_handler)
 
     # Add console handler if requested
     if include_console:
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setFormatter(formatter)
-        console_handler.setLevel(level)
+        console_handler.setLevel(console_level)
         logger.addHandler(console_handler)
 
     return logger
