@@ -204,10 +204,12 @@ def _strip_dots_and_spaces(s):
 # Patterns that look for an invoice date label followed by a date,
 # tolerating dots and spaces mixed into the value (common in dotted PDFs).
 _LABEL_DATE_PATTERNS = [
-    # "Invoice date<dots/spaces>Oct 31, 2025" or "Factuurdatum<dots/spaces>4 okt 2025"
+    # "Invoice date Oct 31, 2025" or "Factuurdatum 4 okt 2025"
+    # Text is already cleaned by _clean_dotted_text, so no need for
+    # permissive dot/space quantifiers (which cause catastrophic backtracking).
     re.compile(
         r'(?:Invoice\s*date|Factuurdatum)[:\s.]*'
-        r'(\w+)[\s.]+(\d[\d\s.]*\d?)[\s.,]+[\s.]*(\d[\d\s.]*\d)',
+        r'(\w+)\s+(\d{1,2}),?\s+(\d{4})',
         re.IGNORECASE,
     ),
     # "Datum:<spaces>24.11.2025"
@@ -227,7 +229,7 @@ def _extract_date_from_text(text):
     """
     import datetime as dt
 
-    # First pass: look for labelled invoice dates (handles dotted text)
+    # First pass: look for labelled invoice dates
     for pattern in _LABEL_DATE_PATTERNS:
         m = pattern.search(text)
         if m:
@@ -235,9 +237,9 @@ def _extract_date_from_text(text):
             try:
                 if len(groups) == 3 and groups[0].isalpha():
                     # Month-word pattern: "Oct 31 2025"
-                    mo = _parse_month_word(_strip_dots_and_spaces(groups[0]))
-                    d = int(_strip_dots_and_spaces(groups[1]).rstrip(','))
-                    y = int(_strip_dots_and_spaces(groups[2]))
+                    mo = _parse_month_word(groups[0])
+                    d = int(groups[1])
+                    y = int(groups[2])
                     if mo and 2020 <= y <= 2030 and 1 <= d <= 31:
                         return dt.date(y, mo, d)
                 elif len(groups) == 3:
@@ -277,6 +279,60 @@ def _extract_date_from_text(text):
             except (ValueError, IndexError):
                 continue
     return None
+
+
+def _extract_in_subprocess(pdf_path_str, result_queue):
+    """Top-level function for multiprocessing: extract invoice data from a PDF.
+
+    Must be top-level (not a closure) so it can be pickled by multiprocessing.
+    Puts (new_filename_or_None, info_string) onto result_queue.
+    """
+    import datetime as dt
+    from pathlib import Path
+
+    pdf_path = Path(pdf_path_str)
+    try:
+        text = _extract_text_from_pdf(pdf_path)
+        if not text.strip():
+            result_queue.put((None, "No readable text"))
+            return
+
+        # Try invoice2data first
+        i2d_templates = _get_i2d_templates()
+        if i2d_templates:
+            try:
+                kwargs = {"templates": i2d_templates}
+                if i2d_input_module:
+                    kwargs["input_module"] = i2d_input_module
+                result = i2d_extract(str(pdf_path), **kwargs)
+                if result:
+                    issuer = result.get("issuer")
+                    inv_date = result.get("date")
+                    if isinstance(inv_date, dt.datetime):
+                        inv_date = inv_date.date()
+                    if issuer and inv_date:
+                        new_name = _generate_filename(inv_date, issuer)
+                        info = f"{inv_date.strftime('%d/%m/%Y')} | {issuer}"
+                        result_queue.put((new_name, info))
+                        return
+            except Exception:
+                pass
+
+        # Fallback: keyword matching on already-extracted text
+        issuer = _match_vendor_by_keywords(text)
+        if not issuer:
+            result_queue.put((None, "No template matched"))
+            return
+
+        inv_date = _extract_date_from_text(text)
+        if inv_date:
+            new_name = _generate_filename(inv_date, issuer)
+            info = f"{inv_date.strftime('%d/%m/%Y')} | {issuer} (fallback)"
+            result_queue.put((new_name, info))
+        else:
+            result_queue.put((None, f"? | {issuer} (no date found)"))
+    except Exception as e:
+        result_queue.put((None, f"Error: {e}"))
 
 
 def _extract_vendor_from_pdf(pdf_path):
@@ -1132,52 +1188,37 @@ class InvoiceCheckerGUI:
 
     # --- Rename ---
 
-    def _extract_rename_info(self, pdf_path):
+    def _extract_rename_info(self, pdf_path, timeout=15):
         """Extract invoice data via invoice2data and return proposed filename.
 
-        Extracts text first to check if the PDF has readable content.
-        Tries invoice2data for full extraction, falls back to keyword + date matching.
+        Runs extraction in a subprocess so that a stuck regex (which holds the
+        GIL in C code) cannot block the main scan thread.
         Returns (new_filename_or_None, info_string).
         """
-        import datetime as dt
+        import multiprocessing as mp
 
-        # Extract text first — skip heavy processing for image-only PDFs
-        text = _extract_text_from_pdf(pdf_path)
-        if not text.strip():
-            return None, "No readable text"
+        result_queue = mp.Queue()
+        proc = mp.Process(
+            target=_extract_in_subprocess,
+            args=(str(pdf_path), result_queue),
+            daemon=True,
+        )
+        proc.start()
+        proc.join(timeout=timeout)
 
-        # Try invoice2data first
-        i2d_templates = _get_i2d_templates()
-        if i2d_templates:
-            try:
-                kwargs = {"templates": i2d_templates}
-                if i2d_input_module:
-                    kwargs["input_module"] = i2d_input_module
-                result = i2d_extract(str(pdf_path), **kwargs)
-                if result:
-                    issuer = result.get("issuer")
-                    inv_date = result.get("date")
-                    if isinstance(inv_date, dt.datetime):
-                        inv_date = inv_date.date()
-                    if issuer and inv_date:
-                        new_name = _generate_filename(inv_date, issuer)
-                        info = f"{inv_date.strftime('%d/%m/%Y')} | {issuer}"
-                        return new_name, info
-            except Exception as e:
-                logger.debug(f"invoice2data failed for {pdf_path.name}: {e}")
+        if proc.is_alive():
+            proc.terminate()
+            proc.join(timeout=2)
+            if proc.is_alive():
+                proc.kill()
+            logger.warning(f"Extraction timed out for {pdf_path.name} after {timeout}s")
+            return None, f"Timed out ({timeout}s)"
 
-        # Fallback: keyword matching on already-extracted text
-        issuer = _match_vendor_by_keywords(text)
-        if not issuer:
-            return None, "No template matched"
-
-        inv_date = _extract_date_from_text(text)
-        if inv_date:
-            new_name = _generate_filename(inv_date, issuer)
-            info = f"{inv_date.strftime('%d/%m/%Y')} | {issuer} (fallback)"
-            return new_name, info
-        else:
-            return None, f"? | {issuer} (no date found)"
+        try:
+            return result_queue.get_nowait()
+        except Exception:
+            logger.error(f"Extraction failed for {pdf_path.name} (no result)")
+            return None, "Error: no result"
 
     def _rename_btn_enter(self, event):
         if self._rename_mode:
@@ -1226,6 +1267,8 @@ class InvoiceCheckerGUI:
             if itype == "no_match"
         ]
 
+        logger.info(f"Rename preview: {len(to_rename)} files to rename")
+
         if not to_rename:
             self.summary_var.set("No files to rename.")
             return
@@ -1248,29 +1291,32 @@ class InvoiceCheckerGUI:
             total = len(to_rename)
             try:
                 for i, (q, fname) in enumerate(to_rename, 1):
-                    self.root.after(0, lambda i=i, f=fname:
-                        self.summary_var.set(f"Scanning {i}/{total}: {f}"))
+                    try:
+                        folder = BOEKHOUDING_ROOT / str(year) / f"Q{q}" / "Binnenkomend"
+                        old_path = folder / fname
 
-                    folder = BOEKHOUDING_ROOT / str(year) / f"Q{q}" / "Binnenkomend"
-                    old_path = folder / fname
+                        if fname.lower().endswith(".pdf"):
+                            new_name, info = self._extract_rename_info(old_path)
+                        else:
+                            new_name = None
+                            info = "Not a PDF"
 
-                    if fname.lower().endswith(".pdf"):
-                        new_name, info = self._extract_rename_info(old_path)
-                    else:
-                        new_name = None
-                        info = "Not a PDF"
+                        # Fallback for unrecognised PDFs
+                        if new_name is None and fname.lower().endswith(".pdf"):
+                            ext = Path(fname).suffix
+                            new_name = f"FAC_00-00-00_Onbekend{ext}"
+                            info = "Unknown (fallback)"
 
-                    # Fallback for unrecognised PDFs
-                    if new_name is None and fname.lower().endswith(".pdf"):
-                        ext = Path(fname).suffix
-                        new_name = f"FAC_00-00-00_Onbekend{ext}"
-                        info = "Unknown (fallback)"
-
-                    results.append((q, old_path, fname, new_name, info))
+                        logger.info(f"Scanned {i}/{total}: {fname} -> {new_name or '(skip)'}")
+                        results.append((q, old_path, fname, new_name, info))
+                    except Exception as e:
+                        logger.error(f"Scan failed for {fname}: {e}", exc_info=True)
+                        folder = BOEKHOUDING_ROOT / str(year) / f"Q{q}" / "Binnenkomend"
+                        results.append((q, folder / fname, fname, None, f"Error: {e}"))
             except Exception as e:
-                logger.error(f"Scan thread error: {e}")
+                logger.error(f"Scan thread crashed: {e}", exc_info=True)
             finally:
-                # Always update UI, even on error
+                logger.info(f"Scan complete: {len(results)}/{total} files processed")
                 self.root.after(0, lambda: self._show_preview_results(year, results))
 
         threading.Thread(target=_do_extract, daemon=True).start()
@@ -1309,37 +1355,41 @@ class InvoiceCheckerGUI:
             self.summary_var.set("No files could be automatically recognised.")
 
     def _confirm_rename(self):
-        """Perform the pending renames in a background thread."""
+        """Perform the pending renames synchronously (renames are instant)."""
         pending = list(self._rename_pending)
         self.rename_btn.configure(state="disabled", text="Renaming...")
         self.root.update_idletasks()
 
-        def _do_rename():
-            renamed = 0
-            errors = []
+        # Do all renames first without logging (log file I/O can block on WSL)
+        renamed_log = []
+        errors = []
+        for q, old_path, new_name in pending:
             try:
-                for q, old_path, new_name in pending:
-                    new_path = old_path.parent / new_name
-                    if new_path.exists():
-                        stem = new_path.stem
-                        ext = new_path.suffix
-                        counter = 2
-                        while new_path.exists():
-                            new_path = old_path.parent / f"{stem}_{counter:02d}{ext}"
-                            counter += 1
-                    try:
-                        old_path.rename(new_path)
-                        renamed += 1
-                        logger.info(f"Renamed: {old_path.name} -> {new_path.name}")
-                    except Exception as e:
-                        errors.append(f"{old_path.name}: {e}")
-                        logger.error(f"Rename failed: {old_path.name}: {e}")
+                if not old_path.exists():
+                    raise FileNotFoundError(f"Source file not found: {old_path}")
+                new_path = old_path.parent / new_name
+                if new_path.exists():
+                    stem = new_path.stem
+                    ext = new_path.suffix
+                    counter = 2
+                    while new_path.exists():
+                        new_path = old_path.parent / f"{stem}_{counter:02d}{ext}"
+                        counter += 1
+                old_path.rename(new_path)
+                renamed_log.append(f"{old_path.name} -> {new_path.name}")
             except Exception as e:
-                logger.error(f"Rename thread error: {e}")
-            finally:
-                self.root.after(0, lambda: self._finish_rename(renamed, errors))
+                errors.append(f"{old_path.name}: {e}")
 
-        threading.Thread(target=_do_rename, daemon=True).start()
+        # Log results in batch after all renames are done
+        for entry in renamed_log:
+            logger.info(f"Renamed: {entry}")
+        for entry in errors:
+            logger.error(f"Rename failed: {entry}")
+        logger.info(
+            f"Rename complete: {len(renamed_log)}/{len(pending)} renamed"
+            + (f", {len(errors)} error(s)" if errors else "")
+        )
+        self._finish_rename(len(renamed_log), errors)
 
     def _finish_rename(self, renamed, errors):
         """Update UI after rename completes (called on main thread)."""
