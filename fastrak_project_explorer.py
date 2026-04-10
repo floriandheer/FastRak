@@ -426,6 +426,7 @@ class ProjectImporter:
             # Audio
             "Audio_InProgress": _get_platform_path(active_base + r"\Audio\01_Prod\01_InProgress"),
             "Audio_Finished": _get_platform_path(active_base + r"\Audio\01_Prod\03_Finished"),
+            "Audio_Personal": _get_platform_path(active_base + r"\Audio\_Personal"),
             # Physical (scan each subdirectory separately)
             "Physical_Order": _get_platform_path(active_base + r"\Physical\Order"),
             "Physical_Product": _get_platform_path(active_base + r"\Physical\Product"),
@@ -446,6 +447,8 @@ class ProjectImporter:
             # Visual
             "Visual": _get_platform_path(archive_base + r"\Visual"),
             "Visual_Personal": _get_platform_path(archive_base + r"\Visual\_Personal"),
+            # Audio
+            "Audio_Personal": _get_platform_path(archive_base + r"\Audio\_Personal"),
             # Physical (mirror active subdirectory structure)
             "Physical_Order": _get_platform_path(archive_base + r"\Physical\Order"),
             "Physical_Product": _get_platform_path(archive_base + r"\Physical\Product"),
@@ -793,27 +796,27 @@ class ProjectImporter:
                     "is_personal": True
                 }
 
-        # Audio: Date_ProjectName or Date_Client_Project
+        # Audio: Date_Client_Project or Date_ProjectName
         elif base_category.startswith("Audio"):
             # Try with client first: YYYY-MM-DD_Client_Project
             match = re.match(r'^(\d{4}-\d{2}-\d{2})_([^_]+)_(.+)$', folder_name)
             if match:
                 return {
                     "date": match.group(1),
-                    "client": match.group(2),
+                    "client": "Personal" if is_personal else match.group(2),
                     "project": match.group(3),
                     "type": "Audio",
-                    "is_personal": False
+                    "is_personal": is_personal
                 }
             # Simple: YYYY-MM-DD_ProjectName
             match = re.match(r'^(\d{4}-\d{2}-\d{2})_(.+)$', folder_name)
             if match:
                 return {
                     "date": match.group(1),
-                    "client": "Personal",
+                    "client": "Personal" if is_personal else "Audio",
                     "project": match.group(2),
                     "type": "Audio",
-                    "is_personal": True
+                    "is_personal": is_personal
                 }
 
         # Photo: Date_Location_Activity
@@ -840,27 +843,38 @@ class ProjectImporter:
                     "is_personal": is_personal
                 }
 
-        # Web: Just project name (no date prefix typically)
+        # Web: Date_Client_Project (client) or just ProjectName (personal)
         elif base_category == "Web":
-            # Try date pattern first
+            # Client project: YYYY-MM-DD_Client_Project
+            match = re.match(r'^(\d{4}-\d{2}-\d{2})_([^_]+)_(.+)$', folder_name)
+            if match:
+                return {
+                    "date": match.group(1),
+                    "client": "Personal" if is_personal else match.group(2),
+                    "project": match.group(3),
+                    "type": "Web",
+                    "is_personal": is_personal
+                }
+            # Date_Project (no client)
             match = re.match(r'^(\d{4}-\d{2}-\d{2})_(.+)$', folder_name)
             if match:
                 return {
                     "date": match.group(1),
-                    "client": "Web",
+                    "client": "Personal" if is_personal else "Web",
                     "project": match.group(2),
                     "type": "Web",
-                    "is_personal": False
+                    "is_personal": is_personal
                 }
-            # No date - use folder name as project, today as date
-            from datetime import date
-            return {
-                "date": date.today().isoformat(),
-                "client": "Web",
-                "project": folder_name,
-                "type": "Web",
-                "is_personal": False
-            }
+            # No date - personal project (just folder name)
+            if is_personal:
+                from datetime import date
+                return {
+                    "date": date.today().isoformat(),
+                    "client": "Personal",
+                    "project": folder_name,
+                    "type": "Web",
+                    "is_personal": True
+                }
 
         return None
 
@@ -2346,39 +2360,63 @@ class ProjectTrackerApp:
 
         # Scale factor for fonts based on card size (120 is base)
         font_scale = card_size / 120.0
-        icon_size = max(16, int(24 * font_scale))
         name_size = max(7, int(8 * font_scale))
         small_size = max(6, int(7 * font_scale))
 
-        # Truncation lengths scale with size
-        name_max = max(8, int(12 * font_scale))
+        # Truncation length for subtitle
         client_max = max(6, int(10 * font_scale))
 
+        # Colors - dim for archived projects
+        accent_color = type_info.get("color", "#8b949e")
+        is_archived = status == "archived"
+        card_bg = "#1c2128"
+        title_fg = "white"
+        sub_fg = "#8b949e"
+        bar_height = max(3, int(4 * font_scale))
+
         # Card frame - fixed square size
-        card = tk.Frame(self.grid_inner, bg="#1c2128", relief=tk.FLAT,
+        card = tk.Frame(self.grid_inner, bg=card_bg, relief=tk.FLAT,
                        width=card_size, height=card_size, cursor="hand2")
         card.grid(row=row, column=col, padx=8, pady=8)
         card.grid_propagate(False)  # Keep fixed size
         card.pack_propagate(False)  # Keep fixed size
 
+        # Use grid layout: accent bar top, title fills middle, subtitle+date pinned to bottom
+        card.columnconfigure(0, weight=1)
+        card.rowconfigure(0, weight=0)  # accent bar - fixed
+        card.rowconfigure(1, weight=1)  # title - expands to fill available space
+        card.rowconfigure(2, weight=0)  # subtitle - fixed at bottom
+        card.rowconfigure(3, weight=0)  # date - fixed at bottom
 
-        # Icon - fixed-size container to keep both folder icons aligned
-        folder_icon = "📁" if status == "archived" else "📂"
-        icon_container_size = int(icon_size * 2.2)
-        icon_frame = tk.Frame(card, bg="#1c2128", width=icon_container_size, height=icon_container_size)
-        icon_frame.pack(pady=(int(15 * font_scale), int(5 * font_scale)))
-        icon_frame.pack_propagate(False)
-        icon_label = tk.Label(icon_frame, text=folder_icon, bg="#1c2128", fg="white",
-                             font=("Arial", icon_size))
-        icon_label.place(relx=0.5, rely=0.5, anchor="center")
+        # Store default bg on card for highlight restore
+        card._card_bg = card_bg
 
-        # Project name - truncate based on card size
-        project_name = project.get("project_name", "")[:name_max]
-        if len(project.get("project_name", "")) > name_max:
-            project_name += "..."
-        name_label = tk.Label(card, text=project_name, bg="#1c2128", fg="white",
-                             font=("Arial", name_size, "bold"), wraplength=card_size-10)
-        name_label.pack(pady=(0, 2))
+        # Colored accent bar at top - muted for archived, vibrant for active
+        if is_archived:
+            # Darken the accent color by blending towards dark grey
+            r, g, b = int(accent_color[1:3], 16), int(accent_color[3:5], 16), int(accent_color[5:7], 16)
+            bar_color = f"#{r//3:02x}{g//3:02x}{b//3:02x}"
+        else:
+            bar_color = accent_color
+        accent_bar = tk.Frame(card, bg=bar_color, height=bar_height)
+        accent_bar._is_accent_bar = True
+        accent_bar.grid(row=0, column=0, sticky="new")
+        if is_archived:
+            # Archive badge: thicker strip overlapping the right side of the accent bar
+            badge_height = max(10, int(12 * font_scale))
+            badge_font_size = max(5, int(5 * font_scale))
+            archive_badge = tk.Label(card, text="archived", bg="#da3633", fg="#ffd7d5",
+                                     font=("Arial", badge_font_size),
+                                     padx=3, pady=0)
+            archive_badge._is_accent_bar = True  # skip during highlight recolor
+            archive_badge.place(relx=1.0, y=0, anchor="ne")
+
+        # Project name - allow up to 3 lines of wrapping
+        project_name = project.get("project_name", "")
+        name_label = tk.Label(card, text=project_name, bg=card_bg, fg=title_fg,
+                             font=("Arial", name_size, "bold"), wraplength=card_size-10,
+                             justify=tk.CENTER)
+        name_label.grid(row=1, column=0, sticky="n", pady=(int(8 * font_scale), 0))
 
         # Subtitle - location for Photo, client name for others
         if project_type == "Photo":
@@ -2389,17 +2427,17 @@ class ProjectTrackerApp:
         subtitle_display = subtitle[:client_max]
         if len(subtitle) > client_max:
             subtitle_display += "..."
-        client_label = tk.Label(card, text=subtitle_display, bg="#1c2128", fg="#8b949e",
+        client_label = tk.Label(card, text=subtitle_display, bg=card_bg, fg=sub_fg,
                                font=("Arial", small_size))
-        client_label.pack(pady=(0, 2))
+        client_label.grid(row=2, column=0, sticky="s")
 
-        # Date - compact format
+        # Date - compact format, pinned to bottom
         date_str = project.get("date_created", "")
         if len(date_str) > 7:
             date_str = date_str[2:]  # Remove century: 2025-12-29 -> 25-12-29
-        date_label = tk.Label(card, text=date_str, bg="#1c2128",
-                             fg="#8b949e", font=("Arial", small_size))
-        date_label.pack()
+        date_label = tk.Label(card, text=date_str, bg=card_bg,
+                             fg=sub_fg, font=("Arial", small_size))
+        date_label.grid(row=3, column=0, sticky="s", pady=(0, int(6 * font_scale)))
 
         # Bind click event to all card elements
         # Store index in closure for click handler
@@ -2471,9 +2509,14 @@ class ProjectTrackerApp:
             if not card.winfo_exists():
                 continue
             try:
-                bg = "#2d333b" if i in self.grid_selected_indices else "#1c2128"
+                is_selected = i in self.grid_selected_indices
+                default_bg = card._card_bg if hasattr(card, '_card_bg') else "#1c2128"
+                bg = "#2d333b" if is_selected else default_bg
                 card.configure(bg=bg)
                 for child in card.winfo_children():
+                    # Skip accent bar - it keeps its category color
+                    if hasattr(child, '_is_accent_bar'):
+                        continue
                     child.configure(bg=bg)
                     for grandchild in child.winfo_children():
                         grandchild.configure(bg=bg)

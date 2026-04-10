@@ -1,16 +1,15 @@
 +---00_Incoming
 +---01_Design
-|   +---Client
-|   \---Myself
+|   +---Client [CONDITIONAL:client_project]
+|   \---Myself [CONDITIONAL:client_project]
 +---02_Development
 |   +---backups
 |   |   +---database
 |   |   \---files
-|   +---polygonjs
+|   +---polygonjs [CONDITIONAL:polygonjs]
 |   +---public
 |   \---src
-+---03_Outgoing
-|   \---Review
++---03_Publish
 \---_LIBRARY
     +---Documents
     +---Pipeline
