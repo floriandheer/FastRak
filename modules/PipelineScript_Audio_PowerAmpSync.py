@@ -161,8 +161,8 @@ class PowerAmpSyncApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title(APP_NAME)
-        self.root.geometry("700x950")
-        self.root.minsize(650, 850)
+        self.root.geometry("900x1100")
+        self.root.minsize(900, 800)
 
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(1, weight=1)
@@ -414,87 +414,123 @@ class PowerAmpSyncApp:
 
     def _create_ui(self) -> None:
         """Create the complete UI."""
-        # Header
-        header = tk.Frame(self.root, bg=HEADER_COLOR, height=45)
+        # Header (matching Traktor Sync style)
+        header = tk.Frame(self.root, bg=HEADER_COLOR, height=60)
         header.grid(row=0, column=0, sticky="ew")
         header.grid_propagate(False)
-        tk.Label(header, text="PowerAmp Sync", font=("Segoe UI", 13, "bold"),
+        tk.Label(header, text="PowerAmp Sync", font=("Arial", 16, "bold"),
                  fg="white", bg=HEADER_COLOR).place(relx=0.5, rely=0.5, anchor=tk.CENTER)
 
         # Main content
-        main = ttk.Frame(self.root, padding=15)
-        main.grid(row=1, column=0, sticky="nsew")
+        main = ttk.Frame(self.root)
+        main.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
         main.columnconfigure(0, weight=1)
-        main.rowconfigure(3, weight=1)  # Playlists section grows
+        main.rowconfigure(2, weight=1)  # Results panel grows
 
-        # === SECTION 1: SOURCE ===
-        src_frame = ttk.LabelFrame(main, text="Source", padding=10)
-        src_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
-        src_frame.columnconfigure(0, weight=1)
+        # === OPTIONS (first, before configuration) ===
+        options_frame = ttk.LabelFrame(main, text="Options")
+        options_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
 
-        src_row = ttk.Frame(src_frame)
-        src_row.pack(fill=tk.X)
-        src_row.columnconfigure(0, weight=1)
+        # Destination selection (first option)
+        target_row = ttk.Frame(options_frame)
+        target_row.grid(row=0, column=0, sticky="w", padx=10, pady=5)
 
-        self.itunes_xml_var = tk.StringVar()
-        ttk.Entry(src_row, textvariable=self.itunes_xml_var).grid(row=0, column=0, sticky="ew", padx=(0, 8))
-        ttk.Button(src_row, text="Browse...", command=self._browse_itunes_xml, width=10).grid(row=0, column=1, padx=(0, 5))
-        self.load_btn = ttk.Button(src_row, text="Load Library", command=self._load_playlists, width=12)
-        self.load_btn.grid(row=0, column=2)
-
-        # === SECTION 2: DESTINATION ===
-        dest_frame = ttk.LabelFrame(main, text="Destination", padding=10)
-        dest_frame.grid(row=1, column=0, sticky="ew", pady=8)
-        dest_frame.columnconfigure(1, weight=1)
-
-        # Mode selection
-        mode_row = ttk.Frame(dest_frame)
-        mode_row.grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 5))
-
-        ttk.Label(mode_row, text="Mode:").pack(side=tk.LEFT, padx=(0, 15))
-        self.sync_mode_var = tk.StringVar(value="music_and_playlists")
-        ttk.Radiobutton(mode_row, text="Music + Playlists", variable=self.sync_mode_var,
-                        value="music_and_playlists", command=self._on_sync_mode_changed).pack(side=tk.LEFT, padx=(0, 20))
-        ttk.Radiobutton(mode_row, text="Playlists Only", variable=self.sync_mode_var,
-                        value="playlists_only", command=self._on_sync_mode_changed).pack(side=tk.LEFT)
-
-        # Sync target selection (Local vs ADB)
-        target_row = ttk.Frame(dest_frame)
-        target_row.grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 10))
-
-        ttk.Label(target_row, text="Target:").pack(side=tk.LEFT, padx=(0, 15))
+        ttk.Label(target_row, text="Destination:").pack(side=tk.LEFT, padx=(0, 15))
         self.sync_target_var = tk.StringVar(value="local")
         ttk.Radiobutton(target_row, text="Local Folder", variable=self.sync_target_var,
                         value="local", command=self._on_sync_target_changed).pack(side=tk.LEFT, padx=(0, 20))
         ttk.Radiobutton(target_row, text="Android Device (ADB)", variable=self.sync_target_var,
                         value="adb", command=self._on_sync_target_changed).pack(side=tk.LEFT)
 
-        # Local folder settings frame
-        self.local_frame = ttk.Frame(dest_frame)
-        self.local_frame.grid(row=2, column=0, columnspan=3, sticky="ew")
-        self.local_frame.columnconfigure(1, weight=1)
+        # sync_mode_var still needed for internal logic
+        self.sync_mode_var = tk.StringVar(value="music_and_playlists")
 
-        # Music folder (local)
-        ttk.Label(self.local_frame, text="Music folder:").grid(row=0, column=0, sticky="w", pady=3)
+        # Conversion options
+        conv_row = ttk.Frame(options_frame)
+        conv_row.grid(row=1, column=0, sticky="w", padx=10, pady=5)
+
+        self.convert_opus_var = tk.BooleanVar(value=True)
+        self.convert_opus_checkbox = ttk.Checkbutton(conv_row, text="Convert all audio to Opus",
+                                                     variable=self.convert_opus_var, command=self._on_convert_opus_changed)
+        self.convert_opus_checkbox.pack(side=tk.LEFT)
+
+        ttk.Label(conv_row, text="Quality:").pack(side=tk.LEFT, padx=(30, 8))
+        self.bitrate_var = tk.StringVar(value="128k")
+        self.quality_combo = ttk.Combobox(conv_row, textvariable=self.bitrate_var, state="readonly", width=22,
+                                          values=["192 kbps (Transparent)", "160 kbps (Excellent)", "128 kbps (Recommended)", "96 kbps (Good)", "64 kbps (Efficient)"])
+        self.quality_combo.pack(side=tk.LEFT)
+        self.quality_combo.current(2)  # Default to 128 kbps
+        self.quality_combo.bind("<<ComboboxSelected>>", self._on_quality_changed)
+
+        skip_row = ttk.Frame(options_frame)
+        skip_row.grid(row=2, column=0, sticky="w", padx=10, pady=5)
+
+        self.skip_existing_var = tk.BooleanVar(value=True)
+        self.skip_existing_checkbox = ttk.Checkbutton(skip_row, text="Skip existing files", variable=self.skip_existing_var)
+        self.skip_existing_checkbox.pack(side=tk.LEFT)
+
+        # === CONFIGURATION (file paths) ===
+        config_frame = ttk.LabelFrame(main, text="Configuration")
+        config_frame.grid(row=1, column=0, sticky="ew", padx=5, pady=5)
+        config_frame.columnconfigure(1, weight=1)
+
+        current_row = 0
+
+        # --- Source ---
+        source_label = ttk.Label(config_frame, text="Source", font=("Arial", 9, "bold"))
+        source_label.grid(row=current_row, column=0, columnspan=3, sticky="w", padx=10, pady=(10, 0))
+
+        current_row += 1
+
+        # iTunes XML path (source)
+        ttk.Label(config_frame, text="iTunes XML:").grid(row=current_row, column=0, sticky="w", padx=10, pady=10)
+        self.itunes_xml_var = tk.StringVar()
+        ttk.Entry(config_frame, textvariable=self.itunes_xml_var, width=50).grid(row=current_row, column=1, sticky="ew", padx=5, pady=10)
+        ttk.Button(config_frame, text="Browse", command=self._browse_itunes_xml).grid(row=current_row, column=2, padx=5, pady=10)
+
+        current_row += 1
+
+        ttk.Separator(config_frame, orient="horizontal").grid(row=current_row, column=0, columnspan=3, sticky="ew", padx=10, pady=5)
+
+        current_row += 1
+
+        # --- Destination ---
+        dest_label = ttk.Label(config_frame, text="Destination", font=("Arial", 9, "bold"))
+        dest_label.grid(row=current_row, column=0, columnspan=3, sticky="w", padx=10, pady=(5, 0))
+
+        current_row += 1
+
+        # Local destination frame (hidden when ADB is selected)
+        self.local_dest_frame = ttk.Frame(config_frame)
+        self.local_dest_frame.grid(row=current_row, column=0, columnspan=3, sticky="ew")
+        self.local_dest_frame.columnconfigure(1, weight=1)
+
+        # Music destination folder
+        self.music_dest_label = ttk.Label(self.local_dest_frame, text="Music Folder:")
+        self.music_dest_label.grid(row=0, column=0, sticky="w", padx=10, pady=10)
         self.music_dest_var = tk.StringVar()
-        self.music_dest_entry = ttk.Entry(self.local_frame, textvariable=self.music_dest_var)
-        self.music_dest_entry.grid(row=0, column=1, sticky="ew", padx=10, pady=3)
-        self.music_dest_browse_btn = ttk.Button(self.local_frame, text="Browse...", command=self._browse_music_destination, width=10)
-        self.music_dest_browse_btn.grid(row=0, column=2, pady=3)
+        self.music_dest_entry = ttk.Entry(self.local_dest_frame, textvariable=self.music_dest_var, width=50)
+        self.music_dest_entry.grid(row=0, column=1, sticky="ew", padx=5, pady=10)
+        self.music_dest_browse_btn = ttk.Button(self.local_dest_frame, text="Browse", command=self._browse_music_destination)
+        self.music_dest_browse_btn.grid(row=0, column=2, padx=5, pady=10)
 
-        # Playlist folder (local)
-        ttk.Label(self.local_frame, text="Playlist folder:").grid(row=1, column=0, sticky="w", pady=3)
+        # Playlist destination folder
+        ttk.Label(self.local_dest_frame, text="Playlist Folder:").grid(row=1, column=0, sticky="w", padx=10, pady=10)
         self.dest_var = tk.StringVar()
-        ttk.Entry(self.local_frame, textvariable=self.dest_var).grid(row=1, column=1, sticky="ew", padx=10, pady=3)
-        ttk.Button(self.local_frame, text="Browse...", command=self._browse_destination, width=10).grid(row=1, column=2, pady=3)
+        ttk.Entry(self.local_dest_frame, textvariable=self.dest_var, width=50).grid(row=1, column=1, sticky="ew", padx=5, pady=10)
+        ttk.Button(self.local_dest_frame, text="Browse", command=self._browse_destination).grid(row=1, column=2, padx=5, pady=10)
 
-        # ADB settings frame (initially hidden)
-        self.adb_frame = ttk.Frame(dest_frame)
+        current_row += 1
+
+        # ADB destination frame (initially hidden)
+        self.adb_frame = ttk.LabelFrame(config_frame, text="Android Device (ADB)")
+        self.adb_frame.grid(row=current_row, column=0, columnspan=3, sticky="ew", padx=10, pady=10)
         self.adb_frame.columnconfigure(1, weight=1)
+        self.adb_frame.grid_remove()  # Hidden by default
 
         # Device status row
         adb_status_row = ttk.Frame(self.adb_frame)
-        adb_status_row.grid(row=0, column=0, columnspan=3, sticky="w", pady=3)
+        adb_status_row.grid(row=0, column=0, columnspan=3, sticky="w", padx=5, pady=3)
         ttk.Label(adb_status_row, text="Device:").pack(side=tk.LEFT, padx=(0, 10))
         self.adb_device_status_var = tk.StringVar(value="No device detected")
         self.adb_device_status_label = ttk.Label(adb_status_row, textvariable=self.adb_device_status_var)
@@ -504,159 +540,136 @@ class PowerAmpSyncApp:
         ttk.Button(adb_status_row, text="?", command=self._show_adb_help, width=3).pack(side=tk.LEFT, padx=(5, 0))
 
         # ADB Music path
-        ttk.Label(self.adb_frame, text="Music path:").grid(row=1, column=0, sticky="w", pady=3)
+        ttk.Label(self.adb_frame, text="Music path:").grid(row=1, column=0, sticky="w", padx=5, pady=3)
         self.adb_music_path_var = tk.StringVar(value="/storage/emulated/0/Music/")
-        ttk.Entry(self.adb_frame, textvariable=self.adb_music_path_var).grid(row=1, column=1, columnspan=2, sticky="ew", padx=10, pady=3)
+        ttk.Entry(self.adb_frame, textvariable=self.adb_music_path_var).grid(row=1, column=1, columnspan=2, sticky="ew", padx=5, pady=3)
 
         # ADB Playlist path
-        ttk.Label(self.adb_frame, text="Playlist path:").grid(row=2, column=0, sticky="w", pady=3)
+        ttk.Label(self.adb_frame, text="Playlist path:").grid(row=2, column=0, sticky="w", padx=5, pady=3)
         self.adb_playlist_path_var = tk.StringVar(value="/storage/emulated/0/Music/Playlists/")
-        ttk.Entry(self.adb_frame, textvariable=self.adb_playlist_path_var).grid(row=2, column=1, columnspan=2, sticky="ew", padx=10, pady=3)
+        ttk.Entry(self.adb_frame, textvariable=self.adb_playlist_path_var).grid(row=2, column=1, columnspan=2, sticky="ew", padx=5, pady=3)
 
-        # Separator
-        ttk.Separator(dest_frame, orient="horizontal").grid(row=3, column=0, columnspan=3, sticky="ew", pady=10)
+        current_row += 1
 
         # Path mapping
-        self.path_mapping_frame = ttk.Frame(dest_frame)
-        self.path_mapping_frame.grid(row=4, column=0, columnspan=3, sticky="ew")
+        self.path_mapping_frame = ttk.LabelFrame(config_frame, text="Path Mapping")
+        self.path_mapping_frame.grid(row=current_row, column=0, columnspan=3, sticky="ew", padx=10, pady=10)
         self.path_mapping_frame.columnconfigure(1, weight=1)
 
-        ttk.Label(self.path_mapping_frame, text="Path mapping:").grid(row=0, column=0, sticky="w", pady=3)
         map_row = ttk.Frame(self.path_mapping_frame)
-        map_row.grid(row=0, column=1, columnspan=2, sticky="ew", pady=3)
+        map_row.grid(row=0, column=0, columnspan=3, sticky="ew", padx=5, pady=5)
 
         self.source_prefix_var = tk.StringVar()
         ttk.Entry(map_row, textvariable=self.source_prefix_var, width=12).pack(side=tk.LEFT)
-        ttk.Label(map_row, text="  →  ").pack(side=tk.LEFT)
+        ttk.Label(map_row, text="  \u2192  ").pack(side=tk.LEFT)
         self.android_prefix_var = tk.StringVar()
         ttk.Entry(map_row, textvariable=self.android_prefix_var, width=30).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         self.relative_paths_var = tk.BooleanVar()
         ttk.Checkbutton(self.path_mapping_frame, text="Use relative paths only", variable=self.relative_paths_var).grid(
-            row=1, column=0, columnspan=3, sticky="w", pady=(5, 0))
+            row=1, column=0, columnspan=3, sticky="w", padx=5, pady=(0, 5))
 
-        # === SECTION 3: CONVERSION ===
-        self.conv_frame = ttk.LabelFrame(main, text="Conversion", padding=10)
-        self.conv_frame.grid(row=2, column=0, sticky="ew", pady=8)
+        current_row += 1
 
-        # Convert checkbox + Quality dropdown on same row
-        conv_row1 = ttk.Frame(self.conv_frame)
-        conv_row1.pack(fill=tk.X, pady=(0, 5))
+        # === PLAYLIST SELECTION (Traktor style) ===
+        playlist_frame = ttk.LabelFrame(config_frame, text="Playlist Selection")
+        playlist_frame.grid(row=current_row, column=0, columnspan=3, sticky="nsew", padx=10, pady=10)
+        playlist_frame.columnconfigure(0, weight=1)
+        playlist_frame.rowconfigure(2, weight=1)
 
-        self.convert_opus_var = tk.BooleanVar(value=True)
-        self.convert_opus_checkbox = ttk.Checkbutton(conv_row1, text="Convert all audio to Opus",
-                                                     variable=self.convert_opus_var, command=self._on_convert_opus_changed)
-        self.convert_opus_checkbox.pack(side=tk.LEFT)
+        # Selection mode
+        mode_sel_frame = ttk.Frame(playlist_frame)
+        mode_sel_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
 
-        ttk.Label(conv_row1, text="Quality:").pack(side=tk.LEFT, padx=(30, 8))
-        self.bitrate_var = tk.StringVar(value="128k")
-        self.quality_combo = ttk.Combobox(conv_row1, textvariable=self.bitrate_var, state="readonly", width=22,
-                                          values=["192 kbps (Transparent)", "160 kbps (Excellent)", "128 kbps (Recommended)", "96 kbps (Good)", "64 kbps (Efficient)"])
-        self.quality_combo.pack(side=tk.LEFT)
-        self.quality_combo.current(2)  # Default to 128 kbps
-        self.quality_combo.bind("<<ComboboxSelected>>", self._on_quality_changed)
+        ttk.Label(mode_sel_frame, text="Selection Mode:").grid(row=0, column=0, sticky="w", padx=5)
+        self.selection_mode = tk.StringVar(value="include")
+        ttk.Radiobutton(mode_sel_frame, text="Include Selected", variable=self.selection_mode,
+                        value="include", command=self._update_selection_summary).grid(row=0, column=1, padx=10)
+        ttk.Radiobutton(mode_sel_frame, text="Exclude Selected", variable=self.selection_mode,
+                        value="exclude", command=self._update_selection_summary).grid(row=0, column=2, padx=10)
 
-        # Skip existing + FFmpeg check
-        conv_row2 = ttk.Frame(self.conv_frame)
-        conv_row2.pack(fill=tk.X)
+        # Filter and stats
+        filter_frame = ttk.Frame(playlist_frame)
+        filter_frame.grid(row=1, column=0, sticky="ew", padx=5, pady=5)
+        filter_frame.columnconfigure(1, weight=1)
 
-        self.skip_existing_var = tk.BooleanVar(value=True)
-        self.skip_existing_checkbox = ttk.Checkbutton(conv_row2, text="Skip existing files", variable=self.skip_existing_var)
-        self.skip_existing_checkbox.pack(side=tk.LEFT)
-
-        self.ffmpeg_status_var = tk.StringVar(value="")
-        ttk.Label(conv_row2, textvariable=self.ffmpeg_status_var).pack(side=tk.RIGHT)
-        self.ffmpeg_btn = ttk.Button(conv_row2, text="Check FFmpeg", command=self._check_ffmpeg_ui, width=14)
-        self.ffmpeg_btn.pack(side=tk.RIGHT, padx=(30, 8))
-
-        # === SECTION 4: PLAYLISTS ===
-        pl_frame = ttk.LabelFrame(main, text="Playlists", padding=10)
-        pl_frame.grid(row=3, column=0, sticky="nsew", pady=8)
-        pl_frame.columnconfigure(0, weight=1)
-        pl_frame.rowconfigure(1, weight=1)
-
-        # Filter row
-        filter_row = ttk.Frame(pl_frame)
-        filter_row.grid(row=0, column=0, sticky="ew", pady=(0, 8))
-
-        ttk.Label(filter_row, text="Filter:").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Label(filter_frame, text="Filter:").grid(row=0, column=0, sticky="w", padx=5)
         self.filter_var = tk.StringVar()
         self.filter_var.trace('w', self._filter_playlists)
-        ttk.Entry(filter_row, textvariable=self.filter_var, width=25).pack(side=tk.LEFT)
+        ttk.Entry(filter_frame, textvariable=self.filter_var).grid(row=0, column=1, sticky="ew", padx=5)
 
         self.selection_summary = tk.StringVar(value="No playlists loaded")
-        ttk.Label(filter_row, textvariable=self.selection_summary).pack(side=tk.RIGHT)
-
-        self.selection_mode = tk.StringVar(value="include")
-        ttk.Radiobutton(filter_row, text="Exclude selected", variable=self.selection_mode,
-                        value="exclude", command=self._update_selection_summary).pack(side=tk.RIGHT, padx=(0, 15))
-        ttk.Radiobutton(filter_row, text="Include selected", variable=self.selection_mode,
-                        value="include", command=self._update_selection_summary).pack(side=tk.RIGHT, padx=(0, 5))
+        ttk.Label(filter_frame, textvariable=self.selection_summary, font=("Arial", 9),
+                  foreground="blue").grid(row=0, column=2, padx=10, sticky="e")
 
         # Treeview
-        tree_container = ttk.Frame(pl_frame)
-        tree_container.grid(row=1, column=0, sticky="nsew")
-        tree_container.columnconfigure(0, weight=1)
-        tree_container.rowconfigure(0, weight=1)
+        list_frame = ttk.Frame(playlist_frame)
+        list_frame.grid(row=2, column=0, sticky="nsew", padx=5, pady=5)
+        list_frame.columnconfigure(0, weight=1)
+        list_frame.rowconfigure(0, weight=1)
 
-        self.playlist_tree = ttk.Treeview(tree_container, columns=("tracks", "type"), show="tree headings", height=8)
+        self.playlist_tree = ttk.Treeview(list_frame, columns=("tracks", "type"), show="tree headings", height=10)
         self.playlist_tree.grid(row=0, column=0, sticky="nsew")
 
         self.playlist_tree.heading("#0", text="Playlist Name")
         self.playlist_tree.heading("tracks", text="Tracks")
         self.playlist_tree.heading("type", text="Type")
-        self.playlist_tree.column("#0", width=350)
-        self.playlist_tree.column("tracks", width=70, anchor="center")
-        self.playlist_tree.column("type", width=80, anchor="center")
+        self.playlist_tree.column("#0", width=300)
+        self.playlist_tree.column("tracks", width=80, anchor="center")
+        self.playlist_tree.column("type", width=100, anchor="center")
 
-        scrollbar = ttk.Scrollbar(tree_container, orient="vertical", command=self.playlist_tree.yview)
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.playlist_tree.yview)
         scrollbar.grid(row=0, column=1, sticky="ns")
         self.playlist_tree.config(yscrollcommand=scrollbar.set)
         self.playlist_tree.bind('<<TreeviewSelect>>', lambda e: self._update_selection_summary())
 
         # Selection buttons
-        sel_btn_row = ttk.Frame(pl_frame)
-        sel_btn_row.grid(row=2, column=0, sticky="w", pady=(8, 0))
+        sel_btn_frame = ttk.Frame(playlist_frame)
+        sel_btn_frame.grid(row=3, column=0, sticky="ew", pady=5)
 
-        ttk.Button(sel_btn_row, text="Select All", command=self._select_all_playlists, width=10).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(sel_btn_row, text="Select None", command=self._clear_all_playlists, width=10).pack(side=tk.LEFT, padx=5)
-        ttk.Button(sel_btn_row, text="Auto Select", command=self._auto_select_playlists, width=10).pack(side=tk.LEFT, padx=5)
+        ttk.Button(sel_btn_frame, text="Select All", command=self._select_all_playlists).grid(row=0, column=0, padx=5)
+        ttk.Button(sel_btn_frame, text="Clear All", command=self._clear_all_playlists).grid(row=0, column=1, padx=5)
+        ttk.Button(sel_btn_frame, text="Auto Select", command=self._auto_select_playlists).grid(row=0, column=2, padx=5)
 
-        # === SECTION 5: ACTIONS ===
-        action_frame = ttk.Frame(main)
-        action_frame.grid(row=4, column=0, sticky="ew", pady=15)
+        current_row += 1
 
-        # Main sync button - dark, prominent
-        self.sync_btn = tk.Button(
-            action_frame, text="SYNC TO DEVICE", command=self._start_sync,
-            font=("Segoe UI", 11, "bold"), width=18, height=2,
-            bg="#2c3e50", fg="white", activebackground="#34495e", activeforeground="white",
-            cursor="hand2", relief="flat"
-        )
-        self.sync_btn.pack(side=tk.LEFT)
+        # === ACTION BUTTONS (Traktor style, inside config) ===
+        main_btn_frame = ttk.Frame(config_frame)
+        main_btn_frame.grid(row=current_row, column=0, columnspan=3, sticky="ew", pady=10)
+        main_btn_frame.columnconfigure(1, weight=1)
 
-        # Cancel button - visible but not too prominent
-        self.cancel_btn = tk.Button(
-            action_frame, text="Cancel", command=self._cancel_sync,
-            font=("Segoe UI", 10), width=12, height=2,
-            bg="#95a5a6", fg="white", activebackground="#7f8c8d", activeforeground="white",
-            cursor="hand2", relief="flat", state=tk.DISABLED
-        )
-        self.cancel_btn.pack(side=tk.LEFT, padx=(15, 0))
+        self.load_btn = ttk.Button(main_btn_frame, text="Load Playlists", command=self._load_playlists, width=15)
+        self.load_btn.grid(row=0, column=0, padx=10)
 
-        # Right side buttons
-        ttk.Button(action_frame, text="Save Settings", command=self._save_settings, width=12).pack(side=tk.RIGHT)
-        ttk.Button(action_frame, text="Preview", command=self._preview_selection, width=10).pack(side=tk.RIGHT, padx=(0, 10))
+        self.save_settings_btn = ttk.Button(main_btn_frame, text="Save Settings", command=self._save_settings, width=15)
+        self.save_settings_btn.grid(row=1, column=0, padx=10)
 
-        # === SECTION 6: LOG ===
-        log_frame = ttk.LabelFrame(main, text="Log", padding=5)
-        log_frame.grid(row=5, column=0, sticky="nsew", pady=(8, 0))
-        log_frame.columnconfigure(0, weight=1)
-        log_frame.rowconfigure(0, weight=1)
+        # Action buttons aligned together on the right
+        action_btns = ttk.Frame(main_btn_frame)
+        action_btns.grid(row=0, column=1, rowspan=2, sticky="e", padx=10)
+
+        self.sync_playlists_btn = tk.Button(action_btns, text="Sync Playlists", command=self._start_sync_playlists_only,
+                                             width=15, bg="yellow", fg="black", font=('', 9, 'bold'))
+        self.sync_playlists_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.sync_btn = tk.Button(action_btns, text="Start Sync", command=self._start_sync,
+                                  width=15, bg="green", fg="white", font=('', 9, 'bold'))
+        self.sync_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.cancel_btn = tk.Button(action_btns, text="Cancel", command=self._cancel_sync,
+                                    width=15, bg="red", fg="white", font=('', 9, 'bold'),
+                                    state=tk.DISABLED)
+        self.cancel_btn.pack(side=tk.LEFT)
+
+        # === RESULTS PANEL ===
+        results_frame = ttk.LabelFrame(main, text="Sync Progress and Results")
+        results_frame.grid(row=2, column=0, sticky="nsew", padx=5, pady=5)
+        results_frame.columnconfigure(0, weight=1)
+        results_frame.rowconfigure(0, weight=1)
 
         # Notebook with tabs
-        self.results_notebook = ttk.Notebook(log_frame)
-        self.results_notebook.grid(row=0, column=0, sticky="nsew")
+        self.results_notebook = ttk.Notebook(results_frame)
+        self.results_notebook.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
 
         # Library tab
         lib_tab = ttk.Frame(self.results_notebook)
@@ -683,13 +696,10 @@ class PowerAmpSyncApp:
         self.sync_text.config(yscrollcommand=sync_scroll.set)
 
         # === STATUS BAR ===
-        status_frame = tk.Frame(self.root, bg="#ecf0f1", height=25)
-        status_frame.grid(row=2, column=0, sticky="ew")
-        status_frame.grid_propagate(False)
-
         self.status_var = tk.StringVar(value="Ready")
-        tk.Label(status_frame, textvariable=self.status_var, bg="#ecf0f1", fg="#7f8c8d",
-                 font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=10, pady=3)
+        self.status_bar = tk.Label(self.root, textvariable=self.status_var, bd=1,
+                                   relief=tk.SUNKEN, anchor=tk.W)
+        self.status_bar.grid(row=2, column=0, sticky="ew")
 
     def _on_quality_changed(self, event=None) -> None:
         """Handle quality combobox selection."""
@@ -795,7 +805,6 @@ class PowerAmpSyncApp:
 
         self.convert_opus_checkbox.config(state=state)
         self.skip_existing_checkbox.config(state=state)
-        self.ffmpeg_btn.config(state=state)
         self.quality_combo.config(state=combo_state)
 
     def _on_sync_target_changed(self) -> None:
@@ -803,15 +812,11 @@ class PowerAmpSyncApp:
         is_adb = self.sync_target_var.get() == "adb"
 
         if is_adb:
-            # Hide local settings, show ADB settings
-            self.local_frame.grid_remove()
-            self.adb_frame.grid(row=2, column=0, columnspan=3, sticky="ew")
-            # Path mapping still relevant for playlist file references
-            # but not editable since we use ADB paths directly
+            self.local_dest_frame.grid_remove()
+            self.adb_frame.grid()
         else:
-            # Show local settings, hide ADB settings
             self.adb_frame.grid_remove()
-            self.local_frame.grid(row=2, column=0, columnspan=3, sticky="ew")
+            self.local_dest_frame.grid()
 
         # Update sync mode UI state as well (local music folder depends on target)
         self._on_sync_mode_changed()
@@ -1242,8 +1247,10 @@ TROUBLESHOOTING
         if hasattr(self, 'sync_btn'):
             if self.selection_mode.get() == "include" and selected_count == 0:
                 self.sync_btn.config(state=tk.DISABLED)
+                self.sync_playlists_btn.config(state=tk.DISABLED)
             else:
                 self.sync_btn.config(state=tk.NORMAL)
+                self.sync_playlists_btn.config(state=tk.NORMAL)
 
     def _get_selected_playlists(self) -> List[str]:
         """Get the list of playlists that should be processed."""
@@ -1621,7 +1628,17 @@ TROUBLESHOOTING
             logger.error(f"Error writing playlist {playlist_name}: {e}")
             return False, 0
 
+    def _start_sync_playlists_only(self) -> None:
+        """Start sync in playlists-only mode."""
+        self.sync_mode_var.set("playlists_only")
+        self._do_start_sync()
+
     def _start_sync(self) -> None:
+        """Start the full music + playlists sync."""
+        self.sync_mode_var.set("music_and_playlists")
+        self._do_start_sync()
+
+    def _do_start_sync(self) -> None:
         """Start the sync process."""
         selected_playlists = self._get_selected_playlists()
 
@@ -1706,6 +1723,7 @@ TROUBLESHOOTING
         # Start sync in thread
         self.syncing = True
         self.sync_btn.config(state=tk.DISABLED)
+        self.sync_playlists_btn.config(state=tk.DISABLED)
         self.cancel_btn.config(state=tk.NORMAL)
         self.load_btn.config(state=tk.DISABLED)
 
@@ -2111,6 +2129,7 @@ TROUBLESHOOTING
         """Handle sync completion."""
         self.syncing = False
         self.sync_btn.config(state=tk.NORMAL)
+        self.sync_playlists_btn.config(state=tk.NORMAL)
         self.cancel_btn.config(state=tk.DISABLED)
         self.load_btn.config(state=tk.NORMAL)
         self.status_var.set("Sync complete")
