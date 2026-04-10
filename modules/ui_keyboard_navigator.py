@@ -64,7 +64,13 @@ class KeyboardNavigatorMixin:
             idx = self.LEFT_PANEL_ORDER.index(self.focused_panel)
             if idx > 0:
                 self.focused_panel = self.LEFT_PANEL_ORDER[idx - 1]
-                self._update_panel_focus()
+            else:
+                # Wrap to bottom: tools if category selected, otherwise operations
+                if self.selected_category:
+                    self.focused_panel = "tools"
+                else:
+                    self.focused_panel = self.LEFT_PANEL_ORDER[-1]
+            self._update_panel_focus()
 
     def _nav_panel_down(self):
         """Navigate down between panels (S key)."""
@@ -85,9 +91,14 @@ class KeyboardNavigatorMixin:
                 # Skip tools panel if no category is selected
                 next_panel = self.LEFT_PANEL_ORDER[idx + 1]
                 if next_panel == "tools" and not self.selected_category:
-                    return
-                self.focused_panel = next_panel
-                self._update_panel_focus()
+                    # Wrap to top
+                    self.focused_panel = self.LEFT_PANEL_ORDER[0]
+                else:
+                    self.focused_panel = next_panel
+            else:
+                # Wrap to top
+                self.focused_panel = self.LEFT_PANEL_ORDER[0]
+            self._update_panel_focus()
 
     def _nav_panel_left(self):
         """Navigate to left panel from tracker (A key)."""
@@ -126,7 +137,7 @@ class KeyboardNavigatorMixin:
             # 2x1 grid: no up movement (single row)
             pass
         elif self.focused_panel == "tools":
-            # Vertical list of tools only (not folder/notes)
+            # Tools + folder + notes (folder = len(tools), notes = len(tools)+1)
             if self.tools_focus_index > 0:
                 self.tools_focus_index -= 1
                 self._update_item_focus()
@@ -147,8 +158,9 @@ class KeyboardNavigatorMixin:
             # 2x1 grid: no down movement (single row)
             pass
         elif self.focused_panel == "tools":
-            # Vertical list of tools only (not folder/notes)
-            if self.tools_focus_index < len(self.tool_buttons) - 1:
+            # Tools + folder + notes (folder = len(tools), notes = len(tools)+1)
+            max_index = len(self.tool_buttons) + 1  # +2 items (folder, notes), last index = len+1
+            if self.tools_focus_index < max_index:
                 self.tools_focus_index += 1
                 self._update_item_focus()
         elif self.focused_panel == "tracker":
@@ -214,10 +226,16 @@ class KeyboardNavigatorMixin:
             # Already auto-selected, but Enter can confirm
             pass
         elif self.focused_panel == "tools":
-            # Run the focused tool
-            if self.tool_buttons and 0 <= self.tools_focus_index < len(self.tool_buttons):
+            if 0 <= self.tools_focus_index < len(self.tool_buttons):
+                # Run the focused tool
                 tool = self.tool_buttons[self.tools_focus_index]
                 self.run_script(tool["category_key"], tool["script_key"], tool["subcat_key"])
+            elif self.tools_focus_index == len(self.tool_buttons):
+                # Open folder
+                self._quick_open_folder()
+            elif self.tools_focus_index == len(self.tool_buttons) + 1:
+                # Open notes
+                self._quick_open_notes()
         elif self.focused_panel == "tracker":
             if hasattr(self, 'project_tracker'):
                 self.project_tracker._on_enter_key(None)
@@ -394,7 +412,7 @@ class KeyboardNavigatorMixin:
         grids = [
             ("cat_grid", self.cat_grid, "categories", COLORS["bg_card"]),
             ("ops_grid", self.ops_grid, "operations", COLORS["bg_card"]),
-            ("tools_section", self.tools_section if hasattr(self, 'tools_section') else None, "tools", COLORS["bg_secondary"]),
+            ("tools_section", self.category_panel_outer if hasattr(self, 'category_panel_outer') else None, "tools", COLORS["border"]),
             ("tracker_panel", self.tracker_panel if hasattr(self, 'tracker_panel') else None, "tracker", COLORS["bg_primary"]),
         ]
 
@@ -435,6 +453,17 @@ class KeyboardNavigatorMixin:
             tool["icon_label"].configure(bg=COLORS["bg_secondary"])
             tool["name_label"].configure(bg=COLORS["bg_secondary"])
             tool["arrow_label"].configure(bg=COLORS["bg_secondary"])
+        # Clear folder/notes button focus
+        if hasattr(self, '_folder_btn_frame'):
+            self._folder_btn_frame.configure(bg=self._folder_bg)
+            self._folder_content.configure(bg=self._folder_bg)
+            self._folder_icon.configure(bg=self._folder_bg)
+            self._folder_label.configure(bg=self._folder_bg)
+        if hasattr(self, '_notes_btn_frame'):
+            self._notes_btn_frame.configure(bg=self._notepad_bg)
+            self._notes_content.configure(bg=self._notepad_bg)
+            self._notes_icon.configure(bg=self._notepad_bg)
+            self._notes_label.configure(bg=self._notepad_bg)
 
     def _update_item_focus(self):
         """Update visual focus indicator for items within panels (darken focused item)."""
@@ -447,22 +476,46 @@ class KeyboardNavigatorMixin:
             pass
 
         elif self.focused_panel == "tools":
-            # Tools only (not folder/notes) - darken focused item background
+            # Tools + folder + notes - darken focused item background
             for idx, tool in enumerate(self.tool_buttons):
                 if idx == self.tools_focus_index:
-                    # Darken the focused tool
                     tool["frame"].configure(bg=COLORS["bg_hover"])
                     tool["content"].configure(bg=COLORS["bg_hover"])
                     tool["icon_label"].configure(bg=COLORS["bg_hover"])
                     tool["name_label"].configure(bg=COLORS["bg_hover"])
                     tool["arrow_label"].configure(bg=COLORS["bg_hover"], fg=tool["color"])
                 else:
-                    # Normal background
                     tool["frame"].configure(bg=COLORS["bg_secondary"])
                     tool["content"].configure(bg=COLORS["bg_secondary"])
                     tool["icon_label"].configure(bg=COLORS["bg_secondary"])
                     tool["name_label"].configure(bg=COLORS["bg_secondary"])
                     tool["arrow_label"].configure(bg=COLORS["bg_secondary"], fg=COLORS["text_secondary"])
+
+            # Folder button highlight
+            if hasattr(self, '_folder_btn_frame'):
+                if self.tools_focus_index == len(self.tool_buttons):
+                    self._folder_btn_frame.configure(bg=self._folder_hover)
+                    self._folder_content.configure(bg=self._folder_hover)
+                    self._folder_icon.configure(bg=self._folder_hover)
+                    self._folder_label.configure(bg=self._folder_hover)
+                else:
+                    self._folder_btn_frame.configure(bg=self._folder_bg)
+                    self._folder_content.configure(bg=self._folder_bg)
+                    self._folder_icon.configure(bg=self._folder_bg)
+                    self._folder_label.configure(bg=self._folder_bg)
+
+            # Notes button highlight
+            if hasattr(self, '_notes_btn_frame'):
+                if self.tools_focus_index == len(self.tool_buttons) + 1:
+                    self._notes_btn_frame.configure(bg=self._notepad_hover)
+                    self._notes_content.configure(bg=self._notepad_hover)
+                    self._notes_icon.configure(bg=self._notepad_hover)
+                    self._notes_label.configure(bg=self._notepad_hover)
+                else:
+                    self._notes_btn_frame.configure(bg=self._notepad_bg)
+                    self._notes_content.configure(bg=self._notepad_bg)
+                    self._notes_icon.configure(bg=self._notepad_bg)
+                    self._notes_label.configure(bg=self._notepad_bg)
 
     def _update_keyboard_hint(self):
         """Update status bar with keyboard hints based on focused panel."""
