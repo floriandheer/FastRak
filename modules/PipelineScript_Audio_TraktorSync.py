@@ -130,8 +130,8 @@ class PlaylistSyncUI:
         main_frame = ttk.Frame(self.root)
         main_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
         main_frame.columnconfigure(0, weight=1)
-        main_frame.rowconfigure(1, weight=1)
-        
+        main_frame.rowconfigure(2, weight=1)
+
         self.create_config_panel(main_frame)
         self.create_results_panel(main_frame)
         
@@ -198,82 +198,34 @@ class PlaylistSyncUI:
         self.on_target_os_changed()
 
     def create_config_panel(self, parent):
-        config_frame = ttk.LabelFrame(parent, text="Configuration")
-        config_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
-        config_frame.columnconfigure(1, weight=1)
-        
-        current_row = 0
-        
+        # === OPTIONS (first, before configuration) ===
+        options_frame = ttk.LabelFrame(parent, text="Options")
+        options_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
+
         # Destination Selection
-        ttk.Label(config_frame, text="Destination:").grid(row=current_row, column=0, sticky="w", padx=10, pady=10)
+        dest_row = ttk.Frame(options_frame)
+        dest_row.grid(row=0, column=0, columnspan=3, sticky="w", padx=10, pady=5)
+
+        ttk.Label(dest_row, text="Destination:").pack(side=tk.LEFT, padx=(0, 10))
         self.target_os_var = tk.StringVar(value="Local")
-        os_dropdown = ttk.Combobox(config_frame, textvariable=self.target_os_var,
-                                   values=["Local", "External"], state="readonly", width=20)
-        os_dropdown.grid(row=current_row, column=1, sticky="w", padx=5, pady=10)
-        os_dropdown.bind("<<ComboboxSelected>>", self.on_target_os_changed)
-        
-        # Info label for cross-platform workflow
-        self.os_info_label = ttk.Label(config_frame, text="", foreground="blue", font=("Arial", 9))
-        self.os_info_label.grid(row=current_row, column=2, sticky="w", padx=5, pady=10)
-        
-        current_row += 1
-        
-        # iTunes XML path
-        ttk.Label(config_frame, text="iTunes XML:").grid(row=current_row, column=0, sticky="w", padx=10, pady=10)
-        self.itunes_xml_var = tk.StringVar()
-        ttk.Entry(config_frame, textvariable=self.itunes_xml_var, width=50).grid(row=current_row, column=1, sticky="ew", padx=5, pady=10)
-        ttk.Button(config_frame, text="Browse", command=self.browse_itunes_xml).grid(row=current_row, column=2, padx=5, pady=10)
-        
-        current_row += 1
-        
-        # DJ Library path
-        ttk.Label(config_frame, text="DJ Library Folder:").grid(row=current_row, column=0, sticky="w", padx=10, pady=10)
-        self.dj_library_var = tk.StringVar()
-        # Add trace to recalculate new tracks when DJ Library path changes
-        self.dj_library_var.trace('w', lambda *args: self.recalculate_new_tracks_if_loaded())
-        ttk.Entry(config_frame, textvariable=self.dj_library_var, width=50).grid(row=current_row, column=1, sticky="ew", padx=5, pady=10)
-        ttk.Button(config_frame, text="Browse", command=self.browse_dj_library).grid(row=current_row, column=2, padx=5, pady=10)
-        
-        current_row += 1
-        
-        # Export XML path
-        ttk.Label(config_frame, text="Export XML:").grid(row=current_row, column=0, sticky="w", padx=10, pady=10)
-        self.export_xml_var = tk.StringVar()
-        ttk.Entry(config_frame, textvariable=self.export_xml_var, width=50).grid(row=current_row, column=1, sticky="ew", padx=5, pady=10)
-        ttk.Button(config_frame, text="Browse", command=self.browse_export_xml).grid(row=current_row, column=2, padx=5, pady=10)
-        
-        current_row += 1
-        
-        # External-specific paths frame (initially hidden)
-        self.mac_paths_frame = ttk.LabelFrame(config_frame, text="External Destination Paths (for XML references)")
-        self.mac_paths_frame.grid(row=current_row, column=0, columnspan=3, sticky="ew", padx=10, pady=10)
-        self.mac_paths_frame.columnconfigure(1, weight=1)
-        self.mac_paths_frame.grid_remove()  # Hidden by default
-        
-        # External DJ Library path
-        ttk.Label(self.mac_paths_frame, text="External DJ Library:").grid(row=0, column=0, sticky="w", padx=10, pady=10)
-        self.mac_dj_library_var = tk.StringVar(value="/Users/flori/Music/DJ Library")
-        ttk.Entry(self.mac_paths_frame, textvariable=self.mac_dj_library_var, width=50).grid(row=0, column=1, sticky="ew", padx=5, pady=10)
-        
-        ttk.Label(self.mac_paths_frame, text="Example: /Users/flori/Music/DJ Library", 
-                 foreground="gray", font=("Arial", 8)).grid(row=1, column=1, sticky="w", padx=5, pady=0)
-        
-        current_row += 1
-        
-        # Options section
-        options_frame = ttk.LabelFrame(config_frame, text="Options")
-        options_frame.grid(row=current_row, column=0, columnspan=3, sticky="ew", padx=10, pady=10)
-        
+        ttk.Radiobutton(dest_row, text="Local", variable=self.target_os_var,
+                        value="Local", command=self.on_target_os_changed).pack(side=tk.LEFT, padx=(0, 20))
+        ttk.Radiobutton(dest_row, text="External", variable=self.target_os_var,
+                        value="External", command=self.on_target_os_changed).pack(side=tk.LEFT)
+
+        self.os_info_label = ttk.Label(dest_row, text="", foreground="blue", font=("Arial", 9))
+        self.os_info_label.pack(side=tk.LEFT, padx=(15, 0))
+
         self.debug_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(options_frame, text="Show detailed info for missing tracks", variable=self.debug_var).grid(row=0, column=0, sticky="w", padx=10, pady=5)
+        ttk.Checkbutton(options_frame, text="Show detailed info for missing tracks", variable=self.debug_var).grid(row=1, column=0, sticky="w", padx=10, pady=5)
 
         # File handling mode - using mutually exclusive checkboxes
         file_mode_label = ttk.Label(options_frame, text="For files that already exist:", font=('', 9, 'bold'))
-        file_mode_label.grid(row=1, column=0, columnspan=3, sticky="w", padx=10, pady=(10, 2))
+        file_mode_label.grid(row=2, column=0, columnspan=3, sticky="w", padx=10, pady=(10, 2))
 
         # Frame to hold checkboxes side by side
         file_mode_frame = ttk.Frame(options_frame)
-        file_mode_frame.grid(row=2, column=0, columnspan=3, sticky="w", padx=30, pady=2)
+        file_mode_frame.grid(row=3, column=0, columnspan=3, sticky="w", padx=30, pady=2)
 
         self.skip_existing_var = tk.BooleanVar(value=True)
         self.overwrite_all_var = tk.BooleanVar(value=False)
@@ -282,19 +234,17 @@ class PlaylistSyncUI:
             if self.skip_existing_var.get():
                 self.overwrite_all_var.set(False)
             elif not self.overwrite_all_var.get():
-                # If trying to uncheck skip while overwrite is also unchecked, keep skip checked
                 self.skip_existing_var.set(True)
 
         def on_overwrite_toggle():
             if self.overwrite_all_var.get():
                 self.skip_existing_var.set(False)
             elif not self.skip_existing_var.get():
-                # If trying to uncheck overwrite while skip is also unchecked, keep overwrite checked
                 self.overwrite_all_var.set(True)
 
         skip_checkbox = ttk.Checkbutton(
             file_mode_frame,
-            text="⏭  Skip copying",
+            text="\u23ed  Skip copying",
             variable=self.skip_existing_var,
             command=on_skip_toggle
         )
@@ -302,7 +252,7 @@ class PlaylistSyncUI:
 
         overwrite_checkbox = ttk.Checkbutton(
             file_mode_frame,
-            text="♻  Overwrite files",
+            text="\u267b  Overwrite files",
             variable=self.overwrite_all_var,
             command=on_overwrite_toggle
         )
@@ -315,10 +265,72 @@ class PlaylistSyncUI:
         self.preserve_album_art_var = tk.BooleanVar(value=True)
 
         self.archive_removed_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(options_frame, text="Archive removed tracks (tracks no longer in any playlists)", variable=self.archive_removed_var).grid(row=3, column=0, columnspan=3, sticky="w", padx=10, pady=5)
+        ttk.Checkbutton(options_frame, text="Archive removed tracks (tracks no longer in any playlists)", variable=self.archive_removed_var).grid(row=4, column=0, columnspan=3, sticky="w", padx=10, pady=5)
+
+        # === CONFIGURATION (file paths) ===
+        config_frame = ttk.LabelFrame(parent, text="Configuration")
+        config_frame.grid(row=1, column=0, sticky="ew", padx=5, pady=5)
+        config_frame.columnconfigure(1, weight=1)
+
+        current_row = 0
+
+        # --- Source ---
+        source_label = ttk.Label(config_frame, text="Source", font=("Arial", 9, "bold"))
+        source_label.grid(row=current_row, column=0, columnspan=3, sticky="w", padx=10, pady=(10, 0))
 
         current_row += 1
-        
+
+        # iTunes XML path (source)
+        ttk.Label(config_frame, text="iTunes XML:").grid(row=current_row, column=0, sticky="w", padx=10, pady=10)
+        self.itunes_xml_var = tk.StringVar()
+        ttk.Entry(config_frame, textvariable=self.itunes_xml_var, width=50).grid(row=current_row, column=1, sticky="ew", padx=5, pady=10)
+        ttk.Button(config_frame, text="Browse", command=self.browse_itunes_xml).grid(row=current_row, column=2, padx=5, pady=10)
+
+        current_row += 1
+
+        ttk.Separator(config_frame, orient="horizontal").grid(row=current_row, column=0, columnspan=3, sticky="ew", padx=10, pady=5)
+
+        current_row += 1
+
+        # --- Destination ---
+        dest_label = ttk.Label(config_frame, text="Destination", font=("Arial", 9, "bold"))
+        dest_label.grid(row=current_row, column=0, columnspan=3, sticky="w", padx=10, pady=(5, 0))
+
+        current_row += 1
+
+        # DJ Library path (destination)
+        ttk.Label(config_frame, text="DJ Library Folder:").grid(row=current_row, column=0, sticky="w", padx=10, pady=10)
+        self.dj_library_var = tk.StringVar()
+        self.dj_library_var.trace('w', lambda *args: self.recalculate_new_tracks_if_loaded())
+        ttk.Entry(config_frame, textvariable=self.dj_library_var, width=50).grid(row=current_row, column=1, sticky="ew", padx=5, pady=10)
+        ttk.Button(config_frame, text="Browse", command=self.browse_dj_library).grid(row=current_row, column=2, padx=5, pady=10)
+
+        current_row += 1
+
+        # Export XML path (destination)
+        ttk.Label(config_frame, text="Export XML:").grid(row=current_row, column=0, sticky="w", padx=10, pady=10)
+        self.export_xml_var = tk.StringVar()
+        ttk.Entry(config_frame, textvariable=self.export_xml_var, width=50).grid(row=current_row, column=1, sticky="ew", padx=5, pady=10)
+        ttk.Button(config_frame, text="Browse", command=self.browse_export_xml).grid(row=current_row, column=2, padx=5, pady=10)
+
+        current_row += 1
+
+        # External-specific paths frame (initially hidden)
+        self.mac_paths_frame = ttk.LabelFrame(config_frame, text="External Destination Paths (for XML references)")
+        self.mac_paths_frame.grid(row=current_row, column=0, columnspan=3, sticky="ew", padx=10, pady=10)
+        self.mac_paths_frame.columnconfigure(1, weight=1)
+        self.mac_paths_frame.grid_remove()  # Hidden by default
+
+        # External DJ Library path
+        ttk.Label(self.mac_paths_frame, text="External DJ Library:").grid(row=0, column=0, sticky="w", padx=10, pady=10)
+        self.mac_dj_library_var = tk.StringVar(value="/Users/flori/Music/DJ Library")
+        ttk.Entry(self.mac_paths_frame, textvariable=self.mac_dj_library_var, width=50).grid(row=0, column=1, sticky="ew", padx=5, pady=10)
+
+        ttk.Label(self.mac_paths_frame, text="Example: /Users/flori/Music/DJ Library",
+                 foreground="gray", font=("Arial", 8)).grid(row=1, column=1, sticky="w", padx=5, pady=0)
+
+        current_row += 1
+
         # IMPROVED Playlist selection section
         playlist_frame = ttk.LabelFrame(config_frame, text="Playlist Selection")
         playlist_frame.grid(row=current_row, column=0, columnspan=3, sticky="nsew", padx=10, pady=10)
@@ -394,23 +406,24 @@ class PlaylistSyncUI:
         main_btn_frame.grid(row=current_row+1, column=0, columnspan=3, sticky="ew", pady=10)
         main_btn_frame.columnconfigure(1, weight=1)
         
-        self.check_ffmpeg_btn = ttk.Button(main_btn_frame, text="Check FFmpeg", command=self.check_ffmpeg_ui, width=15)
-        self.check_ffmpeg_btn.grid(row=0, column=0, padx=10)
-
-        self.check_flac_btn = ttk.Button(main_btn_frame, text="Check FLAC", command=self.check_flac_ui, width=15)
-        self.check_flac_btn.grid(row=1, column=0, padx=10)
-
         self.load_playlists_btn = ttk.Button(main_btn_frame, text="Load Playlists", command=self.load_playlists, width=15)
-        self.load_playlists_btn.grid(row=0, column=1, padx=10)
+        self.load_playlists_btn.grid(row=0, column=0, padx=10)
 
         self.save_settings_btn = ttk.Button(main_btn_frame, text="Save Settings", command=self._save_settings, width=15)
-        self.save_settings_btn.grid(row=1, column=1, padx=10)
+        self.save_settings_btn.grid(row=1, column=0, padx=10)
 
-        self.export_xml_btn = tk.Button(main_btn_frame, text="Export XML", command=self.export_xml_only, width=15, bg="yellow", fg="black", font=('', 9, 'bold'))
-        self.export_xml_btn.grid(row=0, column=2, padx=10)
+        # Action buttons aligned together on the right
+        action_btns = ttk.Frame(main_btn_frame)
+        action_btns.grid(row=0, column=1, rowspan=2, sticky="e", padx=10)
 
-        self.sync_btn = tk.Button(main_btn_frame, text="Start Sync", command=self.start_sync, width=15, bg="green", fg="white", font=('', 9, 'bold'))
-        self.sync_btn.grid(row=0, column=3, padx=10)
+        self.export_xml_btn = tk.Button(action_btns, text="Export XML", command=self.export_xml_only, width=15, bg="yellow", fg="black", font=('', 9, 'bold'))
+        self.export_xml_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.sync_btn = tk.Button(action_btns, text="Start Sync", command=self.start_sync, width=15, bg="green", fg="white", font=('', 9, 'bold'))
+        self.sync_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+        self.cancel_btn = tk.Button(action_btns, text="Cancel", command=self._cancel_sync, width=15, bg="red", fg="white", font=('', 9, 'bold'), state=tk.DISABLED)
+        self.cancel_btn.pack(side=tk.LEFT)
 
         # Initialize Mac paths visibility
         self.on_target_os_changed()
@@ -660,7 +673,7 @@ class PlaylistSyncUI:
 
     def create_results_panel(self, parent):
         results_frame = ttk.LabelFrame(parent, text="Sync Progress and Results")
-        results_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
+        results_frame.grid(row=2, column=0, sticky="nsew", padx=5, pady=5)
         results_frame.columnconfigure(0, weight=1)
         results_frame.rowconfigure(0, weight=1)
         
@@ -1468,9 +1481,8 @@ class PlaylistSyncUI:
 
         self.sync_btn.config(state=tk.DISABLED)
         self.export_xml_btn.config(state=tk.DISABLED)
-        self.check_ffmpeg_btn.config(state=tk.DISABLED)
-        self.check_flac_btn.config(state=tk.DISABLED)
         self.load_playlists_btn.config(state=tk.DISABLED)
+        self.cancel_btn.config(state=tk.NORMAL)
         self.syncing = True
 
         self.analysis_text.delete(1.0, tk.END)
@@ -1590,9 +1602,13 @@ class PlaylistSyncUI:
     def enable_buttons(self):
         self.sync_btn.config(state=tk.NORMAL)
         self.export_xml_btn.config(state=tk.NORMAL)
-        self.check_ffmpeg_btn.config(state=tk.NORMAL)
-        self.check_flac_btn.config(state=tk.NORMAL)
         self.load_playlists_btn.config(state=tk.NORMAL)
+        self.cancel_btn.config(state=tk.DISABLED)
+
+    def _cancel_sync(self):
+        """Cancel the current sync operation."""
+        self.syncing = False
+        self.status_var.set("Cancelling...")
     
     def append_to_text_widget(self, text_widget, message):
         def update_text():
