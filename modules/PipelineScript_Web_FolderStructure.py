@@ -123,21 +123,16 @@ class FolderStructureCreator(FormKeyboardMixin):
         self.date_entry = create_styled_entry(row2, textvariable=self.date_var, width=12)
         self.date_entry.pack(side=tk.LEFT, padx=(0, 20))
 
-        self.include_shots_var = tk.BooleanVar(value=True)
-        self.shots_check = create_styled_checkbox(
-            row2, text="Shot folders", variable=self.include_shots_var
-        )
-        self.shots_check.pack(side=tk.LEFT, padx=(0, 20))
-
         # Software chips
         sw_defaults = self.settings.get_software_defaults("Web")
         self.software_chip_frame, self.software_chips = create_software_chip_row(
             row2,
-            ["Houdini", "Blender", "Fusion"],
+            ["Wordpress", "Bricks", "Vitepress", "Polygonjs"],
             defaults={
-                "Houdini": sw_defaults.get("houdini", "20.5"),
-                "Blender": sw_defaults.get("blender", "4.4"),
-                "Fusion": sw_defaults.get("fusion", "19"),
+                "Wordpress": sw_defaults.get("wordpress", "6.7"),
+                "Bricks": sw_defaults.get("bricks", "1.12"),
+                "Vitepress": sw_defaults.get("vitepress", "1.6"),
+                "Polygonjs": sw_defaults.get("polygonjs", "1.8"),
             },
             on_change=lambda *args: self.update_preview()
         )
@@ -195,13 +190,12 @@ class FolderStructureCreator(FormKeyboardMixin):
         self.project_name_var.trace_add("write", lambda *args: self.update_preview())
         self.date_var.trace_add("write", lambda *args: self.update_preview())
         self.personal_var.trace_add("write", lambda *args: self.update_preview())
-        self.include_shots_var.trace_add("write", lambda *args: self.update_preview())
 
     def _collect_focusable_widgets(self):
         """Collect widgets for keyboard navigation."""
         self._focusable_widgets = [
             self.client_entry, self.project_entry, self.personal_check,
-            self.date_entry, self.shots_check, self.notes_text,
+            self.date_entry, self.notes_text,
         ]
         self._create_btn = self.create_btn
         self._browse_btn = self.browse_btn
@@ -211,18 +205,11 @@ class FolderStructureCreator(FormKeyboardMixin):
 
         # Add Enter binding for checkboxes to toggle them
         self.personal_check.bind("<Return>", lambda e: self._toggle_personal_checkbox())
-        self.shots_check.bind("<Return>", lambda e: self._toggle_shots_checkbox())
 
     def _toggle_personal_checkbox(self):
         """Toggle personal checkbox when Enter is pressed."""
         self.personal_var.set(not self.personal_var.get())
         self.toggle_personal()
-        return "break"
-
-    def _toggle_shots_checkbox(self):
-        """Toggle shots checkbox when Enter is pressed."""
-        self.include_shots_var.set(not self.include_shots_var.get())
-        self.update_preview()
         return "break"
 
     def toggle_personal(self):
@@ -244,6 +231,41 @@ class FolderStructureCreator(FormKeyboardMixin):
             self.base_dir_var.set(directory)
             self.update_preview()
 
+    def _get_conditionals(self):
+        """Build conditionals dict from current form state."""
+        active_software = get_active_software(self.software_chips)
+        return {
+            'polygonjs': 'Polygonjs' in active_software,
+            'client_project': not self.personal_var.get(),
+        }
+
+    def get_folder_structure_preview(self):
+        """Generate the folder structure that will be created."""
+        if not os.path.isfile(self.tree_file):
+            return []
+        tree = parse_tree_file(self.tree_file)
+        conditionals = self._get_conditionals()
+        date = self.date_var.get() or datetime.now().strftime('%Y-%m-%d')
+        replacements = {'YYY-MM-DD': date}
+
+        folders = []
+        skipped_prefixes = []
+        for path, cond in tree:
+            skip = False
+            for prefix in skipped_prefixes:
+                if path.startswith(prefix + '/'):
+                    skip = True
+                    break
+            if skip:
+                continue
+            if cond and not conditionals.get(cond, True):
+                skipped_prefixes.append(path)
+                continue
+            for placeholder, value in replacements.items():
+                path = path.replace(placeholder, value)
+            folders.append(path)
+        return folders
+
     def update_preview(self):
         """Update the preview."""
         self.preview_text.configure(state=tk.NORMAL)
@@ -252,12 +274,11 @@ class FolderStructureCreator(FormKeyboardMixin):
         client = self.client_name_var.get() or "[Client]"
         project = self.project_name_var.get() or "[Project]"
         date = self.date_var.get() or datetime.now().strftime('%Y-%m-%d')
-        include_shots = self.include_shots_var.get()
 
         if client and client != "Personal":
             project_dir = f"{date}_{client}_{project}"
         else:
-            project_dir = f"{date}_{project}"
+            project_dir = f"{project}"
         base_dir = self.base_dir_var.get()
 
         if self.personal_var.get():
@@ -271,18 +292,14 @@ class FolderStructureCreator(FormKeyboardMixin):
         active_software = get_active_software(self.software_chips)
         if active_software:
             software_str = "  |  ".join([f"{name}: {ver}" for name, ver in active_software.items()])
-            self.preview_text.insert(tk.END, f"{software_str}\n")
-        self.preview_text.insert(tk.END, f"Shot folders: {'Yes' if include_shots else 'No'}\n\n")
+            self.preview_text.insert(tk.END, f"{software_str}\n\n")
 
-        if os.path.isfile(self.tree_file):
-            tree_entries = parse_tree_file(self.tree_file)
-            self.preview_text.insert(tk.END, "Structure:\n")
-            for path, _ in tree_entries:
-                depth = path.count('/')
-                name = path.split('/')[-1]
-                self.preview_text.insert(tk.END, f"{'  ' * depth}{name}/\n")
-        else:
-            self.preview_text.insert(tk.END, "Tree structure file not found.\n")
+        self.preview_text.insert(tk.END, "Structure:\n")
+        folders = self.get_folder_structure_preview()
+        for path in folders:
+            depth = path.count('/')
+            name = path.split('/')[-1]
+            self.preview_text.insert(tk.END, f"{'  ' * depth}{name}/\n")
 
         self.preview_text.configure(state=tk.DISABLED)
 
@@ -292,7 +309,6 @@ class FolderStructureCreator(FormKeyboardMixin):
         client_name = self.client_name_var.get()
         project_name = self.project_name_var.get()
         date = self.date_var.get()
-        include_shots = self.include_shots_var.get()
 
         software_specs = get_active_software(self.software_chips)
 
@@ -325,15 +341,15 @@ class FolderStructureCreator(FormKeyboardMixin):
         if client_name and client_name != "Personal":
             folder_name = f'{date}_{client_name}_{project_name}'
         else:
-            folder_name = f'{date}_{project_name}'
+            folder_name = f'{project_name}'
             client_name = "Personal"
         project_dir = os.path.join(base_dir, folder_name)
 
         try:
             os.makedirs(project_dir, exist_ok=True)
-            tree = parse_tree_file(self.tree_file)
-            replacements = {'YYY-MM-DD': date}
-            created = tree_create_structure(project_dir, tree, replacements)
+            folders = self.get_folder_structure_preview()
+            for folder in folders:
+                os.makedirs(os.path.join(project_dir, folder), exist_ok=True)
 
             docs_dir = os.path.join(project_dir, '_Library', 'Documents')
             os.makedirs(docs_dir, exist_ok=True)
@@ -351,7 +367,6 @@ class FolderStructureCreator(FormKeyboardMixin):
                 'notes': self.notes_text.get(1.0, tk.END).strip(),
                 'metadata': {
                     'software_specs': software_specs,
-                    'include_shots': include_shots,
                     'is_personal': self.personal_var.get()
                 }
             }
@@ -390,13 +405,9 @@ Project: {project_name}
 Client: {client_name}
 Date: {date}
 
-SOFTWARE VERSIONS
+SOFTWARE / FRAMEWORKS
 ======================
 {software_lines}
-
-SHOT FOLDERS
-======================
-{"Included" if self.include_shots_var.get() else "Excluded"}
 
 NOTES
 ======================
