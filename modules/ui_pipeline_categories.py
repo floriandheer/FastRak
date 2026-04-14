@@ -177,6 +177,12 @@ CREATIVE_CATEGORIES = {
                 "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Web_PublishStatic.py"),
                 "description": "Upload Staatic exports to FTP, sync DokuWiki, and create dated archives",
                 "icon": "🚀"
+            },
+            "devbackup_wordpress": {
+                "name": "WordPress Dev Backup",
+                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Web_DevBackup.py"),
+                "description": "Backup/restore WordPress dev sites (files + DB) and Laragon environment",
+                "icon": "💾"
             }
         },
         "subcategories": {}
@@ -195,12 +201,6 @@ BUSINESS_CATEGORIES = {
                 "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Bookkeeping_FolderStructure.py"),
                 "description": "Create folder structure for bookkeeping and financial records",
                 "icon": "📋"
-            },
-            "inside_tracker": {
-                "name": "Inside Tracker",
-                "path": os.path.join(SCRIPTS_DIR, "PipelineScript_Business_InsideTracker.py"),
-                "description": "Monitor and download politician stock trade filings (PTR) from House Clerk",
-                "icon": "📊"
             },
             "invoice_checker": {
                 "name": "Invoice Checker",

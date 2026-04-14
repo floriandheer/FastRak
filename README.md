@@ -157,6 +157,7 @@ The Pipeline Manager includes 14+ specialized scripts organized by category:
 - **New Web Project** - Standardized web development structure
 - [**Laragon Workspace Manager**](README_LARAGON_WORKSPACE_MANAGER.md) - Manage Laragon project junctions to work drive
 - [**Publish Static Site**](README_STATIC_SITE_PUBLISHER.md) - Upload Staatic exports to FTP, sync DokuWiki, and create dated archives
+- [**WordPress Dev Backup**](README_WORDPRESS_DEV_BACKUP.md) - Backup/restore WordPress dev sites (files + DB) and Laragon environment
 
 #### 🖨️ 3D Printing
 - **New 3D Printing Project** - Organize 3D printing files and iterations
