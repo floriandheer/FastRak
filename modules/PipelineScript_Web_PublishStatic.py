@@ -52,6 +52,17 @@ class WebPublishConfig:
             "backup_max_per_project": 5
         }
 
+    @staticmethod
+    def _detect_laragon_www() -> str:
+        """Return Laragon www path if it exists."""
+        try:
+            from PipelineScript_Web_DevBackup import DevBackupConfig
+            return DevBackupConfig().get_www_path()
+        except Exception:
+            # Fallback to default
+            www = r"C:\laragon\www"
+            return www if os.path.isdir(www) else ""
+
     def _discover_sites(self) -> Dict:
         """Scan Web folder for site directories (work at root, personal under _Personal/)."""
         work = get_rak_settings().get_work_drive()
@@ -61,6 +72,8 @@ class WebPublishConfig:
         if not os.path.isdir(web_root):
             logger.warning(f"Web directory not found: {web_root}")
             return sites
+
+        laragon_www = self._detect_laragon_www()
 
         # Work sites at Web/ root, personal sites under Web/_Personal/
         scan_targets = [(web_root, False), (os.path.join(web_root, "_Personal"), True)]
@@ -102,29 +115,31 @@ class WebPublishConfig:
                             dev_dir = candidate
                         break
 
-                # Detect wiki support
-                has_wiki = any(
-                    d.lower() == "_wiki_latest"
-                    for d in os.listdir(site_path)
-                    if os.path.isdir(os.path.join(site_path, d))
-                )
-
-                wiki_latest_dir = ""
+                # Detect wiki support (brainii folder inside 02_Development)
+                has_wiki = False
+                wiki_local_dir = ""
                 wiki_remote_path = ""
-                if has_wiki:
-                    for d in os.listdir(site_path):
-                        if d.lower() == "_wiki_latest":
-                            wiki_latest_dir = os.path.join(site_path, d)
-                            break
-                    wiki_remote_path = "/brainii"
+                if dev_dir:
+                    brainii_candidate = os.path.join(dev_dir, "brainii")
+                    if os.path.isdir(brainii_candidate):
+                        has_wiki = True
+                        wiki_local_dir = brainii_candidate
+                        wiki_remote_path = "/brainii"
+
+                # Detect WordPress (wp-config.php in Laragon www)
+                is_wordpress = False
+                if laragon_www:
+                    wp_config = os.path.join(laragon_www, entry, "wp-config.php")
+                    is_wordpress = os.path.isfile(wp_config)
 
                 sites[entry] = {
                     "label": entry,
                     "is_personal": is_personal,
                     "export_dir": export_dir,
                     "dev_dir": dev_dir,
+                    "is_wordpress": is_wordpress,
                     "has_wiki": has_wiki,
-                    "wiki_latest_dir": wiki_latest_dir,
+                    "wiki_local_dir": wiki_local_dir,
                     "wiki_remote_path": wiki_remote_path,
                     "ftp": {
                         "protocol": "ftp",
@@ -344,6 +359,7 @@ class PublishWorkflow:
         self.has_wiki = self.site_cfg.get("has_wiki", False)
         self.has_dev = bool(self.site_cfg.get("dev_dir", "")
                            and os.path.isdir(self.site_cfg.get("dev_dir", "")))
+        self.is_wordpress = self.site_cfg.get("is_wordpress", False)
 
         # Callbacks: on_step_start(idx, name), on_step_done(idx, success),
         #            on_output(msg), on_complete(success, msg),
@@ -357,7 +373,7 @@ class PublishWorkflow:
             steps = [
                 "Validate",
                 "FTP Upload (excl. wiki)",
-                "Download wiki",
+                "Sync wiki to local",
                 "Archive",
             ]
         else:
@@ -367,7 +383,8 @@ class PublishWorkflow:
                 "Archive",
             ]
         if self.has_dev:
-            steps.append("Dev Backup")
+            dev_label = "Dev Backup (WP + DB)" if self.is_wordpress else "Dev Backup"
+            steps.append(dev_label)
         return steps
 
     def cancel(self):
@@ -457,7 +474,7 @@ class PublishWorkflow:
             return
         step += 1
 
-        # Step 2: Download wiki from server to _wiki_latest
+        # Step 2: Download wiki from server to 02_Development/brainii
         self._step_start(step, steps[step])
         ok = self._download_wiki()
         self._step_done(step, ok)
@@ -542,24 +559,24 @@ class PublishWorkflow:
         return False
 
     def _download_wiki(self) -> bool:
-        """Download wiki from server directly into _wiki_latest.
+        """Download wiki from server into 02_Development/brainii.
 
         Retries on transient failures. Non-fatal: warns and continues
         if the download cannot be completed so the publish is not blocked.
         """
-        wiki_latest = self.site_cfg.get("wiki_latest_dir", "")
-        if not wiki_latest:
-            self._output("No wiki_latest path configured, skipping")
+        wiki_local = self.site_cfg.get("wiki_local_dir", "")
+        if not wiki_local:
+            self._output("No wiki local path configured, skipping")
             return True
 
         ftp_cfg = self.site_cfg["ftp"]
-        wiki_remote = self.site_cfg.get("wiki_remote_path", "/wiki")
+        wiki_remote = self.site_cfg.get("wiki_remote_path", "/brainii")
         winscp_path = self.winscp_mgr.find_winscp()
 
-        os.makedirs(wiki_latest, exist_ok=True)
+        os.makedirs(wiki_local, exist_ok=True)
 
         script = self.winscp_mgr.build_wiki_download_script(
-            ftp_cfg, wiki_remote, wiki_latest
+            ftp_cfg, wiki_remote, wiki_local
         )
 
         max_attempts = 3
@@ -573,16 +590,16 @@ class PublishWorkflow:
                              f"retrying in {wait_sec}s ... ({attempt}/{max_attempts})")
                 time.sleep(wait_sec)
 
-            self._output(f"Downloading wiki from {wiki_remote} to _wiki_latest ...")
+            self._output(f"Syncing wiki from {wiki_remote} to {os.path.basename(wiki_local)}/ ...")
             exit_code = self.winscp_mgr.execute_script(
                 winscp_path, script, on_output=self._output
             )
             if exit_code == 0:
-                self._output("Wiki downloaded to _wiki_latest")
+                self._output("Wiki synced to 02_Development/brainii")
                 return True
 
         self._output(f"Wiki download failed after {max_attempts} attempts "
-                     f"(exit code {exit_code}) — continuing without wiki backup")
+                     f"(exit code {exit_code}) — continuing without wiki sync")
         return True  # Non-fatal: don't block the publish
 
     def _archive(self) -> bool:
@@ -608,21 +625,6 @@ class PublishWorkflow:
                         arcname = os.path.relpath(file_path, export_dir)
                         zf.write(file_path, arcname)
 
-                # Include wiki from _wiki_latest (not in export_dir)
-                if self.has_wiki:
-                    wiki_latest = self.site_cfg.get("wiki_latest_dir", "")
-                    if wiki_latest and os.path.isdir(wiki_latest):
-                        self._output("Adding wiki to archive ...")
-                        # Skip bulky DokuWiki dirs that aren't essential
-                        skip_dirs = {"attic", "cache", "tmp", "locks", "index"}
-                        for dirpath, dirnames, filenames in os.walk(wiki_latest):
-                            dirnames[:] = [d for d in dirnames if d not in skip_dirs]
-                            for filename in filenames:
-                                file_path = os.path.join(dirpath, filename)
-                                arcname = os.path.join(
-                                    "brainii", os.path.relpath(file_path, wiki_latest))
-                                zf.write(file_path, arcname)
-
             size_mb = os.path.getsize(zip_path) / (1024 * 1024)
             self._output(f"Archive created: {zip_name} ({size_mb:.1f} MB)")
 
@@ -645,7 +647,90 @@ class PublishWorkflow:
             return False
 
     def _archive_dev(self) -> bool:
-        """Archive the 02_Development folder alongside the publish backup."""
+        """Archive the 02_Development folder alongside the publish backup.
+
+        For WordPress sites, delegates to the WordPress dev backup module
+        which includes a database dump alongside the site files.
+        """
+        if self.site_cfg.get("is_wordpress", False):
+            return self._archive_dev_wordpress()
+        return self._archive_dev_static()
+
+    def _archive_dev_wordpress(self) -> bool:
+        """WordPress dev backup: files + database dump via the dev backup module."""
+        try:
+            from PipelineScript_Web_DevBackup import (
+                DevBackupConfig, SiteDiscovery, MysqlManager, BackupManager
+            )
+        except ImportError as e:
+            self._output(f"Cannot import WordPress backup module: {e}")
+            self._output("Falling back to static dev backup (no database dump)")
+            return self._archive_dev_static()
+
+        wp_config = DevBackupConfig()
+        www_path = wp_config.get_www_path()
+        site_path = os.path.join(www_path, self.site_key)
+
+        if not os.path.isdir(site_path):
+            self._output(f"WordPress site not found in Laragon: {site_path}")
+            self._output("Falling back to static dev backup (no database dump)")
+            return self._archive_dev_static()
+
+        wp_config_file = os.path.join(site_path, "wp-config.php")
+        parsed = SiteDiscovery.parse_wp_config(wp_config_file)
+        if not parsed:
+            self._output("Could not parse wp-config.php")
+            self._output("Falling back to static dev backup (no database dump)")
+            return self._archive_dev_static()
+
+        from PipelineScript_Web_DevBackup import WPSite
+        wp_site = WPSite(
+            name=self.site_key,
+            path=site_path,
+            wp_config_path=wp_config_file,
+            db_name=parsed["db_name"],
+            db_user=parsed["db_user"],
+            db_password=parsed["db_password"],
+            db_host=parsed["db_host"],
+            table_prefix=parsed["table_prefix"],
+        )
+
+        archive_base = get_rak_settings().get_archive_path("Web")
+        if self.site_cfg.get("is_personal", False):
+            site_archive_dir = os.path.join(archive_base, "_Personal", self.site_key)
+        else:
+            site_archive_dir = os.path.join(archive_base, self.site_key)
+
+        mysql_mgr = MysqlManager(wp_config.get_laragon_path())
+        exclude = wp_config.get_exclude_dirs()
+
+        self._output(f"WordPress dev backup: {self.site_key} (db: {parsed['db_name']})")
+
+        ok, msg = BackupManager.backup_site(
+            wp_site, site_archive_dir, mysql_mgr, exclude,
+            on_output=self._output
+        )
+
+        if ok:
+            max_keep = self.config.get_max_backups()
+            pattern = os.path.join(site_archive_dir, f"dev_{self.site_key}_*.zip")
+            backups = sorted(glob.glob(pattern))
+            if len(backups) > max_keep:
+                for old in backups[:len(backups) - max_keep]:
+                    try:
+                        os.remove(old)
+                        self._output(f"Rotated: {os.path.basename(old)}")
+                    except OSError as e:
+                        logger.warning(f"Failed to remove {old}: {e}")
+            self._output(f"WordPress dev backup complete: {msg}")
+            return True
+        else:
+            self._output(f"WordPress dev backup failed: {msg}")
+            self._complete(False, f"Dev backup failed: {msg}")
+            return False
+
+    def _archive_dev_static(self) -> bool:
+        """Static dev backup: zip the 02_Development folder."""
         dev_dir = self.site_cfg.get("dev_dir", "")
         if not dev_dir or not os.path.isdir(dev_dir):
             self._output(f"Dev directory not found: {dev_dir}")
@@ -822,7 +907,7 @@ class FTPSettingsDialog:
         tk.Button(paths_frame, text="...", width=3,
                   command=self._browse_export).grid(row=0, column=2, padx=5, pady=4)
 
-        tk.Label(paths_frame, text="Wiki Latest:").grid(row=1, column=0, sticky="w", padx=10, pady=4)
+        tk.Label(paths_frame, text="Wiki Local:").grid(row=1, column=0, sticky="w", padx=10, pady=4)
         self.wiki_var = tk.StringVar()
         self.wiki_entry = tk.Entry(paths_frame, textvariable=self.wiki_var, width=45)
         self.wiki_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=4)
@@ -888,8 +973,8 @@ class FTPSettingsDialog:
         self.pass_var.set(ftp.get("password", ""))
         self.remote_var.set(ftp.get("remote_path", "/"))
         self.export_var.set(cfg.get("export_dir", ""))
-        self.wiki_var.set(cfg.get("wiki_latest_dir", ""))
-        self.wiki_remote_var.set(cfg.get("wiki_remote_path", "/wiki"))
+        self.wiki_var.set(cfg.get("wiki_local_dir", ""))
+        self.wiki_remote_var.set(cfg.get("wiki_remote_path", "/brainii"))
 
         has_wiki = cfg.get("has_wiki", False)
         self.wiki_check_var.set(has_wiki)
@@ -902,7 +987,7 @@ class FTPSettingsDialog:
         site["label"] = self.label_var.get() or key
         site["has_wiki"] = self.wiki_check_var.get()
         site["export_dir"] = self.export_var.get()
-        site["wiki_latest_dir"] = self.wiki_var.get()
+        site["wiki_local_dir"] = self.wiki_var.get()
         site["wiki_remote_path"] = self.wiki_remote_var.get()
         ftp = site.setdefault("ftp", {})
         ftp["protocol"] = self.protocol_var.get()
@@ -960,7 +1045,7 @@ class FTPSettingsDialog:
             self.export_var.set(path)
 
     def _browse_wiki(self):
-        path = filedialog.askdirectory(title="Select Wiki Latest Directory", parent=self.dialog)
+        path = filedialog.askdirectory(title="Select Wiki Local Directory", parent=self.dialog)
         if path:
             self.wiki_var.set(path)
 
@@ -1153,18 +1238,20 @@ class PublishStaticUI:
         has_wiki = cfg.get("has_wiki", False)
         has_dev = bool(cfg.get("dev_dir", "")
                        and os.path.isdir(cfg.get("dev_dir", "")))
+        is_wordpress = cfg.get("is_wordpress", False)
 
         if has_wiki:
             steps = [
                 "Validate",
                 "FTP Upload (excl. wiki)",
-                "Download wiki",
+                "Sync wiki to local",
                 "Archive",
             ]
         else:
             steps = ["Validate", "FTP Upload", "Archive"]
         if has_dev:
-            steps.append("Dev Backup")
+            dev_label = "Dev Backup (WP + DB)" if is_wordpress else "Dev Backup"
+            steps.append(dev_label)
 
         colors = FORM_COLORS
         for i, step in enumerate(steps):
