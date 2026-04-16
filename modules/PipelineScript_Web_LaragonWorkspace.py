@@ -2,20 +2,17 @@
 # -*- coding: utf-8 -*-
 """
 PipelineScript_Web_LaragonWorkspace.py
-Description: Manage Laragon project junctions, backups, and workspace settings
+Description: Manage Laragon project junctions and workspace settings
 """
 
 import os
 import sys
 import json
-import glob
 import shutil
 import subprocess
 import threading
-import zipfile
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
-from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -30,7 +27,6 @@ logger = get_logger("laragon_workspace")
 # ====================================
 
 PERSONAL_SITES = ["floriandheer", "hyphen-v", "alles3d"]
-DEFAULT_EXCLUDE_DIRS = {".git", "node_modules", "vendor", "__pycache__", ".cache", ".tmp"}
 
 
 class LaragonConfig:
@@ -45,8 +41,6 @@ class LaragonConfig:
     def _default_config(self) -> Dict:
         return {
             "laragon_www_path": r"C:\laragon\www",
-            "backup_max_per_project": 5,
-            "backup_exclude_dirs": list(DEFAULT_EXCLUDE_DIRS),
             "projects": {}
         }
 
@@ -102,20 +96,6 @@ class LaragonConfig:
             "target": target,
             "category": category
         }
-        self._save()
-
-    def get_max_backups(self) -> int:
-        return self.config.get("backup_max_per_project", 5)
-
-    def set_max_backups(self, value: int):
-        self.config["backup_max_per_project"] = value
-        self._save()
-
-    def get_exclude_dirs(self) -> list:
-        return self.config.get("backup_exclude_dirs", list(DEFAULT_EXCLUDE_DIRS))
-
-    def set_exclude_dirs(self, dirs: list):
-        self.config["backup_exclude_dirs"] = dirs
         self._save()
 
     def remove_project(self, name: str):
@@ -299,65 +279,6 @@ class JunctionManager:
         return True, "Healthy"
 
     @staticmethod
-    def backup_project(project_name: str, source_path: str, archive_dir: str,
-                       exclude_dirs: list, on_output=None) -> Tuple[bool, str]:
-        """Create a timestamped zip backup of a project, excluding specified directories."""
-        def log(msg):
-            if on_output:
-                on_output(msg)
-            logger.info(msg)
-
-        if not os.path.isdir(source_path):
-            return False, f"Source not found: {source_path}"
-
-        os.makedirs(archive_dir, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-        zip_name = f"dev_{project_name}_{timestamp}.zip"
-        zip_path = os.path.join(archive_dir, zip_name)
-
-        exclude_set = set(exclude_dirs)
-        log(f"Backing up {project_name} ...")
-
-        try:
-            file_count = 0
-            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-                for root, dirs, files in os.walk(source_path):
-                    # Filter excluded directories in-place
-                    dirs[:] = [d for d in dirs if d not in exclude_set]
-                    for f in files:
-                        full = os.path.join(root, f)
-                        arcname = os.path.relpath(full, source_path)
-                        zf.write(full, arcname)
-                        file_count += 1
-
-            size_mb = os.path.getsize(zip_path) / (1024 * 1024)
-            msg = f"{zip_name} ({file_count} files, {size_mb:.1f} MB)"
-            log(f"  Created: {msg}")
-            return True, msg
-
-        except Exception as e:
-            # Clean up partial zip
-            if os.path.exists(zip_path):
-                try:
-                    os.remove(zip_path)
-                except OSError:
-                    pass
-            return False, f"Backup failed: {e}"
-
-    @staticmethod
-    def rotate_backups(archive_dir: str, project_name: str, max_keep: int):
-        """Delete oldest backups beyond max_keep for a project."""
-        pattern = os.path.join(archive_dir, f"dev_{project_name}_*.zip")
-        backups = sorted(glob.glob(pattern))
-        if len(backups) > max_keep:
-            for old in backups[:len(backups) - max_keep]:
-                try:
-                    os.remove(old)
-                    logger.info(f"Rotated: {os.path.basename(old)}")
-                except OSError as e:
-                    logger.warning(f"Failed to remove {old}: {e}")
-
-    @staticmethod
     def _mklink_junction(link_path: str, target_path: str) -> Tuple[bool, str]:
         """Create a Windows junction using mklink /J."""
         try:
@@ -445,40 +366,6 @@ class LaragonSettingsDialog:
         tk.Button(inner, text="Browse", command=self._browse_www,
                   bg=colors["accent"], fg=colors["fg"], relief=tk.FLAT).pack(side=tk.LEFT)
 
-        # --- Max backups ---
-        backup_frame = tk.LabelFrame(self.dialog, text="Backup Settings", bg=colors["bg"],
-                                     fg=colors["fg_dim"], font=("Arial", 9))
-        backup_frame.pack(fill=tk.X, **pad)
-
-        max_row = tk.Frame(backup_frame, bg=colors["bg"])
-        max_row.pack(fill=tk.X, padx=10, pady=(8, 4))
-
-        tk.Label(max_row, text="Max backups per project:", bg=colors["bg"],
-                 fg=colors["fg"], font=("Arial", 10)).pack(side=tk.LEFT)
-
-        self.max_var = tk.StringVar(value=str(self.config.get_max_backups()))
-        max_spin = tk.Spinbox(max_row, from_=1, to=50, textvariable=self.max_var, width=5,
-                              bg=colors["bg_card"], fg=colors["fg"],
-                              insertbackground=colors["fg"],
-                              font=("Consolas", 10), relief=tk.FLAT,
-                              buttonbackground=colors["accent"])
-        max_spin.pack(side=tk.LEFT, padx=8)
-
-        # --- Exclude directories ---
-        exclude_row = tk.Frame(backup_frame, bg=colors["bg"])
-        exclude_row.pack(fill=tk.X, padx=10, pady=(4, 8))
-
-        tk.Label(exclude_row, text="Exclude directories:", bg=colors["bg"],
-                 fg=colors["fg"], font=("Arial", 10)).pack(side=tk.LEFT)
-
-        self.exclude_var = tk.StringVar(
-            value=", ".join(self.config.get_exclude_dirs()))
-        exclude_entry = tk.Entry(exclude_row, textvariable=self.exclude_var,
-                                 bg=colors["bg_card"], fg=colors["fg"],
-                                 insertbackground=colors["fg"],
-                                 font=("Consolas", 9), relief=tk.FLAT)
-        exclude_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8)
-
         # --- Buttons ---
         btn_frame = tk.Frame(self.dialog, bg=colors["bg"])
         btn_frame.pack(fill=tk.X, padx=15, pady=(5, 15))
@@ -504,20 +391,7 @@ class LaragonSettingsDialog:
                                  parent=self.dialog)
             return
 
-        try:
-            max_backups = int(self.max_var.get())
-            if max_backups < 1:
-                raise ValueError
-        except ValueError:
-            messagebox.showerror("Error", "Max backups must be a positive integer.",
-                                 parent=self.dialog)
-            return
-
-        exclude_list = [d.strip() for d in self.exclude_var.get().split(",") if d.strip()]
-
         self.config.set_www_path(www)
-        self.config.set_max_backups(max_backups)
-        self.config.set_exclude_dirs(exclude_list)
         self.changed = True
         self.dialog.destroy()
 
@@ -734,17 +608,6 @@ class LaragonManagerUI:
                                    padx=15)
         self.newpc_btn.pack(side=tk.LEFT)
 
-        self.backup_btn = tk.Button(btn_frame, text="Backup All", command=self._backup_all,
-                                    bg="#2980b9", fg="white", font=("Arial", 10, "bold"),
-                                    relief=tk.FLAT, padx=15)
-        self.backup_btn.pack(side=tk.RIGHT)
-
-        self.backup_sel_btn = tk.Button(btn_frame, text="Backup Selected",
-                                        command=self._backup_selected,
-                                        bg="#2980b9", fg="white",
-                                        relief=tk.FLAT, padx=15)
-        self.backup_sel_btn.pack(side=tk.RIGHT, padx=(0, 8))
-
         # Output log
         output_frame = tk.Frame(self.root, bg=colors["bg"])
         output_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 5))
@@ -832,8 +695,6 @@ class LaragonManagerUI:
         self.link_btn.config(state=state)
         self.verify_btn.config(state=state)
         self.newpc_btn.config(state=state)
-        self.backup_btn.config(state=state)
-        self.backup_sel_btn.config(state=state)
 
     def _link_project(self):
         """Open link dialog for the selected project."""
@@ -986,94 +847,6 @@ class LaragonManagerUI:
                 self.root.after(0, self._refresh_project_list)
 
         threading.Thread(target=run, daemon=True).start()
-
-    def _backup_selected(self):
-        """Backup the selected linked project."""
-        project_name = self._get_selected_project()
-        if not project_name:
-            return
-
-        www_path = self.config.get_www_path()
-        project_path = os.path.join(www_path, project_name)
-
-        if not JunctionManager.is_junction(project_path):
-            messagebox.showinfo("Not Linked",
-                                f"'{project_name}' is not a junction. Only linked projects can be backed up.",
-                                parent=self.root)
-            return
-
-        target = JunctionManager.get_junction_target(project_path)
-        proj = {"name": project_name, "target": target}
-        self._run_backup([proj])
-
-    def _backup_all(self):
-        """Backup all linked (junction) projects to the archive."""
-        www_path = self.config.get_www_path()
-        projects = JunctionManager.scan_www(www_path)
-        junction_projects = [p for p in projects if p["status"] == "junction"]
-
-        if not junction_projects:
-            messagebox.showinfo("No Linked Projects",
-                                "No junction-linked projects found to back up.",
-                                parent=self.root)
-            return
-
-        self._run_backup(junction_projects)
-
-    def _run_backup(self, project_list: list):
-        """Run backup for a list of project dicts (threaded)."""
-        self._clear_output()
-        self._set_buttons_state(tk.DISABLED)
-        self.operation_running = True
-        self.status_var.set("Backing up projects ...")
-
-        exclude_dirs = self.config.get_exclude_dirs()
-        max_backups = self.config.get_max_backups()
-
-        def run():
-            try:
-                success_count = 0
-                fail_count = 0
-
-                for proj in project_list:
-                    name = proj["name"]
-                    source = proj["target"]
-                    if not source or not os.path.isdir(source):
-                        self.root.after(0, self._append_output,
-                                        f"  {name}: Target not accessible ({source})", "error")
-                        fail_count += 1
-                        continue
-
-                    archive_dir = os.path.join(
-                        get_rak_settings().get_archive_path("Web"), name)
-
-                    ok, msg = JunctionManager.backup_project(
-                        name, source, archive_dir, exclude_dirs,
-                        on_output=lambda m: self.root.after(0, self._append_output, m)
-                    )
-
-                    if ok:
-                        JunctionManager.rotate_backups(archive_dir, name, max_backups)
-                        self.root.after(0, self._append_output, f"  {name}: {msg}", "success")
-                        success_count += 1
-                    else:
-                        self.root.after(0, self._append_output, f"  {name}: {msg}", "error")
-                        fail_count += 1
-
-                summary = f"Backup complete: {success_count} succeeded, {fail_count} failed"
-                tag = "success" if fail_count == 0 else "error"
-                self.root.after(0, self._append_output, f"\n{summary}", tag)
-                self.root.after(0, lambda: self.status_var.set(summary))
-
-            except Exception as e:
-                logger.exception("Backup all failed")
-                self.root.after(0, self._append_output, f"Error: {e}", "error")
-            finally:
-                self.operation_running = False
-                self.root.after(0, lambda: self._set_buttons_state(tk.NORMAL))
-
-        threading.Thread(target=run, daemon=True).start()
-
 
 # ====================================
 # MAIN
