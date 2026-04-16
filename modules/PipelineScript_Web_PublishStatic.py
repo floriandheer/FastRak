@@ -53,66 +53,88 @@ class WebPublishConfig:
         }
 
     def _discover_sites(self) -> Dict:
-        """Scan Web\\_Personal folder for site directories."""
+        """Scan Web folder for site directories (work at root, personal under _Personal/)."""
         work = get_rak_settings().get_work_drive()
-        personal_dir = os.path.join(work, "Web", "_Personal")
+        web_root = os.path.join(work, "Web")
         sites = {}
 
-        if not os.path.isdir(personal_dir):
-            logger.warning(f"Personal web directory not found: {personal_dir}")
+        if not os.path.isdir(web_root):
+            logger.warning(f"Web directory not found: {web_root}")
             return sites
 
-        for entry in sorted(os.listdir(personal_dir)):
-            site_path = os.path.join(personal_dir, entry)
-            if not os.path.isdir(site_path) or entry.startswith("_"):
+        # Work sites at Web/ root, personal sites under Web/_Personal/
+        scan_targets = [(web_root, False), (os.path.join(web_root, "_Personal"), True)]
+
+        for parent_dir, is_personal in scan_targets:
+            if not os.path.isdir(parent_dir):
                 continue
+            for entry in sorted(os.listdir(parent_dir)):
+                site_path = os.path.join(parent_dir, entry)
+                if not os.path.isdir(site_path) or entry.startswith("_"):
+                    continue
+                if entry in sites:
+                    continue
 
-            # Find the publish folder (case-insensitive)
-            publish_dir = ""
-            for name in os.listdir(site_path):
-                if name.lower() == "03_publish":
-                    publish_dir = os.path.join(site_path, name)
-                    break
+                # Find the publish folder (case-insensitive)
+                publish_dir = ""
+                for name in os.listdir(site_path):
+                    if name.lower() == "03_publish":
+                        publish_dir = os.path.join(site_path, name)
+                        break
 
-            # Determine export_dir: look for a subfolder inside publish dir
-            export_dir = publish_dir
-            if publish_dir and os.path.isdir(publish_dir):
+                # A site must have a publish folder to be publishable
+                if not publish_dir:
+                    continue
+
+                # Determine export_dir: look for a subfolder inside publish dir
+                export_dir = publish_dir
                 subdirs = [d for d in os.listdir(publish_dir)
                            if os.path.isdir(os.path.join(publish_dir, d))]
                 if len(subdirs) == 1:
                     export_dir = os.path.join(publish_dir, subdirs[0])
 
-            # Detect wiki support
-            has_wiki = any(
-                d.lower() == "_wiki_latest"
-                for d in os.listdir(site_path)
-                if os.path.isdir(os.path.join(site_path, d))
-            )
-
-            wiki_latest_dir = ""
-            wiki_remote_path = ""
-            if has_wiki:
-                for d in os.listdir(site_path):
-                    if d.lower() == "_wiki_latest":
-                        wiki_latest_dir = os.path.join(site_path, d)
+                # Detect dev folder (e.g. VitePress source in 02_Development)
+                dev_dir = ""
+                for name in os.listdir(site_path):
+                    if name.lower() == "02_development":
+                        candidate = os.path.join(site_path, name)
+                        if os.path.isdir(candidate):
+                            dev_dir = candidate
                         break
-                wiki_remote_path = "/brainii"
 
-            sites[entry] = {
-                "label": entry,
-                "export_dir": export_dir,
-                "has_wiki": has_wiki,
-                "wiki_latest_dir": wiki_latest_dir,
-                "wiki_remote_path": wiki_remote_path,
-                "ftp": {
-                    "protocol": "ftp",
-                    "host": "",
-                    "port": 21,
-                    "username": "",
-                    "password": "",
-                    "remote_path": "/"
+                # Detect wiki support
+                has_wiki = any(
+                    d.lower() == "_wiki_latest"
+                    for d in os.listdir(site_path)
+                    if os.path.isdir(os.path.join(site_path, d))
+                )
+
+                wiki_latest_dir = ""
+                wiki_remote_path = ""
+                if has_wiki:
+                    for d in os.listdir(site_path):
+                        if d.lower() == "_wiki_latest":
+                            wiki_latest_dir = os.path.join(site_path, d)
+                            break
+                    wiki_remote_path = "/brainii"
+
+                sites[entry] = {
+                    "label": entry,
+                    "is_personal": is_personal,
+                    "export_dir": export_dir,
+                    "dev_dir": dev_dir,
+                    "has_wiki": has_wiki,
+                    "wiki_latest_dir": wiki_latest_dir,
+                    "wiki_remote_path": wiki_remote_path,
+                    "ftp": {
+                        "protocol": "ftp",
+                        "host": "",
+                        "port": 21,
+                        "username": "",
+                        "password": "",
+                        "remote_path": "/"
+                    }
                 }
-            }
 
         return sites
 
@@ -320,6 +342,8 @@ class PublishWorkflow:
         self.root = root
         self.site_cfg = config.get_site_config(site_key)
         self.has_wiki = self.site_cfg.get("has_wiki", False)
+        self.has_dev = bool(self.site_cfg.get("dev_dir", "")
+                           and os.path.isdir(self.site_cfg.get("dev_dir", "")))
 
         # Callbacks: on_step_start(idx, name), on_step_done(idx, success),
         #            on_output(msg), on_complete(success, msg),
@@ -330,18 +354,21 @@ class PublishWorkflow:
 
     def get_steps(self) -> List[str]:
         if self.has_wiki:
-            return [
+            steps = [
                 "Validate",
                 "FTP Upload (excl. wiki)",
                 "Download wiki",
                 "Archive",
             ]
         else:
-            return [
+            steps = [
                 "Validate",
                 "FTP Upload",
                 "Archive",
             ]
+        if self.has_dev:
+            steps.append("Dev Backup")
+        return steps
 
     def cancel(self):
         self._cancel.set()
@@ -398,6 +425,15 @@ class PublishWorkflow:
         self._step_done(step, ok)
         if not ok:
             return
+        step += 1
+
+        # Step 3 (optional): Dev Backup
+        if self.has_dev:
+            self._step_start(step, steps[step])
+            ok = self._archive_dev()
+            self._step_done(step, ok)
+            if not ok:
+                return
 
         self._complete(True, "Publish completed successfully!")
 
@@ -435,6 +471,15 @@ class PublishWorkflow:
         self._step_done(step, ok)
         if not ok:
             return
+        step += 1
+
+        # Step 4 (optional): Dev Backup
+        if self.has_dev:
+            self._step_start(step, steps[step])
+            ok = self._archive_dev()
+            self._step_done(step, ok)
+            if not ok:
+                return
 
         self._complete(True, "Publish completed successfully!")
 
@@ -543,7 +588,10 @@ class PublishWorkflow:
     def _archive(self) -> bool:
         export_dir = self.site_cfg["export_dir"]
         archive_base = get_rak_settings().get_archive_path("Web")
-        site_archive_dir = os.path.join(archive_base, self.site_key)
+        if self.site_cfg.get("is_personal", False):
+            site_archive_dir = os.path.join(archive_base, "_Personal", self.site_key)
+        else:
+            site_archive_dir = os.path.join(archive_base, self.site_key)
         os.makedirs(site_archive_dir, exist_ok=True)
 
         timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
@@ -594,6 +642,63 @@ class PublishWorkflow:
         except Exception as e:
             self._output(f"Archive failed: {e}")
             self._complete(False, f"Archive failed: {e}")
+            return False
+
+    def _archive_dev(self) -> bool:
+        """Archive the 02_Development folder alongside the publish backup."""
+        dev_dir = self.site_cfg.get("dev_dir", "")
+        if not dev_dir or not os.path.isdir(dev_dir):
+            self._output(f"Dev directory not found: {dev_dir}")
+            self._complete(False, "Dev backup failed: directory missing")
+            return False
+
+        archive_base = get_rak_settings().get_archive_path("Web")
+        if self.site_cfg.get("is_personal", False):
+            site_archive_dir = os.path.join(archive_base, "_Personal", self.site_key)
+        else:
+            site_archive_dir = os.path.join(archive_base, self.site_key)
+        os.makedirs(site_archive_dir, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        zip_name = f"dev_{self.site_key}_{timestamp}.zip"
+        zip_path = os.path.join(site_archive_dir, zip_name)
+
+        exclude_dirs = {"node_modules", ".cache", "dist", ".temp", "__pycache__", ".git", ".claude"}
+
+        self._output(f"Creating dev backup: {zip_name}")
+        self._output(f"  Source: {dev_dir}")
+        self._output(f"  Excluding: {', '.join(sorted(exclude_dirs))}")
+
+        try:
+            file_count = 0
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for dirpath, dirnames, filenames in os.walk(dev_dir):
+                    dirnames[:] = [d for d in dirnames if d not in exclude_dirs]
+                    for filename in filenames:
+                        file_path = os.path.join(dirpath, filename)
+                        arcname = os.path.relpath(file_path, dev_dir)
+                        zf.write(file_path, arcname)
+                        file_count += 1
+
+            size_mb = os.path.getsize(zip_path) / (1024 * 1024)
+            self._output(f"Dev backup created: {zip_name} ({file_count} files, {size_mb:.1f} MB)")
+
+            # Rotate old dev backups
+            max_keep = self.config.get_max_backups()
+            pattern = os.path.join(site_archive_dir, f"dev_{self.site_key}_*.zip")
+            backups = sorted(glob.glob(pattern))
+            if len(backups) > max_keep:
+                for old in backups[:len(backups) - max_keep]:
+                    try:
+                        os.remove(old)
+                        self._output(f"Rotated: {os.path.basename(old)}")
+                    except OSError as e:
+                        logger.warning(f"Failed to remove {old}: {e}")
+
+            return True
+        except Exception as e:
+            self._output(f"Dev backup failed: {e}")
+            self._complete(False, f"Dev backup failed: {e}")
             return False
 
 
@@ -1032,7 +1137,11 @@ class PublishStaticUI:
         cfg = self.config.get_site_config(site_key)
         self.export_label.config(text=f"Export: {cfg.get('export_dir', '-')}")
         archive_base = get_rak_settings().get_archive_path("Web")
-        self.archive_label.config(text=f"Archive: {os.path.join(archive_base, site_key)}")
+        if cfg.get("is_personal", False):
+            archive_path = os.path.join(archive_base, "_Personal", site_key)
+        else:
+            archive_path = os.path.join(archive_base, site_key)
+        self.archive_label.config(text=f"Archive: {archive_path}")
         self._build_steps(site_key)
 
     def _build_steps(self, site_key: str):
@@ -1042,6 +1151,8 @@ class PublishStaticUI:
 
         cfg = self.config.get_site_config(site_key)
         has_wiki = cfg.get("has_wiki", False)
+        has_dev = bool(cfg.get("dev_dir", "")
+                       and os.path.isdir(cfg.get("dev_dir", "")))
 
         if has_wiki:
             steps = [
@@ -1052,6 +1163,8 @@ class PublishStaticUI:
             ]
         else:
             steps = ["Validate", "FTP Upload", "Archive"]
+        if has_dev:
+            steps.append("Dev Backup")
 
         colors = FORM_COLORS
         for i, step in enumerate(steps):

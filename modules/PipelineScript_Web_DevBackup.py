@@ -40,6 +40,9 @@ logger = get_logger("web_devbackup")
 DEFAULT_EXCLUDE_DIRS = {".git", "node_modules", "vendor", "__pycache__", ".cache", ".tmp"}
 DEFAULT_LARAGON_PATH = r"C:\laragon"
 
+# Sites under these names are treated as personal (archived to _Personal/).
+PERSONAL_SITES = {"floriandheer", "hyphen-v", "alles3d"}
+
 
 # ====================================
 # CONFIGURATION
@@ -57,9 +60,7 @@ class DevBackupConfig:
     def _default_config(self) -> Dict:
         archive_root = ""
         try:
-            archive_root = os.path.join(
-                get_rak_settings().get_archive_path("Web"), "_DevBackups"
-            )
+            archive_root = get_rak_settings().get_archive_path("Web")
         except Exception as e:
             logger.warning(f"Could not resolve default archive path: {e}")
 
@@ -122,9 +123,7 @@ class DevBackupConfig:
         root = self.config.get("backup_root", "")
         if not root:
             try:
-                root = os.path.join(
-                    get_rak_settings().get_archive_path("Web"), "_DevBackups"
-                )
+                root = get_rak_settings().get_archive_path("Web")
             except Exception:
                 root = ""
         return root
@@ -133,8 +132,15 @@ class DevBackupConfig:
         self.config["backup_root"] = path
         self._save()
 
+    @staticmethod
+    def is_personal_site(site: str) -> bool:
+        return site.lower() in PERSONAL_SITES
+
     def get_site_backup_dir(self, site: str) -> str:
-        return os.path.join(self.get_backup_root(), site)
+        root = self.get_backup_root()
+        if self.is_personal_site(site):
+            return os.path.join(root, "_Personal", site)
+        return os.path.join(root, site)
 
     def get_env_backup_dir(self) -> str:
         return os.path.join(self.get_backup_root(), "_env")
