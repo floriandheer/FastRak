@@ -146,7 +146,7 @@ class TrackerSettings:
         "view_mode": "list",
         "list_scale": 100,
         "grid_scale": 100,
-        "filter_status": "active",
+        "filter_statuses": ["active"],
         "file_manager": "",  # Empty = system default, or path like "C:\\Program Files\\fman\\fman.exe"
     }
 
@@ -197,7 +197,11 @@ class ArchiveManager:
         archive_path_str = settings.get_archive_path(archive_category)
         archive_dir = _get_platform_path(archive_path_str)
 
-        if is_personal:
+        is_sandbox = metadata.get("is_sandbox", False) if metadata else False
+
+        if is_sandbox:
+            archive_dir = archive_dir / "_Sandbox"
+        elif is_personal:
             archive_dir = archive_dir / "_Personal"
         elif project_type == "Physical" and metadata:
             # Preserve Physical subdirectory (Order, Product, Project)
@@ -215,7 +219,11 @@ class ArchiveManager:
         work_path_str = settings.get_work_path(archive_category)
         active_dir = _get_platform_path(work_path_str)
 
-        if is_personal:
+        is_sandbox = metadata.get("is_sandbox", False) if metadata else False
+
+        if is_sandbox:
+            active_dir = active_dir / "_Sandbox"
+        elif is_personal:
             active_dir = active_dir / "_Personal"
         elif project_type == "Physical" and metadata:
             # Preserve Physical subdirectory (Order, Product, Project)
@@ -369,8 +377,10 @@ class ArchiveManager:
             logger.info(f"Unarchiving: {source_path} -> {active_path}")
             shutil.move(str(source_path), str(active_path))
 
-            # Update database
-            db.unarchive_project(project["id"], str(active_path))
+            # Update database — restore sandbox projects to "sandbox" status
+            is_sandbox = metadata.get("is_sandbox", False)
+            restore_status = "sandbox" if is_sandbox else "active"
+            db.unarchive_project(project["id"], str(active_path), restore_status=restore_status)
 
             messagebox.showinfo(
                 "Success",
@@ -423,6 +433,7 @@ class ProjectImporter:
             # Visual
             "Visual": _get_platform_path(active_base + r"\Visual"),
             "Visual_Personal": _get_platform_path(active_base + r"\Visual\_Personal"),
+            "Visual_Sandbox": _get_platform_path(active_base + r"\Visual\_Sandbox"),
             # Audio
             "Audio_InProgress": _get_platform_path(active_base + r"\Audio\01_Prod\01_InProgress"),
             "Audio_Finished": _get_platform_path(active_base + r"\Audio\01_Prod\03_Finished"),
@@ -435,9 +446,11 @@ class ProjectImporter:
             # RealTime
             "RealTime": _get_platform_path(active_base + r"\RealTIme"),  # Note: folder has typo "RealTIme"
             "RealTime_Personal": _get_platform_path(active_base + r"\RealTIme\_Personal"),
+            "RealTime_Sandbox": _get_platform_path(active_base + r"\RealTIme\_Sandbox"),
             # Photo
             "Photo": _get_platform_path(active_base + r"\Photo"),
             "Photo_Personal": _get_platform_path(active_base + r"\Photo\_Personal"),
+            "Photo_Sandbox": _get_platform_path(active_base + r"\Photo\_Sandbox"),
             # Web
             "Web": _get_platform_path(active_base + r"\Web"),
             "Web_Personal": _get_platform_path(active_base + r"\Web\_Personal"),
@@ -447,6 +460,7 @@ class ProjectImporter:
             # Visual
             "Visual": _get_platform_path(archive_base + r"\Visual"),
             "Visual_Personal": _get_platform_path(archive_base + r"\Visual\_Personal"),
+            "Visual_Sandbox": _get_platform_path(archive_base + r"\Visual\_Sandbox"),
             # Audio
             "Audio_Personal": _get_platform_path(archive_base + r"\Audio\_Personal"),
             # Physical (mirror active subdirectory structure)
@@ -457,9 +471,11 @@ class ProjectImporter:
             # RealTime
             "RealTime": _get_platform_path(archive_base + r"\RealTime"),
             "RealTime_Personal": _get_platform_path(archive_base + r"\RealTime\_Personal"),
+            "RealTime_Sandbox": _get_platform_path(archive_base + r"\RealTime\_Sandbox"),
             # Photo
             "Photo": _get_platform_path(archive_base + r"\Photo"),
             "Photo_Personal": _get_platform_path(archive_base + r"\Photo\_Personal"),
+            "Photo_Sandbox": _get_platform_path(archive_base + r"\Photo\_Sandbox"),
             # Web
             "Web": _get_platform_path(archive_base + r"\Web"),
             "Web_Personal": _get_platform_path(archive_base + r"\Web\_Personal"),
@@ -498,8 +514,11 @@ class ProjectImporter:
             if not base_dir.exists():
                 continue
 
+            is_sandbox_dir = "_Sandbox" in category
+
             if status_callback:
-                status_callback(f"Scanning active {category}...")
+                label = "sandbox" if is_sandbox_dir else "active"
+                status_callback(f"Scanning {label} {category}...")
 
             try:
                 for item in base_dir.iterdir():
@@ -522,7 +541,7 @@ class ProjectImporter:
                             "base_dir": stored_base,
                             "scanned_path": str(item),  # Keep original for duplicate check
                             "parsed": parsed,
-                            "status": "active"
+                            "status": "sandbox" if is_sandbox_dir else "active"
                         })
             except Exception:
                 pass
@@ -548,7 +567,8 @@ class ProjectImporter:
                             "path": str(item),
                             "base_dir": str(base_dir),
                             "parsed": parsed,
-                            "status": "archived"
+                            "status": "archived",
+                            "is_sandbox_origin": "_Sandbox" in category
                         })
             except Exception:
                 pass
@@ -582,6 +602,7 @@ class ProjectImporter:
                     "notes": "",
                     "metadata": {
                         "is_personal": parsed.get("is_personal", False),
+                        "is_sandbox": folder_info.get("status") == "sandbox" or folder_info.get("is_sandbox_origin", False),
                         "location": parsed.get("location", ""),
                         "physical_subtype": parsed.get("physical_subtype", "")
                     }
@@ -609,15 +630,16 @@ class ProjectImporter:
         Returns:
             Dictionary with date, client, project, type or None if not parseable
         """
-        # Check if this is a personal project
+        # Check if this is a personal or sandbox project
         is_personal = "_Personal" in category
+        is_sandbox = "_Sandbox" in category
 
         # Extract physical subtype (Order, Product, Project) if present
         physical_subtype = ""
         if category.startswith("Physical_") and not is_personal:
             physical_subtype = category.split("_", 1)[1]  # "Order", "Product", "Project"
 
-        base_category = category.replace("_Personal", "")
+        base_category = category.replace("_Personal", "").replace("_Sandbox", "")
         # Normalize Physical subtypes back to "Physical" for pattern matching
         if base_category.startswith("Physical"):
             base_category = "Physical"
@@ -664,7 +686,27 @@ class ProjectImporter:
                     "type": "FX",
                     "is_personal": True
                 }
-            # GD pattern: YYYY-MM-DD_Client_Project
+            # GD pattern with explicit prefix and client: YYYY-MM-DD_GD_Client_Project
+            match = re.match(r'^(\d{4}-\d{2}-\d{2})_GD_([^_]+)_(.+)$', folder_name)
+            if match:
+                return {
+                    "date": match.group(1),
+                    "client": "Personal" if is_personal else match.group(2),
+                    "project": match.group(3),
+                    "type": "GD",
+                    "is_personal": is_personal
+                }
+            # GD pattern with explicit prefix, no client: YYYY-MM-DD_GD_Project
+            match = re.match(r'^(\d{4}-\d{2}-\d{2})_GD_(.+)$', folder_name)
+            if match:
+                return {
+                    "date": match.group(1),
+                    "client": "Personal",
+                    "project": match.group(2),
+                    "type": "GD",
+                    "is_personal": True
+                }
+            # GD pattern (legacy, no type prefix): YYYY-MM-DD_Client_Project
             match = re.match(cls.PATTERNS["GD"], folder_name)
             if match:
                 return {
@@ -951,7 +993,17 @@ class ProjectTrackerApp:
         self.grid_cols = 1  # Current number of columns
 
         # Filter status (load from settings)
-        self.filter_status = tk.StringVar(value=self.settings.get("filter_status", "active"))
+        # Status filter toggles — multiple can be active at once
+        saved_statuses = self.settings.get("filter_statuses", None)
+        # Backwards compat: old single "filter_status" setting
+        if saved_statuses is None:
+            old = self.settings.get("filter_status", "active")
+            saved_statuses = ["active", "sandbox", "archived"] if old == "all" else [old]
+        self.filter_toggles = {
+            "active": tk.BooleanVar(value="active" in saved_statuses),
+            "sandbox": tk.BooleanVar(value="sandbox" in saved_statuses),
+            "archived": tk.BooleanVar(value="archived" in saved_statuses),
+        }
 
         # Scope filter (all/personal/client)
         self.filter_scope = tk.StringVar(value=self.settings.get("filter_scope", "all"))
@@ -1156,8 +1208,8 @@ class ProjectTrackerApp:
         # Store filter buttons for styling updates
         self.filter_buttons = {}
 
-        def create_filter_button(parent, text, value, shortcut):
-            """Create a filter toggle button."""
+        def create_filter_toggle(parent, text, value, shortcut):
+            """Create a filter toggle button (can be independently on/off)."""
             btn = tk.Label(
                 parent,
                 text=text,
@@ -1171,18 +1223,19 @@ class ProjectTrackerApp:
             btn.pack(side=tk.LEFT, padx=(0, 2))
 
             def on_click(e):
-                self.filter_status.set(value)
+                var = self.filter_toggles[value]
+                var.set(not var.get())
                 self._on_filter_changed()
 
             def on_enter(e):
-                if self.filter_status.get() != value:
+                if not self.filter_toggles[value].get():
                     btn.configure(bg="#2d333b")
                 # Show shortcut hint
                 if self.hint_callback:
-                    self.hint_callback(f"Shortcut: {shortcut}")
+                    self.hint_callback(f"Toggle: {shortcut}")
 
             def on_leave(e):
-                if self.filter_status.get() != value:
+                if not self.filter_toggles[value].get():
                     btn.configure(bg="#1c2128")
                 # Clear shortcut hint
                 if self.hint_callback:
@@ -1195,9 +1248,9 @@ class ProjectTrackerApp:
             self.filter_buttons[value] = btn
             return btn
 
-        create_filter_button(filter_frame, "Active", "active", "4")
-        create_filter_button(filter_frame, "Archive", "archived", "5")
-        create_filter_button(filter_frame, "All", "all", "6")
+        create_filter_toggle(filter_frame, "Active", "active", "4")
+        create_filter_toggle(filter_frame, "Sandbox", "sandbox", "5")
+        create_filter_toggle(filter_frame, "Archive", "archived", "6")
 
         # Update initial button styling
         self._update_filter_button_styles()
@@ -1371,8 +1424,9 @@ class ProjectTrackerApp:
             style="Dark.Treeview"
         )
 
-        # Tag styling for archived projects in list view
+        # Tag styling for archived and sandbox projects in list view
         self.project_tree.tag_configure("archived", foreground="#8b949e")
+        self.project_tree.tag_configure("sandbox", foreground="#d2a8ff")
 
         # Column display names
         self.column_names = {"date": "Date", "client": "Client", "project": "Project"}
@@ -1476,7 +1530,8 @@ class ProjectTrackerApp:
             font=("Arial", 9), cursor="hand2", anchor="w"
         )
         self.active_path_label.pack(side=tk.LEFT, padx=(10, 0), fill=tk.X, expand=True)
-        self.active_path_label.bind("<Button-1>", lambda e: self._copy_path_to_clipboard("active"))
+        self.active_path_label.bind("<Button-1>", lambda e: self._open_path_in_explorer("active"))
+        self.active_path_label.bind("<Button-3>", lambda e: self._copy_path_to_clipboard("active"))
         self.active_path_label.bind("<Enter>", lambda e: self.active_path_label.configure(fg="#79c0ff"))
         self.active_path_label.bind("<Leave>", lambda e: self.active_path_label.configure(fg="#58a6ff"))
 
@@ -1492,7 +1547,8 @@ class ProjectTrackerApp:
             font=("Arial", 9), cursor="hand2", anchor="w"
         )
         self.raw_path_label.pack(side=tk.LEFT, padx=(10, 0), fill=tk.X, expand=True)
-        self.raw_path_label.bind("<Button-1>", lambda e: self._copy_path_to_clipboard("raw"))
+        self.raw_path_label.bind("<Button-1>", lambda e: self._open_path_in_explorer("raw"))
+        self.raw_path_label.bind("<Button-3>", lambda e: self._copy_path_to_clipboard("raw"))
         self.raw_path_label.bind("<Enter>", lambda e: self.raw_path_label.configure(fg="#79c0ff"))
         self.raw_path_label.bind("<Leave>", lambda e: self.raw_path_label.configure(fg="#58a6ff"))
 
@@ -1544,6 +1600,21 @@ class ProjectTrackerApp:
             pady=6
         )
         self.unarchive_btn.pack(side=tk.LEFT, padx=5)
+
+        self.promote_btn = tk.Button(
+            button_frame,
+            text="🚀 Promote to Active",
+            command=self._promote_project,
+            bg="#1c2128",
+            fg="white",
+            font=("Arial", 9),
+            relief=tk.FLAT,
+            cursor="hand2",
+            state=tk.DISABLED,
+            padx=15,
+            pady=6
+        )
+        self.promote_btn.pack(side=tk.LEFT, padx=5)
 
         self.raw_cleanup_btn = tk.Button(
             button_frame,
@@ -2074,33 +2145,37 @@ class ProjectTrackerApp:
         for item in self.project_tree.get_children():
             self.project_tree.delete(item)
 
-        # Get filter status
-        status = self.filter_status.get()
+        # Get enabled status filters
+        active_statuses = self._get_active_statuses()
 
         # Get search query
         query = self.search_query.get().strip()
 
-        # Get all projects first
+        # Get all projects, then filter by enabled statuses
+        include_archived = "archived" in active_statuses
         if query:
-            projects = self.db.search_projects(query, include_archived=(status != "active"))
-            if status == "archived":
-                projects = [p for p in projects if p.get("status") == "archived"]
+            projects = self.db.search_projects(query, include_archived=include_archived)
         else:
-            if status == "all":
-                projects = self.db.get_all_projects(status="all")
-            else:
-                projects = self.db.get_all_projects(status=status)
+            projects = self.db.get_all_projects(status="all")
 
-        # Filter by scope (personal/client) based on client name or is_personal metadata
+        # Filter to only enabled statuses
+        if active_statuses:
+            projects = [p for p in projects if p.get("status") in active_statuses]
+        else:
+            projects = []
+
+        # Filter by scope (personal/client) — not applied when only sandbox is shown
         scope = self.filter_scope.get()
-        if scope == "personal":
-            projects = [p for p in projects if
-                        p.get("client_name", "").lower() == "personal" or
-                        p.get("metadata", {}).get("is_personal", False)]
-        elif scope == "client":
-            projects = [p for p in projects if
-                        p.get("client_name", "").lower() != "personal" and
-                        not p.get("metadata", {}).get("is_personal", False)]
+        only_sandbox = active_statuses == {"sandbox"}
+        if not only_sandbox:
+            if scope == "personal":
+                projects = [p for p in projects if
+                            p.get("client_name", "").lower() == "personal" or
+                            p.get("metadata", {}).get("is_personal", False)]
+            elif scope == "client":
+                projects = [p for p in projects if
+                            p.get("client_name", "").lower() != "personal" and
+                            not p.get("metadata", {}).get("is_personal", False)]
 
         # Group projects by category
         categories = {
@@ -2366,9 +2441,10 @@ class ProjectTrackerApp:
         # Truncation length for subtitle
         client_max = max(6, int(10 * font_scale))
 
-        # Colors - dim for archived projects
+        # Colors - dim for archived projects, tint for sandbox
         accent_color = type_info.get("color", "#8b949e")
         is_archived = status == "archived"
+        is_sandbox = status == "sandbox"
         card_bg = "#1c2128"
         title_fg = "white"
         sub_fg = "#8b949e"
@@ -2410,6 +2486,14 @@ class ProjectTrackerApp:
                                      padx=3, pady=0)
             archive_badge._is_accent_bar = True  # skip during highlight recolor
             archive_badge.place(relx=1.0, y=0, anchor="ne")
+        elif is_sandbox:
+            # Sandbox badge
+            badge_font_size = max(5, int(5 * font_scale))
+            sandbox_badge = tk.Label(card, text="sandbox", bg="#8957e5", fg="#e2d4f0",
+                                     font=("Arial", badge_font_size),
+                                     padx=3, pady=0)
+            sandbox_badge._is_accent_bar = True  # skip during highlight recolor
+            sandbox_badge.place(relx=1.0, y=0, anchor="ne")
 
         # Project name - allow up to 3 lines of wrapping
         project_name = project.get("project_name", "")
@@ -2438,6 +2522,20 @@ class ProjectTrackerApp:
         date_label = tk.Label(card, text=date_str, bg=card_bg,
                              fg=sub_fg, font=("Arial", small_size))
         date_label.grid(row=3, column=0, sticky="s", pady=(0, int(6 * font_scale)))
+
+        # Personal indicator — small triangle in lower-left corner
+        is_personal = (
+            project.get("client_name", "").lower() == "personal" or
+            project.get("metadata", {}).get("is_personal", False)
+        )
+        if is_personal:
+            tri_size = max(8, int(10 * font_scale))
+            tri = tk.Canvas(card, width=tri_size, height=tri_size,
+                           bg=card_bg, highlightthickness=0)
+            tri.create_polygon(0, tri_size, 0, 0, tri_size, tri_size,
+                              fill=bar_color, outline="")
+            tri._is_accent_bar = True  # skip during highlight recolor
+            tri.place(x=0, rely=1.0, anchor="sw")
 
         # Bind click event to all card elements
         # Store index in closure for click handler
@@ -2615,22 +2713,25 @@ class ProjectTrackerApp:
     def _on_filter_changed(self, event=None):
         """Handle filter status change."""
         # Save filter preference
-        self.settings.set("filter_status", self.filter_status.get())
+        self.settings.set("filter_statuses", list(self._get_active_statuses()))
         # Update button styles
         self._update_filter_button_styles()
         self.refresh_project_list()
 
+    def _get_active_statuses(self) -> set:
+        """Get the set of currently enabled status filters."""
+        return {k for k, v in self.filter_toggles.items() if v.get()}
+
     def _update_filter_button_styles(self):
-        """Update filter button visual states based on current selection."""
+        """Update filter button visual states based on current toggles."""
         if not hasattr(self, 'filter_buttons'):
             return
-        current = self.filter_status.get()
         for value, btn in self.filter_buttons.items():
-            if value == current:
-                # Selected state - highlighted
+            if self.filter_toggles[value].get():
+                # Toggled on - highlighted
                 btn.configure(bg="#58a6ff", fg="white")
             else:
-                # Unselected state
+                # Toggled off
                 btn.configure(bg="#1c2128", fg="white")
 
     def _update_physical_subtype_styles(self):
@@ -2818,6 +2919,7 @@ class ProjectTrackerApp:
         self.open_btn.config(state=tk.DISABLED)
         self.archive_btn.config(state=tk.DISABLED)
         self.unarchive_btn.config(state=tk.DISABLED)
+        self.promote_btn.config(state=tk.DISABLED)
 
     def _display_project_details(self, project: Dict):
         """Display project details in right panel."""
@@ -2847,7 +2949,7 @@ class ProjectTrackerApp:
         self._current_active_path = None
 
         # Handle paths based on project status
-        if status == "active":
+        if status in ("active", "sandbox"):
             # Show Active Path frame
             self.active_path_frame.pack(fill=tk.X, pady=2)
 
@@ -2882,13 +2984,15 @@ class ProjectTrackerApp:
         # Enable buttons
         self.open_btn.config(state=tk.NORMAL)
 
-        # Enable archive/unarchive based on status
-        if status == "active":
+        # Enable archive/unarchive/promote based on status
+        if status in ("active", "sandbox"):
             self.archive_btn.config(state=tk.NORMAL)
             self.unarchive_btn.config(state=tk.DISABLED)
+            self.promote_btn.config(state=tk.NORMAL if status == "sandbox" else tk.DISABLED)
         elif status == "archived":
             self.archive_btn.config(state=tk.DISABLED)
             self.unarchive_btn.config(state=tk.NORMAL)
+            self.promote_btn.config(state=tk.DISABLED)
 
         self.raw_cleanup_btn.config(state=tk.NORMAL)
 
@@ -2909,6 +3013,53 @@ class ProjectTrackerApp:
         except Exception as e:
             logger.error(f"Failed to copy to clipboard: {e}")
 
+    def _get_path_for_type(self, path_type: str) -> Optional[str]:
+        """Get the path string for a given path type."""
+        if path_type == "active" and self._current_active_path:
+            return self._current_active_path
+        elif path_type == "raw" and self._current_raw_path:
+            return self._current_raw_path
+        return None
+
+    def _open_path_in_explorer(self, path_type: str):
+        """Open the specified path in the system file explorer."""
+        path_str = self._get_path_for_type(path_type)
+        if not path_str:
+            return
+
+        path = Path(path_str)
+
+        # On WSL, convert to Windows path for Windows file managers
+        try:
+            custom_file_manager = self.settings.get("file_manager", "")
+
+            if custom_file_manager:
+                import subprocess
+                open_path = str(path)
+
+                if sys.platform != "win32" and custom_file_manager.lower().endswith(".exe"):
+                    if open_path.startswith("/mnt/"):
+                        parts = open_path.split("/")
+                        if len(parts) >= 3:
+                            drive_letter = parts[2].upper()
+                            rest = "/".join(parts[3:])
+                            open_path = f"{drive_letter}:\\{rest}".replace("/", "\\")
+
+                subprocess.Popen([custom_file_manager, open_path])
+            elif sys.platform == "win32":
+                os.startfile(path)
+            elif sys.platform == "darwin":
+                os.system(f'open "{path}"')
+            else:
+                os.system(f'xdg-open "{path}"')
+
+            self._update_status(f"Opened: {path}")
+            logger.info(f"Opened path from label: {path}")
+
+        except Exception as e:
+            logger.error(f"Failed to open path: {e}")
+            messagebox.showerror("Error", f"Failed to open folder:\n{str(e)}")
+
     def _open_folder(self):
         """Open project folder in file explorer."""
         if not self.selected_project:
@@ -2918,8 +3069,8 @@ class ProjectTrackerApp:
         stored_path = self.selected_project["path"]
         status = self.selected_project.get("status", "active")
 
-        # For active projects, convert to configured work drive path
-        if status == "active":
+        # For active/sandbox projects, convert to configured work drive path
+        if status in ("active", "sandbox"):
             try:
                 settings = get_rak_settings()
                 open_path = settings.convert_to_work_drive_path(stored_path)
@@ -2986,7 +3137,7 @@ class ProjectTrackerApp:
             stored_path = self.selected_project["path"]
             status = self.selected_project.get("status", "active")
 
-            if status == "active":
+            if status in ("active", "sandbox"):
                 try:
                     settings = get_rak_settings()
                     folder = settings.convert_to_work_drive_path(stored_path)
@@ -3057,6 +3208,101 @@ class ProjectTrackerApp:
             self._clear_details()
         else:
             self._update_status("Un-archive failed")
+
+    def _promote_project(self):
+        """Promote a sandbox project to active."""
+        if not self.selected_project:
+            return
+
+        if self.selected_project.get("status") != "sandbox":
+            return
+
+        project = self.selected_project
+        metadata = project.get("metadata", {})
+        project_type = project.get("project_type", "")
+        is_personal = metadata.get("is_personal", False)
+
+        # Build the active directory (without _Sandbox)
+        promote_metadata = {**metadata, "is_sandbox": False}
+        active_dir = ArchiveManager._get_active_dir(project_type, is_personal, promote_metadata)
+
+        response = messagebox.askyesno(
+            "Promote to Active",
+            f"Move this sandbox project to active?\n\n"
+            f"Client: {project.get('client_name')}\n"
+            f"Project: {project.get('project_name')}\n\n"
+            f"The folder will be moved to:\n{active_dir}"
+        )
+
+        if not response:
+            return
+
+        try:
+            source_path = Path(project["path"])
+
+            # Try work drive path if source doesn't exist directly
+            if not source_path.exists():
+                try:
+                    settings = get_rak_settings()
+                    converted = settings.convert_to_work_drive_path(str(source_path))
+                    alt_path = Path(converted)
+                    if not alt_path.exists():
+                        # Try platform path conversion
+                        alt_path = _get_platform_path(str(source_path))
+                    if alt_path.exists():
+                        source_path = alt_path
+                except Exception:
+                    source_path = _get_platform_path(str(source_path))
+
+            if not source_path.exists():
+                messagebox.showerror(
+                    "Folder Not Found",
+                    f"Sandbox folder does not exist:\n{source_path}"
+                )
+                return
+
+            active_dir.mkdir(parents=True, exist_ok=True)
+            active_path = active_dir / source_path.name
+
+            if active_path.exists():
+                overwrite = messagebox.askyesno(
+                    "Path Conflict",
+                    f"Active location already exists:\n{active_path}\n\n"
+                    "Do you want to overwrite it?"
+                )
+                if not overwrite:
+                    return
+                shutil.rmtree(active_path)
+
+            self._update_status("Promoting to active...")
+            logger.info(f"Promoting: {source_path} -> {active_path}")
+            shutil.move(str(source_path), str(active_path))
+
+            # Update database: set status to active, clear sandbox flag, update path
+            metadata["is_sandbox"] = False
+            project["metadata"] = metadata
+            project["status"] = "active"
+            project["path"] = str(active_path)
+            project["updated_at"] = datetime.now().isoformat()
+            self.db.save()
+
+            messagebox.showinfo(
+                "Success",
+                f"Project promoted to active:\n{active_path}"
+            )
+
+            logger.info(f"Successfully promoted project: {project['id']}")
+            self._update_status("Project promoted to active")
+            self.refresh_project_list()
+            self._clear_details()
+
+        except Exception as e:
+            logger.error(f"Failed to promote project: {e}")
+            messagebox.showerror(
+                "Promote Failed",
+                f"Failed to promote project:\n{str(e)}"
+            )
+            self._update_status("Promote failed")
 
     def _save_notes(self):
         """Save project notes."""

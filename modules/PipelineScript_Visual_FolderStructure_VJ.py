@@ -10,6 +10,7 @@ Keyboard Navigation:
 - Ctrl+Enter: Create project (from anywhere)
 - Escape: Close form
 - P: Toggle Personal checkbox (when not typing)
+- S: Toggle Sandbox checkbox (when not typing)
 """
 
 import os
@@ -156,6 +157,13 @@ class VJFolderStructureCreator(FormKeyboardMixin):
         )
         self.personal_check.pack(side=tk.LEFT, padx=(0, 20))
 
+        # Sandbox checkbox
+        self.sandbox_var = tk.BooleanVar(value=False)
+        self.sandbox_check = create_styled_checkbox(
+            row2, text="Sandbox (S)", variable=self.sandbox_var, command=self.on_sandbox_toggle
+        )
+        self.sandbox_check.pack(side=tk.LEFT, padx=(0, 20))
+
         # Date
         create_styled_label(row2, "Date:").pack(side=tk.LEFT, padx=(0, 5))
         self.date_var = tk.StringVar(value=datetime.now().strftime('%Y-%m-%d'))
@@ -246,6 +254,7 @@ class VJFolderStructureCreator(FormKeyboardMixin):
         self.client_name_var.trace_add("write", lambda *args: self.update_preview())
         self.date_var.trace_add("write", lambda *args: self.update_preview())
         self.personal_var.trace_add("write", lambda *args: self.update_preview())
+        self.sandbox_var.trace_add("write", lambda *args: self.update_preview())
 
     def _collect_focusable_widgets(self):
         """Collect widgets for keyboard navigation."""
@@ -253,6 +262,7 @@ class VJFolderStructureCreator(FormKeyboardMixin):
             self.client_entry,
             self.project_entry,
             self.personal_check,
+            self.sandbox_check,
             self.date_entry,
             self.notes_text,
         ]
@@ -262,14 +272,40 @@ class VJFolderStructureCreator(FormKeyboardMixin):
         self._personal_checkbox = self.personal_check
         self._personal_var = self.personal_var
 
-        # Add Enter binding for personal checkbox to toggle it
+        # Add Enter binding for checkboxes to toggle them
         self.personal_check.bind("<Return>", lambda e: self._toggle_personal_checkbox())
+        self.sandbox_check.bind("<Return>", lambda e: self._toggle_sandbox_checkbox())
 
     def _toggle_personal_checkbox(self):
         """Toggle personal checkbox when Enter is pressed."""
         self.personal_var.set(not self.personal_var.get())
         self.toggle_personal()
         return "break"
+
+    def _toggle_sandbox_checkbox(self):
+        """Toggle sandbox checkbox when Enter is pressed."""
+        self.sandbox_var.set(not self.sandbox_var.get())
+        self.on_sandbox_toggle()
+        return "break"
+
+    def _setup_keyboard_navigation(self):
+        """Set up keyboard navigation with P for Personal and S for Sandbox."""
+        super()._setup_keyboard_navigation()
+
+        root = self.parent.winfo_toplevel()
+        root.bind("<s>", self._on_s_key)
+        root.bind("<S>", self._on_s_key)
+
+    def _on_s_key(self, event):
+        """Handle S key to toggle Sandbox checkbox."""
+        if hasattr(self, '_in_text_field') and self._in_text_field:
+            return
+        self.sandbox_var.set(not self.sandbox_var.get())
+        return "break"
+
+    def on_sandbox_toggle(self):
+        """Handle sandbox checkbox toggle."""
+        self.update_preview()
 
     def toggle_personal(self):
         """Toggle the Personal checkbox to auto-fill client name."""
@@ -310,6 +346,8 @@ class VJFolderStructureCreator(FormKeyboardMixin):
         # Display preview
         if self.personal_var.get():
             preview_path = f"{base_dir}/_Personal/{folder_name}"
+        elif self.sandbox_var.get():
+            preview_path = f"{base_dir}/_Sandbox/{folder_name}"
         else:
             preview_path = f"{base_dir}/{folder_name}"
 
@@ -359,9 +397,12 @@ class VJFolderStructureCreator(FormKeyboardMixin):
             folder_name = f"{date}_VJ_{project_name}"
             client_name = "Personal"
 
-        # If Personal project, add _Personal subfolder
+        # If Personal project, add _Personal subfolder; if Sandbox, add _Sandbox
         if self.personal_var.get():
             base_dir = os.path.join(base_dir, "_Personal")
+            os.makedirs(base_dir, exist_ok=True)
+        elif self.sandbox_var.get():
+            base_dir = os.path.join(base_dir, "_Sandbox")
             os.makedirs(base_dir, exist_ok=True)
 
         project_dir = os.path.join(base_dir, folder_name)
@@ -385,12 +426,13 @@ class VJFolderStructureCreator(FormKeyboardMixin):
                 'date_created': date,
                 'path': project_dir,
                 'base_directory': base_dir,
-                'status': 'active',
+                'status': 'sandbox' if self.sandbox_var.get() else 'active',
                 'notes': self.notes_text.get(1.0, tk.END).strip(),
                 'metadata': {
                     'subtype': 'VJ',
                     'software_specs': software_specs,
-                    'is_personal': self.personal_var.get()
+                    'is_personal': self.personal_var.get(),
+                    'is_sandbox': self.sandbox_var.get()
                 }
             }
 

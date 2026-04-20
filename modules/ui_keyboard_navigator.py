@@ -263,8 +263,9 @@ class KeyboardNavigatorMixin:
             # Check if project tracker is in archive mode
             is_archive_mode = False
             if hasattr(self, 'project_tracker') and self.project_tracker:
-                if hasattr(self.project_tracker, 'filter_status'):
-                    is_archive_mode = self.project_tracker.filter_status.get() == "archived"
+                if hasattr(self.project_tracker, 'filter_toggles'):
+                    statuses = self.project_tracker._get_active_statuses()
+                    is_archive_mode = statuses == {"archived"}
 
             if is_archive_mode:
                 archive_path = self.settings.get_archive_path(self._folder_category)
@@ -287,13 +288,15 @@ class KeyboardNavigatorMixin:
         next_idx = (current_idx + 1) % len(self.SCOPE_ORDER)
         self._set_scope(self.SCOPE_ORDER[next_idx])
 
-    def _set_status_filter(self, status):
-        """Set project tracker status filter (4/5/6 keys)."""
+    def _toggle_status_filter(self, status):
+        """Toggle project tracker status filter (4/5/6 keys)."""
         if not self._should_handle_keyboard():
             return
         if hasattr(self, 'project_tracker') and self.project_tracker:
-            self.project_tracker.filter_status.set(status)
-            self.project_tracker._on_filter_changed()
+            var = self.project_tracker.filter_toggles.get(status)
+            if var:
+                var.set(not var.get())
+                self.project_tracker._on_filter_changed()
 
     def _focus_tracker_search(self):
         """Focus the project tracker search field (/ key)."""
@@ -348,9 +351,11 @@ class KeyboardNavigatorMixin:
         # 1. Reload DB to pick up the project registered by the creation form
         tracker.db.reload()
 
-        # 2. Switch status filter to "active"
-        if tracker.filter_status.get() != "active":
-            tracker.filter_status.set("active")
+        # 2. Ensure the right status toggle is on so the new project is visible
+        project_status = project_data.get("status", "active") if project_data else "active"
+        target_toggle = project_status if project_status in tracker.filter_toggles else "active"
+        if not tracker.filter_toggles[target_toggle].get():
+            tracker.filter_toggles[target_toggle].set(True)
             tracker._update_filter_button_styles()
 
         # 3. Switch scope to match the new project (personal vs work)
