@@ -29,12 +29,12 @@ class KeyboardNavigatorMixin:
         - self.SCOPE_ORDER: list
         - self.STATUS_ORDER: list
         - self.LEFT_PANEL_ORDER: list
-        - self.selected_category: str or None
+        - self.selected_categories: list[str] (ordered; last = primary)
         - self.cat_grid, self.ops_grid: tk.Frame
         - self.tools_section: tk.Frame
         - self.tracker_panel: tk.Frame
         - self._folder_category, self._folder_path, self._notes_category: str
-        - self.current_scope: str
+        - self.current_scopes: set[str]
         - self.settings: RakSettings
         - self.project_tracker: ProjectTrackerApp
         - self._select_category(key): method
@@ -66,7 +66,7 @@ class KeyboardNavigatorMixin:
                 self.focused_panel = self.LEFT_PANEL_ORDER[idx - 1]
             else:
                 # Wrap to bottom: tools if category selected, otherwise operations
-                if self.selected_category:
+                if self.selected_categories:
                     self.focused_panel = "tools"
                 else:
                     self.focused_panel = self.LEFT_PANEL_ORDER[-1]
@@ -78,7 +78,7 @@ class KeyboardNavigatorMixin:
             return
         if self.focused_panel == "tracker":
             # From tracker, S goes to tools (bottom of left panel)
-            if self.selected_category:
+            if self.selected_categories:
                 self.focused_panel = "tools"
             else:
                 # No category selected, go to operations (Business/Global)
@@ -90,7 +90,7 @@ class KeyboardNavigatorMixin:
             if idx < len(self.LEFT_PANEL_ORDER) - 1:
                 # Skip tools panel if no category is selected
                 next_panel = self.LEFT_PANEL_ORDER[idx + 1]
-                if next_panel == "tools" and not self.selected_category:
+                if next_panel == "tools" and not self.selected_categories:
                     # Wrap to top
                     self.focused_panel = self.LEFT_PANEL_ORDER[0]
                 else:
@@ -281,12 +281,19 @@ class KeyboardNavigatorMixin:
             self.open_note(self._notes_category)
 
     def _cycle_scope(self):
-        """Cycle through scope options (backtick key)."""
+        """Cycle through scope options: personal → client → both (backtick key)."""
         if not self._should_handle_keyboard():
             return
-        current_idx = self.SCOPE_ORDER.index(self.current_scope) if self.current_scope in self.SCOPE_ORDER else 0
-        next_idx = (current_idx + 1) % len(self.SCOPE_ORDER)
-        self._set_scope(self.SCOPE_ORDER[next_idx])
+        scopes = set(getattr(self, "current_scopes", set()))
+        both = {"personal", "client"}
+        if scopes == {"personal"}:
+            next_scopes = {"client"}
+        elif scopes == {"client"}:
+            next_scopes = both
+        else:
+            next_scopes = {"personal"}
+        self.current_scopes = next_scopes
+        self._apply_scopes()
 
     def _toggle_status_filter(self, status):
         """Toggle project tracker status filter (4/5/6 keys)."""
@@ -365,15 +372,19 @@ class KeyboardNavigatorMixin:
                 project_data.get('metadata', {}).get('is_personal', False)
             )
             target_scope = "personal" if is_personal else "client"
-            if self.current_scope != target_scope and self.current_scope != "all":
+            # Only switch if the target scope isn't already enabled.
+            current_scopes = getattr(self, "current_scopes", set())
+            if target_scope not in current_scopes:
                 self._set_scope(target_scope)
 
-        # 4. Set category filter to match the new project
+        # 4. Set category filter to match the new project (only if a filter is
+        # already active and the new project isn't already covered by it).
         if project_data:
             project_type = project_data.get('project_type', '')
             category = tracker._get_category_for_type(project_type)
-            if category and tracker.selected_category and tracker.selected_category != category:
-                tracker.selected_category = category
+            current_cats = getattr(tracker, "selected_categories", set())
+            if category and current_cats and category not in current_cats:
+                tracker.selected_categories = {category}
                 for name, btn_info in tracker.category_buttons.items():
                     tracker._update_category_card_style(btn_info, name)
 

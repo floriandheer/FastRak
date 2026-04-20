@@ -47,6 +47,11 @@ logger = get_logger("pipeline")
 # Import Project Tracker for embedded use (from top-level file)
 from fastrak_project_explorer import ProjectTrackerApp
 
+
+def event_has_shift(event) -> bool:
+    """True if a Tk event has the Shift modifier held."""
+    return bool(getattr(event, "state", 0) & 0x0001)
+
 # ====================================
 # CUSTOM WIDGETS
 # ====================================
@@ -197,7 +202,7 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
         # Layout constants for keyboard navigation
         self.CATEGORY_ORDER = ["VISUAL", "REALTIME", "AUDIO", "PHYSICAL", "PHOTO", "WEB"]
         self.OPERATIONS_ORDER = ["BUSINESS", "GLOBAL"]
-        self.SCOPE_ORDER = ["personal", "client", "all"]
+        self.SCOPE_ORDER = ["personal", "client"]
         self.STATUS_ORDER = ["active", "archived", "all"]
 
         # Panel order for WASD navigation (left panel only)
@@ -514,12 +519,12 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
         scope_frame.pack(fill=tk.X, pady=(0, 10), padx=4)  # Match cat_grid padx
 
         self.scope_buttons = {}
-        self.current_scope = "all"
+        # Set of enabled scopes (subset of {"personal", "client"}). Both = show all.
+        self.current_scopes = {"personal", "client"}
 
         scope_options = [
             ("personal", "Personal", "1"),
             ("client", "Work", "2"),
-            ("all", "All", "3"),
         ]
 
         for idx, (value, text, shortcut) in enumerate(scope_options):
@@ -538,12 +543,21 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
 
             def make_scope_click(v):
                 def on_click(e):
-                    self._set_scope(v)
+                    # Shift+click: toggle this scope (multi-select).
+                    # Plain click: select only this scope.
+                    if event_has_shift(e):
+                        if v in self.current_scopes:
+                            self.current_scopes.discard(v)
+                        else:
+                            self.current_scopes.add(v)
+                    else:
+                        self.current_scopes = {v}
+                    self._apply_scopes()
                 return on_click
 
             def make_scope_enter(v, b, s):
                 def on_enter(e):
-                    if self.current_scope != v:
+                    if v not in self.current_scopes:
                         b.configure(bg="#2d333b")
                     # Show shortcut hint
                     if hasattr(self, 'header_hint_label'):
@@ -552,7 +566,7 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
 
             def make_scope_leave(v, b):
                 def on_leave(e):
-                    if self.current_scope != v:
+                    if v not in self.current_scopes:
                         b.configure(bg=COLORS["bg_secondary"])
                     # Clear shortcut hint
                     if hasattr(self, 'header_hint_label'):
@@ -574,7 +588,10 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
 
         # Store category button references (includes both categories and operations)
         self.category_buttons = {}
-        self.selected_category = None
+        # Ordered list of selected categories; last element is the "primary"
+        # category that drives the notes/folder buttons. Multi-select is engaged
+        # via Shift+click; plain click always collapses back to a single entry.
+        self.selected_categories = []
 
         # Category order and data
         category_order = ["VISUAL", "REALTIME", "AUDIO", "PHYSICAL", "PHOTO", "WEB"]
@@ -696,15 +713,20 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
     def _restore_session_state(self):
         """Restore saved state from last session (category, scope, etc.)."""
         # Sync scope from project tracker's saved settings
-        if hasattr(self, 'project_tracker') and hasattr(self.project_tracker, 'filter_scope'):
-            saved_scope = self.project_tracker.filter_scope.get()
-            self.current_scope = saved_scope
+        if hasattr(self, 'project_tracker') and hasattr(self.project_tracker, 'filter_scopes'):
+            self.current_scopes = set(self.project_tracker.filter_scopes)
             self._update_scope_button_styles()
 
-        # Restore last selected category from config, or default to None (show all)
-        last_category = self.config_manager.config.get("last_selected_category", None)
-        if last_category and last_category in PIPELINE_CATEGORIES:
-            self._select_category(last_category)
+        # Restore last selected categories (multi) from config, falling back
+        # to the legacy single-category key.
+        saved_list = self.config_manager.config.get("last_selected_categories")
+        if saved_list is None:
+            legacy = self.config_manager.config.get("last_selected_category")
+            saved_list = [legacy] if legacy else []
+        valid = [k for k in saved_list if k in PIPELINE_CATEGORIES]
+        if valid:
+            self.selected_categories = valid
+            self._apply_categories()
         else:
             # Show all by default (no category selected)
             self._clear_category_selection()
@@ -784,7 +806,7 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
 
         # Hover and click effects
         def on_enter(e):
-            if self.selected_category != category_key:
+            if category_key not in self.selected_categories:
                 btn_frame.configure(bg=COLORS["bg_hover"])
                 content.configure(bg=COLORS["bg_hover"])
                 icon_label.configure(bg=COLORS["bg_hover"], fg=color)
@@ -794,7 +816,7 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
                 self.header_hint_label.config(text=f"Shortcut: {shortcut}")
 
         def on_leave(e):
-            if self.selected_category != category_key:
+            if category_key not in self.selected_categories:
                 btn_frame.configure(bg=COLORS["bg_secondary"])
                 content.configure(bg=COLORS["bg_secondary"])
                 icon_label.configure(bg=COLORS["bg_secondary"], fg=color)
@@ -804,7 +826,16 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
                 self.header_hint_label.config(text="")
 
         def on_click(e):
-            self._select_category(category_key)
+            # Shift+click: toggle this category in the selection.
+            # Plain click: collapse the selection to just this one.
+            if event_has_shift(e):
+                if category_key in self.selected_categories:
+                    self.selected_categories.remove(category_key)
+                else:
+                    self.selected_categories.append(category_key)
+                self._apply_categories()
+            else:
+                self._select_category(category_key)
 
         for widget in [btn_frame, content, icon_label, name_label]:
             widget.bind("<Enter>", on_enter)
@@ -813,61 +844,67 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
 
         return btn_frame
 
+    @property
+    def primary_category(self):
+        """The last-clicked category in the selection, or None."""
+        return self.selected_categories[-1] if self.selected_categories else None
+
     def _select_category(self, category_key):
-        """Select a category or operation and show its tools."""
-        # Deselect previous
-        if self.selected_category and self.selected_category in self.category_buttons:
-            prev = self.category_buttons[self.selected_category]
-            prev_color = prev["color"]
-            prev["frame"].configure(bg=COLORS["bg_secondary"])
-            prev["content"].configure(bg=COLORS["bg_secondary"])
-            prev["icon"].configure(bg=COLORS["bg_secondary"], fg=prev_color)
-            prev["name"].configure(bg=COLORS["bg_secondary"], fg=COLORS["text_primary"])
+        """Select a single category (collapse multi-selection to just this one)."""
+        self.selected_categories = [category_key]
+        self._apply_categories()
 
-        # Select new
-        self.selected_category = category_key
-        if category_key in self.category_buttons:
-            curr = self.category_buttons[category_key]
-            color = curr["color"]
-            curr["frame"].configure(bg=color)
-            curr["content"].configure(bg=color)
-            curr["icon"].configure(bg=color, fg="#ffffff")
-            curr["name"].configure(bg=color, fg="#ffffff")
+    def _apply_categories(self):
+        """Push the current category selection to the UI (buttons, tools, tracker)."""
+        # Update button styles for every category.
+        for key, btn_info in self.category_buttons.items():
+            color = btn_info["color"]
+            if key in self.selected_categories:
+                btn_info["frame"].configure(bg=color)
+                btn_info["content"].configure(bg=color)
+                btn_info["icon"].configure(bg=color, fg="#ffffff")
+                btn_info["name"].configure(bg=color, fg="#ffffff")
+            else:
+                btn_info["frame"].configure(bg=COLORS["bg_secondary"])
+                btn_info["content"].configure(bg=COLORS["bg_secondary"])
+                btn_info["icon"].configure(bg=COLORS["bg_secondary"], fg=color)
+                btn_info["name"].configure(bg=COLORS["bg_secondary"], fg=COLORS["text_primary"])
 
-        # Update tools
-        self._update_tools_panel(category_key)
+        # Update tools panel with every selected category.
+        self._update_tools_panel(self.selected_categories)
 
-        # Save selected category to config
-        self.config_manager.config["last_selected_category"] = category_key
+        # Persist selection.
+        self.config_manager.config["last_selected_category"] = self.primary_category
+        self.config_manager.config["last_selected_categories"] = list(self.selected_categories)
         self.config_manager._save_config()
 
-        # Show/hide project tracker based on category type
+        # Show/hide project tracker and push the selection down to it.
         if hasattr(self, 'project_tracker') and self.project_tracker:
-            if category_key in CREATIVE_CATEGORIES:
-                # Show project tracker and filter by category
+            creative_selected = [k for k in self.selected_categories if k in CREATIVE_CATEGORIES]
+            if creative_selected:
                 if hasattr(self, 'tracker_panel'):
                     self.tracker_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
-                category_name = CREATIVE_CATEGORIES.get(category_key, {}).get("name", category_key)
-                # Use the project tracker's category selection method
-                if hasattr(self.project_tracker, '_select_category'):
-                    self.project_tracker._select_category(category_name)
+                category_names = [
+                    CREATIVE_CATEGORIES.get(k, {}).get("name", k) for k in creative_selected
+                ]
+                if hasattr(self.project_tracker, 'set_categories'):
+                    self.project_tracker.set_categories(category_names)
             else:
-                # Hide project tracker for operations (Business/Global)
+                # Operations-only (or empty) selection — hide tracker.
                 if hasattr(self, 'tracker_panel'):
                     self.tracker_panel.pack_forget()
 
     def _clear_category_selection(self):
         """Clear category selection to show all projects."""
-        # Deselect current category button
-        if self.selected_category and self.selected_category in self.category_buttons:
-            prev = self.category_buttons[self.selected_category]
-            prev_color = prev["color"]
-            prev["frame"].configure(bg=COLORS["bg_secondary"])
-            prev["content"].configure(bg=COLORS["bg_secondary"])
-            prev["icon"].configure(bg=COLORS["bg_secondary"], fg=prev_color)
-            prev["name"].configure(bg=COLORS["bg_secondary"], fg=COLORS["text_primary"])
+        self.selected_categories = []
 
-        self.selected_category = None
+        # Reset all button styles to unselected.
+        for key, btn_info in self.category_buttons.items():
+            color = btn_info["color"]
+            btn_info["frame"].configure(bg=COLORS["bg_secondary"])
+            btn_info["content"].configure(bg=COLORS["bg_secondary"])
+            btn_info["icon"].configure(bg=COLORS["bg_secondary"], fg=color)
+            btn_info["name"].configure(bg=COLORS["bg_secondary"], fg=COLORS["text_primary"])
 
         # Hide the category panel
         if hasattr(self, 'category_panel_outer'):
@@ -875,6 +912,7 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
 
         # Save to config
         self.config_manager.config["last_selected_category"] = None
+        self.config_manager.config["last_selected_categories"] = []
         self.config_manager._save_config()
 
         # Show project tracker and clear filter
@@ -885,14 +923,18 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
                 self.project_tracker._clear_category_selection()
 
     def _set_scope(self, scope: str):
-        """Set the scope filter and update project tracker."""
-        self.current_scope = scope
+        """Keyboard/shortcut entry point: select a single scope."""
+        self.current_scopes = {scope}
+        self._apply_scopes()
+
+    def _apply_scopes(self):
+        """Push the current scope set to the project tracker and refresh UI."""
         self._update_scope_button_styles()
 
         # Update project tracker
         if hasattr(self, 'project_tracker') and self.project_tracker:
-            if hasattr(self.project_tracker, 'set_scope'):
-                self.project_tracker.set_scope(scope)
+            if hasattr(self.project_tracker, 'set_scopes'):
+                self.project_tracker.set_scopes(self.current_scopes)
 
         # Update folder path based on new scope (if a category is selected)
         if hasattr(self, '_folder_category') and self._folder_category:
@@ -903,15 +945,23 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
         if not hasattr(self, 'scope_buttons'):
             return
         for value, btn in self.scope_buttons.items():
-            if value == self.current_scope:
+            if value in self.current_scopes:
                 # Selected state - highlighted
                 btn.configure(bg=COLORS["accent"], fg="white")
             else:
                 # Unselected state
                 btn.configure(bg=COLORS["bg_secondary"], fg="white")
 
-    def _update_tools_panel(self, category_key):
-        """Update the tools panel to show tools for the selected category or operation."""
+    def _update_tools_panel(self, category_keys):
+        """Update the tools panel to show tools for all selected categories.
+
+        Accepts a list of category keys (ordered; last entry is the primary
+        category that drives the notes/folder buttons). For backward compat,
+        a single string is also accepted.
+        """
+        if isinstance(category_keys, str):
+            category_keys = [category_keys]
+
         # Reset tool buttons list for keyboard navigation
         self.tool_buttons = []
         self.tools_focus_index = 0
@@ -920,32 +970,31 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
         for widget in self.tools_container.winfo_children():
             widget.destroy()
 
-        if category_key not in PIPELINE_CATEGORIES:
+        valid_keys = [k for k in category_keys if k in PIPELINE_CATEGORIES]
+        if not valid_keys:
             self.category_panel_outer.pack_forget()
             return
-
-        category_data = PIPELINE_CATEGORIES[category_key]
 
         # Show the category panel in the left panel (full height)
         self.category_panel_outer.pack(fill=tk.BOTH, expand=True, padx=15, pady=(15, 15))
 
-        # Collect all tools (from category and subcategories)
+        # Collect tools from every selected category. Each tool is tagged with
+        # its source category so it keeps the right color accent.
         all_tools = []
+        for category_key in valid_keys:
+            category_data = PIPELINE_CATEGORIES[category_key]
 
-        # Direct category scripts
-        scripts = category_data.get("scripts", {})
-        for script_key, script_data in scripts.items():
-            all_tools.append((script_key, None, script_data))
+            scripts = category_data.get("scripts", {})
+            for script_key, script_data in scripts.items():
+                all_tools.append((category_key, script_key, None, script_data))
 
-        # Subcategory scripts
-        subcategories = category_data.get("subcategories", {})
-        for subcat_key, subcat_data in subcategories.items():
-            subcat_scripts = subcat_data.get("scripts", {})
-            for script_key, script_data in subcat_scripts.items():
-                all_tools.append((script_key, subcat_key, script_data))
+            subcategories = category_data.get("subcategories", {})
+            for subcat_key, subcat_data in subcategories.items():
+                subcat_scripts = subcat_data.get("scripts", {})
+                for script_key, script_data in subcat_scripts.items():
+                    all_tools.append((category_key, script_key, subcat_key, script_data))
 
         if not all_tools:
-            # Show placeholder if no tools
             placeholder = tk.Label(
                 self.tools_container,
                 text="No tools available\nfor this category",
@@ -956,11 +1005,14 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
             )
             placeholder.pack(expand=True)
         else:
-            # Sort tools by priority (folder structure first, then backup, then others)
-            all_tools.sort(key=lambda x: self._get_script_priority(x[0], x[2].get("name", "")))
+            # Sort by priority within category, then keep categories in selection order.
+            cat_order = {k: i for i, k in enumerate(valid_keys)}
+            all_tools.sort(key=lambda t: (
+                cat_order[t[0]],
+                self._get_script_priority(t[1], t[3].get("name", ""))
+            ))
 
-            # Create tool buttons in scrollable container
-            for script_key, subcat_key, script_data in all_tools:
+            for category_key, script_key, subcat_key, script_data in all_tools:
                 self._create_tool_button(
                     self.tools_container,
                     category_key,
@@ -969,13 +1021,13 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
                     script_data
                 )
 
-        # Update the notes button (hide for GLOBAL since it only has tools)
-        if category_key == "GLOBAL":
+        # Notes/folder buttons target the primary (last-clicked) category only.
+        primary = valid_keys[-1]
+        if primary == "GLOBAL":
             self.notes_button_container.pack_forget()
         else:
-            # Pack at bottom first, before tools header gets packed
             self.notes_button_container.pack(fill=tk.X, side=tk.BOTTOM, padx=10, pady=(5, 10))
-            self._update_notes_button(category_key)
+            self._update_notes_button(primary)
 
         # Rebind mousewheel after adding tools
         self.left_scroll.rebind_mousewheel()
@@ -1234,15 +1286,17 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
             # Categories that support _Personal subfolder
             categories_with_personal = ["visual", "realtime", "web", "photo"]
 
+            # Treat "personal only" (just {"personal"}) as the personal-folder scope.
+            personal_only = getattr(self, "current_scopes", set()) == {"personal"}
+
             # Adjust path based on current scope
-            if hasattr(self, 'current_scope') and self.current_scope == "personal":
-                if category_key.lower() in categories_with_personal:
-                    folder_path = os.path.join(folder_path, "_Personal")
+            if personal_only and category_key.lower() in categories_with_personal:
+                folder_path = os.path.join(folder_path, "_Personal")
 
             self._folder_path = folder_path
             self._folder_category = category_key
             # Show _Personal in label when in personal scope
-            if hasattr(self, 'current_scope') and self.current_scope == "personal" and category_key.lower() in categories_with_personal:
+            if personal_only and category_key.lower() in categories_with_personal:
                 self._folder_label.configure(text=f"{category_key.title()} Personal")
             else:
                 self._folder_label.configure(text=f"{category_key.title()} Directory")
@@ -2020,10 +2074,9 @@ def main():
     # RAK KEYBOARD NAVIGATION BINDINGS
     # ====================================
 
-    # Number keys - Global filters (scope 1/2/3, status 4/5/6)
+    # Number keys - Global filters (scope 1/2, status 4/5/6)
     root.bind('1', lambda e: app._set_scope("personal") if app._should_handle_keyboard() else None)
     root.bind('2', lambda e: app._set_scope("client") if app._should_handle_keyboard() else None)
-    root.bind('3', lambda e: app._set_scope("all") if app._should_handle_keyboard() else None)
     root.bind('4', lambda e: app._toggle_status_filter("active"))
     root.bind('5', lambda e: app._toggle_status_filter("sandbox"))
     root.bind('6', lambda e: app._toggle_status_filter("archived"))
