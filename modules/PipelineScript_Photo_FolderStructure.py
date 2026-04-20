@@ -343,7 +343,7 @@ class PhotoFolderStructureCreator(FormKeyboardMixin):
                 'date_created': self.date_var.get(),
                 'path': project_path,
                 'base_directory': target_dir,
-                'status': 'active',
+                'status': 'sandbox' if self.sandbox_var.get() else 'active',
                 'notes': self.notes_text.get(1.0, tk.END).strip(),
                 'metadata': {
                     'location': self.location_var.get().strip(),

@@ -9,6 +9,7 @@ Keyboard Navigation:
 - Ctrl+Enter: Create project (from anywhere)
 - Escape: Close form
 - P: Toggle Personal checkbox (when not typing)
+- S: Toggle Sandbox checkbox (when not typing)
 """
 
 import os
@@ -120,6 +121,13 @@ class GodotFolderStructureCreator(FormKeyboardMixin):
         )
         self.personal_check.pack(side=tk.LEFT, padx=(0, 20))
 
+        # Sandbox checkbox
+        self.sandbox_var = tk.BooleanVar(value=False)
+        self.sandbox_check = create_styled_checkbox(
+            row2, text="Sandbox (S)", variable=self.sandbox_var, command=self.on_sandbox_toggle
+        )
+        self.sandbox_check.pack(side=tk.LEFT, padx=(0, 20))
+
         # Date
         create_styled_label(row2, "Date:").pack(side=tk.LEFT, padx=(0, 5))
         self.date_var = tk.StringVar(value=datetime.now().strftime('%Y-%m-%d'))
@@ -216,6 +224,7 @@ class GodotFolderStructureCreator(FormKeyboardMixin):
         self.project_name_var.trace_add("write", lambda *args: self.update_preview())
         self.date_var.trace_add("write", lambda *args: self.update_preview())
         self.personal_var.trace_add("write", lambda *args: self.update_preview())
+        self.sandbox_var.trace_add("write", lambda *args: self.update_preview())
         self.platform_var.trace_add("write", lambda *args: self.update_preview())
         self.renderer_var.trace_add("write", lambda *args: self.update_preview())
 
@@ -223,7 +232,7 @@ class GodotFolderStructureCreator(FormKeyboardMixin):
         """Collect widgets for keyboard navigation."""
         self._focusable_widgets = [
             self.client_entry, self.project_entry, self.personal_check,
-            self.date_entry, self.notes_text,
+            self.sandbox_check, self.date_entry, self.notes_text,
         ]
         self._create_btn = self.create_btn
         self._browse_btn = self.browse_btn
@@ -231,14 +240,40 @@ class GodotFolderStructureCreator(FormKeyboardMixin):
         self._personal_checkbox = self.personal_check
         self._personal_var = self.personal_var
 
-        # Add Enter binding for personal checkbox to toggle it
+        # Add Enter binding for checkboxes to toggle them
         self.personal_check.bind("<Return>", lambda e: self._toggle_personal_checkbox())
+        self.sandbox_check.bind("<Return>", lambda e: self._toggle_sandbox_checkbox())
 
     def _toggle_personal_checkbox(self):
         """Toggle personal checkbox when Enter is pressed."""
         self.personal_var.set(not self.personal_var.get())
         self.toggle_personal()
         return "break"
+
+    def _toggle_sandbox_checkbox(self):
+        """Toggle sandbox checkbox when Enter is pressed."""
+        self.sandbox_var.set(not self.sandbox_var.get())
+        self.on_sandbox_toggle()
+        return "break"
+
+    def _setup_keyboard_navigation(self):
+        """Set up keyboard navigation with P for Personal and S for Sandbox."""
+        super()._setup_keyboard_navigation()
+
+        root = self.parent.winfo_toplevel()
+        root.bind("<s>", self._on_s_key)
+        root.bind("<S>", self._on_s_key)
+
+    def _on_s_key(self, event):
+        """Handle S key to toggle Sandbox checkbox."""
+        if hasattr(self, '_in_text_field') and self._in_text_field:
+            return
+        self.sandbox_var.set(not self.sandbox_var.get())
+        return "break"
+
+    def on_sandbox_toggle(self):
+        """Handle sandbox checkbox toggle."""
+        self.update_preview()
 
     def toggle_personal(self):
         """Toggle the Personal checkbox to auto-fill client name."""
@@ -281,6 +316,8 @@ class GodotFolderStructureCreator(FormKeyboardMixin):
         base_dir = self.base_dir_var.get()
         if self.personal_var.get():
             preview_path = f"{base_dir}/_Personal/{project_dir}"
+        elif self.sandbox_var.get():
+            preview_path = f"{base_dir}/_Sandbox/{project_dir}"
         else:
             preview_path = f"{base_dir}/{project_dir}"
 
@@ -341,6 +378,9 @@ class GodotFolderStructureCreator(FormKeyboardMixin):
         if self.personal_var.get():
             base_dir = os.path.join(base_dir, "_Personal")
             os.makedirs(base_dir, exist_ok=True)
+        elif self.sandbox_var.get():
+            base_dir = os.path.join(base_dir, "_Sandbox")
+            os.makedirs(base_dir, exist_ok=True)
 
         if client_name and client_name != "Personal":
             folder_name = f'{date}_Godot_{client_name}_{project_name}'
@@ -373,7 +413,7 @@ class GodotFolderStructureCreator(FormKeyboardMixin):
                 'date_created': date,
                 'path': project_dir,
                 'base_directory': base_dir,
-                'status': 'active',
+                'status': 'sandbox' if self.sandbox_var.get() else 'active',
                 'notes': self.notes_text.get(1.0, tk.END).strip(),
                 'metadata': {
                     'software_specs': {
@@ -381,7 +421,8 @@ class GodotFolderStructureCreator(FormKeyboardMixin):
                         'platform': platform,
                         'renderer': renderer
                     },
-                    'is_personal': self.personal_var.get()
+                    'is_personal': self.personal_var.get(),
+                    'is_sandbox': self.sandbox_var.get()
                 }
             }
 

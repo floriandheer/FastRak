@@ -459,7 +459,7 @@ class ProjectDatabase:
         projects = self.data.get("projects", [])
 
         if not include_archived:
-            projects = [p for p in projects if p.get("status") == "active"]
+            projects = [p for p in projects if p.get("status") in ("active", "sandbox")]
 
         # Search in client_name and project_name
         results = []
@@ -509,13 +509,14 @@ class ProjectDatabase:
         self._save()
         logger.info(f"Archived project: {project_id}")
 
-    def unarchive_project(self, project_id: str, restored_path: str):
+    def unarchive_project(self, project_id: str, restored_path: str, restore_status: str = "active"):
         """
-        Mark project as active and record restored path.
+        Mark project as active (or sandbox) and record restored path.
 
         Args:
             project_id: Project UUID
             restored_path: Restored path (typically from archived_from)
+            restore_status: Status to restore to ("active" or "sandbox")
         """
         project = self.get_project_by_id(project_id)
         if not project:
@@ -525,7 +526,7 @@ class ProjectDatabase:
         archive_path = project["path"]
 
         # Update project
-        project["status"] = "active"
+        project["status"] = restore_status
         project["archived_date"] = None
         project["path"] = self.normalize_path(restored_path)
         project["updated_at"] = datetime.now().isoformat()

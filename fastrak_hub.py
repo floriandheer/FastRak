@@ -1143,8 +1143,9 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
                 # Check if project tracker is in archive mode
                 is_archive_mode = False
                 if hasattr(self, 'project_tracker') and self.project_tracker:
-                    if hasattr(self.project_tracker, 'filter_status'):
-                        is_archive_mode = self.project_tracker.filter_status.get() == "archived"
+                    if hasattr(self.project_tracker, 'filter_toggles'):
+                        statuses = self.project_tracker._get_active_statuses()
+                        is_archive_mode = statuses == {"archived"}
 
                 if is_archive_mode:
                     # Open archive directory
@@ -2023,9 +2024,9 @@ def main():
     root.bind('1', lambda e: app._set_scope("personal") if app._should_handle_keyboard() else None)
     root.bind('2', lambda e: app._set_scope("client") if app._should_handle_keyboard() else None)
     root.bind('3', lambda e: app._set_scope("all") if app._should_handle_keyboard() else None)
-    root.bind('4', lambda e: app._set_status_filter("active"))
-    root.bind('5', lambda e: app._set_status_filter("archived"))
-    root.bind('6', lambda e: app._set_status_filter("all"))
+    root.bind('4', lambda e: app._toggle_status_filter("active"))
+    root.bind('5', lambda e: app._toggle_status_filter("sandbox"))
+    root.bind('6', lambda e: app._toggle_status_filter("archived"))
 
     # Panel navigation (WASD)
     root.bind('w', lambda e: app._nav_panel_up())
