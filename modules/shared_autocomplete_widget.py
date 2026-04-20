@@ -79,6 +79,11 @@ class AutocompleteComboEntry(tk.Frame):
         self.entry.bind('<Escape>', self._hide_listbox)
         self.entry.bind('<FocusOut>', self._on_focus_out)
 
+        # Listbox frame is parented to the toplevel (see _create_listbox),
+        # so it won't be destroyed automatically when this widget's parent
+        # is destroyed. Clean it up explicitly on destroy.
+        self.bind('<Destroy>', self._on_destroy)
+
         logger.debug(f"AutocompleteComboEntry initialized with {len(self.all_clients)} clients")
 
     def get(self):
@@ -326,6 +331,20 @@ class AutocompleteComboEntry(tk.Frame):
         """Handle focus out event."""
         # Hide listbox after a short delay (to allow clicks)
         self.after(200, self._hide_listbox)
+
+    def _on_destroy(self, event):
+        """Destroy the orphaned listbox frame when this widget is destroyed."""
+        # Only react to destruction of this widget itself, not children.
+        if event.widget is not self:
+            return
+        if self.listbox_frame is not None:
+            try:
+                self.listbox_frame.destroy()
+            except tk.TclError:
+                pass
+            self.listbox_frame = None
+            self.listbox = None
+            self.dropdown_visible = False
 
 
 # Backward compatibility alias

@@ -40,6 +40,11 @@ MODULE_NAME = "project_tracker"
 # Get logger reference (configured in main())
 logger = get_logger(MODULE_NAME)
 
+
+def event_has_shift(event) -> bool:
+    """True if a Tk event has the Shift modifier held."""
+    return bool(getattr(event, "state", 0) & 0x0001)
+
 def _get_platform_path(windows_path: str) -> Path:
     """
     Convert Windows path to appropriate platform path.
@@ -969,7 +974,8 @@ class ProjectTrackerApp:
 
         # Current selection
         self.selected_project = None
-        self.selected_category = None  # Track selected category
+        # Selected categories (set). Empty = no category filter (show all).
+        self.selected_categories = set()
         self.tree_item_to_project = {}  # Map tree items to project data
 
         # Path tracking for clipboard copy
@@ -1005,8 +1011,14 @@ class ProjectTrackerApp:
             "archived": tk.BooleanVar(value="archived" in saved_statuses),
         }
 
-        # Scope filter (all/personal/client)
-        self.filter_scope = tk.StringVar(value=self.settings.get("filter_scope", "all"))
+        # Scope filter — set of enabled scopes (subset of {"personal", "client"}).
+        # Empty set is allowed and means "show nothing for scope".
+        saved_scopes = self.settings.get("filter_scopes", None)
+        if saved_scopes is None:
+            # Backward compat with old single "filter_scope" string setting.
+            old = self.settings.get("filter_scope", "all")
+            saved_scopes = ["personal", "client"] if old == "all" else [old]
+        self.filter_scopes = {s for s in saved_scopes if s in ("personal", "client")}
         self.scope_buttons = {}
 
         # Search query
@@ -1127,9 +1139,11 @@ class ProjectTrackerApp:
             # Store count label
             self.category_buttons[name]["count_label"] = count_label
 
-            # Click handler
+            # Click handler — Shift+click toggles in selection (multi-select).
             def make_click_handler(cat_name):
-                return lambda e: self._select_category(cat_name)
+                return lambda e: self._select_category(
+                    cat_name, additive=event_has_shift(e)
+                )
 
             click_handler = make_click_handler(name)
 
@@ -1223,8 +1237,14 @@ class ProjectTrackerApp:
             btn.pack(side=tk.LEFT, padx=(0, 2))
 
             def on_click(e):
-                var = self.filter_toggles[value]
-                var.set(not var.get())
+                # Shift+click: toggle only this one (multi-select).
+                # Plain click: set only this one on, turn the rest off.
+                if event_has_shift(e):
+                    var = self.filter_toggles[value]
+                    var.set(not var.get())
+                else:
+                    for k, v in self.filter_toggles.items():
+                        v.set(k == value)
                 self._on_filter_changed()
 
             def on_enter(e):
@@ -1689,6 +1709,13 @@ class ProjectTrackerApp:
         # Update FAB visibility based on current category
         self._update_fab_visibility()
 
+    def _sole_creative_category(self):
+        """Return the single selected creative category, or None if not exactly one."""
+        creative = [c for c in self.selected_categories if is_creative_category(c)]
+        if len(creative) == 1 and len(self.selected_categories) == 1:
+            return creative[0]
+        return None
+
     def _update_fab_visibility(self):
         """Show/hide FAB based on current category and view state."""
         if self.fab_button is None:
@@ -1699,15 +1726,11 @@ class ProjectTrackerApp:
             self.fab_button.place_forget()
             return
 
-        # Show FAB only for creative categories (not Business/Global)
-        if self.selected_category and is_creative_category(self.selected_category):
-            # Position in bottom-right corner of view_container (above details panel)
+        # Show FAB only when exactly one creative category is selected.
+        if self._sole_creative_category() is not None:
             self.fab_button.place(relx=0.97, rely=0.97, anchor="se")
             self.fab_button.lift()  # Ensure FAB stays on top
             self.fab_label.lift()   # Also lift the label
-        elif self.selected_category is None:
-            # When no category selected (showing all), hide FAB
-            self.fab_button.place_forget()
         else:
             self.fab_button.place_forget()
 
@@ -1717,11 +1740,12 @@ class ProjectTrackerApp:
         if self.view_state != "PROJECT_LIST":
             return
 
-        if not self.selected_category:
-            messagebox.showinfo("Select Category", "Please select a category first.")
-            return
-
-        if not is_creative_category(self.selected_category):
+        category = self._sole_creative_category()
+        if category is None:
+            messagebox.showinfo(
+                "Select Category",
+                "Please select exactly one creative category before creating a project."
+            )
             return
 
         # Notify parent that creation is starting
@@ -1729,13 +1753,13 @@ class ProjectTrackerApp:
             self.creation_start_callback()
 
         # Check if category has multiple subtypes
-        if has_multiple_subtypes(self.selected_category):
-            self._show_subtype_selection(self.selected_category)
+        if has_multiple_subtypes(category):
+            self._show_subtype_selection(category)
         else:
             # Single subtype - open form directly
-            subtypes = get_subtypes_for_category(self.selected_category)
+            subtypes = get_subtypes_for_category(category)
             if subtypes:
-                self._open_creation_form(self.selected_category, subtypes[0])
+                self._open_creation_form(category, subtypes[0])
 
     def _show_subtype_selection(self, category):
         """Show panel with subtype selection buttons."""
@@ -2026,26 +2050,23 @@ class ProjectTrackerApp:
             self.creation_cancel_callback()
 
     def set_category(self, category_name: Optional[str]):
-        """
-        Set the selected category (public method for external use).
+        """Single-category setter (kept for backward compat)."""
+        self.set_categories([category_name] if category_name else [])
 
-        Args:
-            category_name: Category name or None to show all
-        """
+    def set_categories(self, category_names):
+        """Set selected categories (public method for external callers like the hub)."""
         # If in creation mode, close it first
         if self.view_state != "PROJECT_LIST":
             self._close_creation_panel(notify_cancel=False)
 
-        self.selected_category = category_name
+        self.selected_categories = {n for n in (category_names or []) if n}
 
         # Update category button styles if in standalone mode
         for name, btn_info in self.category_buttons.items():
             self._update_category_card_style(btn_info, name)
 
-        # Update FAB visibility based on new category
         self._update_fab_visibility()
-
-        # Refresh project list for this category
+        self._update_physical_subtype_visibility()
         self.refresh_project_list()
 
     def _apply_saved_settings(self):
@@ -2086,32 +2107,37 @@ class ProjectTrackerApp:
         if self.status_callback:
             self.status_callback(message, status_type)
 
-    def _select_category(self, category_name):
-        """Handle category button selection."""
+    def _select_category(self, category_name, *, additive=False):
+        """Handle category button selection.
+
+        Plain selection collapses to a single category. When ``additive`` is
+        True (Shift+click), toggle this category in the existing set.
+        """
         # If in creation mode, close it first
         if self.view_state != "PROJECT_LIST":
             self._close_creation_panel(notify_cancel=False)
 
-        self.selected_category = category_name
+        if additive:
+            if category_name in self.selected_categories:
+                self.selected_categories.discard(category_name)
+            else:
+                self.selected_categories.add(category_name)
+        else:
+            self.selected_categories = {category_name}
 
         # Update all button styles
         for name, btn_info in self.category_buttons.items():
             self._update_category_card_style(btn_info, name)
 
-        # Update FAB visibility based on new category
         self._update_fab_visibility()
-
-        # Show/hide physical subtype pills
         self._update_physical_subtype_visibility()
-
-        # Refresh project list for this category
         self.refresh_project_list()
 
     def _update_category_card_style(self, btn_info, name):
         """Update category button styling based on selection state."""
         frame = btn_info["frame"]
 
-        if name == self.selected_category:
+        if name in self.selected_categories:
             # Selected style - white highlight border
             frame.configure(highlightbackground="white")
         else:
@@ -2124,19 +2150,14 @@ class ProjectTrackerApp:
         if self.view_state != "PROJECT_LIST":
             self._close_creation_panel(notify_cancel=False)
 
-        self.selected_category = None
+        self.selected_categories = set()
 
         # Update all button styles
         for name, btn_info in self.category_buttons.items():
             self._update_category_card_style(btn_info, name)
 
-        # Update FAB visibility (hidden when no category selected)
         self._update_fab_visibility()
-
-        # Hide physical subtype pills
         self._update_physical_subtype_visibility()
-
-        # Refresh project list to show all
         self.refresh_project_list()
 
     def refresh_project_list(self):
@@ -2165,17 +2186,19 @@ class ProjectTrackerApp:
             projects = []
 
         # Filter by scope (personal/client) — not applied when only sandbox is shown
-        scope = self.filter_scope.get()
+        scopes = self.filter_scopes
         only_sandbox = active_statuses == {"sandbox"}
         if not only_sandbox:
-            if scope == "personal":
-                projects = [p for p in projects if
-                            p.get("client_name", "").lower() == "personal" or
-                            p.get("metadata", {}).get("is_personal", False)]
-            elif scope == "client":
-                projects = [p for p in projects if
-                            p.get("client_name", "").lower() != "personal" and
-                            not p.get("metadata", {}).get("is_personal", False)]
+            def _is_personal(p):
+                return (p.get("client_name", "").lower() == "personal" or
+                        p.get("metadata", {}).get("is_personal", False))
+            if not scopes:
+                projects = []
+            elif scopes == {"personal"}:
+                projects = [p for p in projects if _is_personal(p)]
+            elif scopes == {"client"}:
+                projects = [p for p in projects if not _is_personal(p)]
+            # else: scopes == {"personal", "client"} → no filter
 
         # Group projects by category
         categories = {
@@ -2212,18 +2235,21 @@ class ProjectTrackerApp:
                 count = len(cat_info["projects"])
                 btn_info["count_label"].config(text=f"({count})")
 
-        # Filter by selected category if one is selected
-        if self.selected_category:
-            category_projects = categories.get(self.selected_category, {}).get("projects", [])
+        # Filter by selected categories (union). Empty set = show all.
+        if self.selected_categories:
+            category_projects = []
+            for name in self.selected_categories:
+                category_projects.extend(categories.get(name, {}).get("projects", []))
         else:
-            # No category selected - show all
             category_projects = []
             for cat_info in categories.values():
                 category_projects.extend(cat_info["projects"])
 
-        # Filter by physical subtype if applicable
+        # Filter by physical subtype if applicable (only meaningful when Physical
+        # is the single selected category).
         physical_subtype = self.filter_physical_subtype.get()
-        if self.selected_category == "Physical" and physical_subtype != "all":
+        if (self.selected_categories == {"Physical"}
+                and physical_subtype != "all"):
             category_projects = [
                 p for p in category_projects
                 if p.get("metadata", {}).get("physical_subtype", "") == physical_subtype
@@ -2270,8 +2296,11 @@ class ProjectTrackerApp:
         else:
             self.count_label.config(text=f"{count}")
 
-        logger.debug(f"Refreshed project list: {count} projects" +
-                    (f" in {self.selected_category}" if self.selected_category else ""))
+        if self.selected_categories:
+            cat_label = ", ".join(sorted(self.selected_categories))
+            logger.debug(f"Refreshed project list: {count} projects in {cat_label}")
+        else:
+            logger.debug(f"Refreshed project list: {count} projects")
 
         # Also refresh grid view if it's currently visible
         if self.view_mode.get() == "grid":
@@ -2749,9 +2778,10 @@ class ProjectTrackerApp:
         """Show/hide physical subtype pills based on category and scope."""
         if not hasattr(self, 'physical_subtype_frame'):
             return
-        scope = self.filter_scope.get()
-        is_physical = self.selected_category == "Physical"
-        is_work_or_all = scope in ("client", "all")
+        # Physical pills are only meaningful when Physical is the single selection.
+        is_physical = self.selected_categories == {"Physical"}
+        # Show whenever client scope is enabled (alone or alongside personal).
+        is_work_or_all = "client" in self.filter_scopes
 
         if is_physical and is_work_or_all:
             self.physical_subtype_frame.grid(row=1, column=0, columnspan=5, sticky=tk.W, pady=(2, 0))
@@ -2762,15 +2792,15 @@ class ProjectTrackerApp:
                 self.filter_physical_subtype.set("all")
                 self._update_physical_subtype_styles()
 
-    def set_scope(self, scope: str):
-        """Set the scope filter (called from external UI like pipeline)."""
-        self.filter_scope.set(scope)
+    def set_scopes(self, scopes):
+        """Set the scope filter set (called from external UI like pipeline)."""
+        self.filter_scopes = {s for s in scopes if s in ("personal", "client")}
         self._on_scope_changed()
 
     def _on_scope_changed(self, event=None):
         """Handle scope filter change."""
-        # Save scope preference
-        self.settings.set("filter_scope", self.filter_scope.get())
+        # Persist scope preference as a list.
+        self.settings.set("filter_scopes", sorted(self.filter_scopes))
         # Update button styles (if buttons exist in this UI)
         self._update_scope_button_styles()
         self._update_physical_subtype_visibility()
@@ -2780,9 +2810,8 @@ class ProjectTrackerApp:
         """Update scope button visual states based on current selection."""
         if not hasattr(self, 'scope_buttons') or not self.scope_buttons:
             return
-        current = self.filter_scope.get()
         for value, btn in self.scope_buttons.items():
-            if value == current:
+            if value in self.filter_scopes:
                 # Selected state - highlighted
                 btn.configure(bg="#58a6ff", fg="white")
             else:
