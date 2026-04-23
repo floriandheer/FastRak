@@ -40,6 +40,7 @@ from ui_config_manager import ConfigManager
 from ui_settings_dialog import SettingsDialog
 from ui_script_runner import ScriptRunner
 from ui_keyboard_navigator import KeyboardNavigatorMixin
+from ui_session_state import SessionState, CHANGE_CATEGORIES, CHANGE_SCOPES
 
 # Get logger reference (configured in main())
 logger = get_logger("pipeline")
@@ -189,6 +190,21 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
         # Apply fullscreen if configured
         if self.settings.get_start_fullscreen():
             self.root.attributes('-fullscreen', True)
+
+        # Shared session state (single source of truth for category selection
+        # and scope filter, subscribed to by both the hub and the embedded
+        # project tracker). Seeded from persisted config before the UI is
+        # built; individual UI builders push their initial state via
+        # set_* calls or update their widgets from session properties.
+        saved_scopes = self.config_manager.config.get("filter_scopes")
+        if saved_scopes is None:
+            # Backward compat with older tracker-owned setting key.
+            saved_scopes = ["personal", "client"]
+        self.session = SessionState(
+            initial_categories=self.config_manager.config.get("last_selected_categories") or [],
+            initial_scopes=saved_scopes,
+        )
+        self.session.add_listener(self._on_session_change)
 
         # Keyboard navigation state
         self.focused_panel = "categories"  # "categories", "operations", "tools", "tracker"
@@ -514,73 +530,13 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
         cat_header.bind("<Enter>", lambda e: cat_header.configure(fg=COLORS["accent"]))
         cat_header.bind("<Leave>", lambda e: cat_header.configure(fg=COLORS["text_secondary"]))
 
-        # Scope toggle buttons (inside categories section, matching category grid width)
-        scope_frame = tk.Frame(self.categories_section, bg=COLORS["bg_card"])
-        scope_frame.pack(fill=tk.X, pady=(0, 10), padx=4)  # Match cat_grid padx
-
+        # Scope toggles (Personal / Work) now live in the project tracker's
+        # controls row, since they filter projects, not category tools. The
+        # hub keeps a cached view of the current scope for code that still
+        # reads it (folder-path resolution, keyboard shortcuts); writes go
+        # through self.session and reach the tracker via its listener.
         self.scope_buttons = {}
-        # Set of enabled scopes (subset of {"personal", "client"}). Both = show all.
-        self.current_scopes = {"personal", "client"}
-
-        scope_options = [
-            ("personal", "Personal", "1"),
-            ("client", "Work", "2"),
-        ]
-
-        for idx, (value, text, shortcut) in enumerate(scope_options):
-            btn = tk.Label(
-                scope_frame,
-                text=text,
-                font=font.Font(family="Segoe UI", size=9),
-                fg="white",
-                bg=COLORS["bg_secondary"],
-                pady=6,
-                cursor="hand2"
-            )
-            # Use grid layout to match category buttons width
-            btn.grid(row=0, column=idx, padx=2, sticky="nsew")
-            scope_frame.columnconfigure(idx, weight=1)
-
-            def make_scope_click(v):
-                def on_click(e):
-                    # Shift+click: toggle this scope (multi-select).
-                    # Plain click: select only this scope.
-                    if event_has_shift(e):
-                        if v in self.current_scopes:
-                            self.current_scopes.discard(v)
-                        else:
-                            self.current_scopes.add(v)
-                    else:
-                        self.current_scopes = {v}
-                    self._apply_scopes()
-                return on_click
-
-            def make_scope_enter(v, b, s):
-                def on_enter(e):
-                    if v not in self.current_scopes:
-                        b.configure(bg="#2d333b")
-                    # Show shortcut hint
-                    if hasattr(self, 'header_hint_label'):
-                        self.header_hint_label.config(text=f"Shortcut: {s}")
-                return on_enter
-
-            def make_scope_leave(v, b):
-                def on_leave(e):
-                    if v not in self.current_scopes:
-                        b.configure(bg=COLORS["bg_secondary"])
-                    # Clear shortcut hint
-                    if hasattr(self, 'header_hint_label'):
-                        self.header_hint_label.config(text="")
-                return on_leave
-
-            btn.bind("<Button-1>", make_scope_click(value))
-            btn.bind("<Enter>", make_scope_enter(value, btn, shortcut))
-            btn.bind("<Leave>", make_scope_leave(value, btn))
-
-            self.scope_buttons[value] = btn
-
-        # Set initial scope button styling
-        self._update_scope_button_styles()
+        self.current_scopes = set(self.session.scopes)
 
         # Category buttons grid (2 columns, 3 rows)
         self.cat_grid = tk.Frame(self.categories_section, bg=COLORS["bg_card"])
@@ -588,10 +544,10 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
 
         # Store category button references (includes both categories and operations)
         self.category_buttons = {}
-        # Ordered list of selected categories; last element is the "primary"
-        # category that drives the notes/folder buttons. Multi-select is engaged
-        # via Shift+click; plain click always collapses back to a single entry.
-        self.selected_categories = []
+        # Cached view of categories, kept in sync with self.session via the
+        # _on_session_change listener. The session is the source of truth;
+        # writes go through it (toggle_category / set_categories).
+        self.selected_categories = list(self.session.categories)
 
         # Category order and data
         category_order = ["VISUAL", "REALTIME", "AUDIO", "PHYSICAL", "PHOTO", "WEB"]
@@ -696,7 +652,8 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
         self.tracker_panel = tk.Frame(main_container, bg=COLORS["bg_primary"])
         self.tracker_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
-        # Embed the Project Tracker with status and hint callbacks
+        # Embed the Project Tracker with status and hint callbacks. Pass
+        # the shared session so scope state stays in lockstep.
         self.project_tracker = ProjectTrackerApp(
             self.tracker_panel,
             embedded=True,
@@ -704,18 +661,29 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
             hint_callback=self._show_hint,
             creation_start_callback=self._on_creation_start,
             creation_done_callback=self._on_project_creation_done,
-            creation_cancel_callback=self._return_to_last_panel
+            creation_cancel_callback=self._return_to_last_panel,
+            session=self.session,
         )
 
         # Restore state from last session (run once at startup)
         self._restore_session_state()
 
     def _restore_session_state(self):
-        """Restore saved state from last session (category, scope, etc.)."""
-        # Sync scope from project tracker's saved settings
-        if hasattr(self, 'project_tracker') and hasattr(self.project_tracker, 'filter_scopes'):
-            self.current_scopes = set(self.project_tracker.filter_scopes)
-            self._update_scope_button_styles()
+        """Restore saved state from last session (category, scope, etc.).
+
+        Scopes now live in the shared session (seeded from config at
+        construction). If the hub's config has no scope key yet, migrate
+        from the tracker's legacy per-tracker settings once.
+        """
+        if self.config_manager.config.get("filter_scopes") is None and \
+                hasattr(self, 'project_tracker') and self.project_tracker is not None:
+            legacy = getattr(self.project_tracker, 'filter_scopes', None)
+            if legacy:
+                self.session.set_scopes(legacy)
+                self.config_manager.config["filter_scopes"] = sorted(legacy)
+                self.config_manager._save_config()
+
+        self._update_scope_button_styles()
 
         # Restore last selected categories (multi) from config, falling back
         # to the legacy single-category key.
@@ -725,8 +693,7 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
             saved_list = [legacy] if legacy else []
         valid = [k for k in saved_list if k in PIPELINE_CATEGORIES]
         if valid:
-            self.selected_categories = valid
-            self._apply_categories()
+            self.session.set_categories(valid)
         else:
             # Show all by default (no category selected)
             self._clear_category_selection()
@@ -828,14 +795,7 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
         def on_click(e):
             # Shift+click: toggle this category in the selection.
             # Plain click: collapse the selection to just this one.
-            if event_has_shift(e):
-                if category_key in self.selected_categories:
-                    self.selected_categories.remove(category_key)
-                else:
-                    self.selected_categories.append(category_key)
-                self._apply_categories()
-            else:
-                self._select_category(category_key)
+            self.session.toggle_category(category_key, additive=event_has_shift(e))
 
         for widget in [btn_frame, content, icon_label, name_label]:
             widget.bind("<Enter>", on_enter)
@@ -851,8 +811,16 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
 
     def _select_category(self, category_key):
         """Select a single category (collapse multi-selection to just this one)."""
-        self.selected_categories = [category_key]
-        self._apply_categories()
+        self.session.set_categories([category_key])
+
+    def _on_session_change(self, change):
+        """Shared-state listener. Sync cached views and re-render."""
+        if change == CHANGE_CATEGORIES:
+            self.selected_categories = list(self.session.categories)
+            self._apply_categories()
+        elif change == CHANGE_SCOPES:
+            self.current_scopes = set(self.session.scopes)
+            self._apply_scopes()
 
     def _apply_categories(self):
         """Push the current category selection to the UI (buttons, tools, tracker)."""
@@ -895,46 +863,32 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
                     self.tracker_panel.pack_forget()
 
     def _clear_category_selection(self):
-        """Clear category selection to show all projects."""
-        self.selected_categories = []
+        """Clear category selection to show all projects.
 
-        # Reset all button styles to unselected.
-        for key, btn_info in self.category_buttons.items():
-            color = btn_info["color"]
-            btn_info["frame"].configure(bg=COLORS["bg_secondary"])
-            btn_info["content"].configure(bg=COLORS["bg_secondary"])
-            btn_info["icon"].configure(bg=COLORS["bg_secondary"], fg=color)
-            btn_info["name"].configure(bg=COLORS["bg_secondary"], fg=COLORS["text_primary"])
+        Routes state through self.session so the listener updates button
+        styles and the tracker. This method still owns the panel show/hide
+        (a UX-specific behavior distinct from simply having no categories).
+        """
+        self.session.clear_categories()
 
-        # Hide the category panel
+        # Hide the category panel; re-show the project tracker unconditionally.
         if hasattr(self, 'category_panel_outer'):
             self.category_panel_outer.pack_forget()
-
-        # Save to config
-        self.config_manager.config["last_selected_category"] = None
-        self.config_manager.config["last_selected_categories"] = []
-        self.config_manager._save_config()
-
-        # Show project tracker and clear filter
         if hasattr(self, 'tracker_panel'):
             self.tracker_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
-        if hasattr(self, 'project_tracker') and self.project_tracker:
-            if hasattr(self.project_tracker, '_clear_category_selection'):
-                self.project_tracker._clear_category_selection()
 
     def _set_scope(self, scope: str):
         """Keyboard/shortcut entry point: select a single scope."""
-        self.current_scopes = {scope}
-        self._apply_scopes()
+        self.session.set_scopes({scope})
 
     def _apply_scopes(self):
-        """Push the current scope set to the project tracker and refresh UI."""
+        """Update scope UI and persist. The tracker subscribes to the same
+        session and updates itself; no direct push needed."""
         self._update_scope_button_styles()
 
-        # Update project tracker
-        if hasattr(self, 'project_tracker') and self.project_tracker:
-            if hasattr(self.project_tracker, 'set_scopes'):
-                self.project_tracker.set_scopes(self.current_scopes)
+        # Persist centrally.
+        self.config_manager.config["filter_scopes"] = sorted(self.current_scopes)
+        self.config_manager._save_config()
 
         # Update folder path based on new scope (if a category is selected)
         if hasattr(self, '_folder_category') and self._folder_category:

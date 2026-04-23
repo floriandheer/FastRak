@@ -426,7 +426,7 @@ class VJFolderStructureCreator(FormKeyboardMixin):
                 'date_created': date,
                 'path': project_dir,
                 'base_directory': base_dir,
-                'status': 'sandbox' if self.sandbox_var.get() else 'active',
+                'status': 'active',
                 'notes': self.notes_text.get(1.0, tk.END).strip(),
                 'metadata': {
                     'subtype': 'VJ',

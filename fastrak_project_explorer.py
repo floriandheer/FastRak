@@ -383,10 +383,9 @@ class ArchiveManager:
             logger.info(f"Unarchiving: {source_path} -> {active_path}")
             shutil.move(str(source_path), str(active_path))
 
-            # Update database — restore sandbox projects to "sandbox" status
-            is_sandbox = metadata.get("is_sandbox", False)
-            restore_status = "sandbox" if is_sandbox else "active"
-            db.unarchive_project(project["id"], str(active_path), restore_status=restore_status)
+            # Update database — status goes back to "active"; the sandbox
+            # flag (if any) lives in metadata and is preserved automatically.
+            db.unarchive_project(project["id"], str(active_path))
 
             messagebox.showinfo(
                 "Success",
@@ -547,7 +546,8 @@ class ProjectImporter:
                             "base_dir": stored_base,
                             "scanned_path": str(item),  # Keep original for duplicate check
                             "parsed": parsed,
-                            "status": "sandbox" if is_sandbox_dir else "active"
+                            "status": "active",
+                            "is_sandbox_origin": is_sandbox_dir,
                         })
             except Exception:
                 pass
@@ -608,7 +608,7 @@ class ProjectImporter:
                     "notes": "",
                     "metadata": {
                         "is_personal": parsed.get("is_personal", False),
-                        "is_sandbox": folder_info.get("status") == "sandbox" or folder_info.get("is_sandbox_origin", False),
+                        "is_sandbox": folder_info.get("is_sandbox_origin", False),
                         "location": parsed.get("location", ""),
                         "physical_subtype": parsed.get("physical_subtype", "")
                     }
@@ -935,7 +935,7 @@ class ProjectTrackerApp:
     Use embedded=True when integrating into another application (like Pipeline Manager).
     """
 
-    def __init__(self, root_or_frame, embedded=False, status_callback=None, hint_callback=None, creation_start_callback=None, creation_done_callback=None, creation_cancel_callback=None):
+    def __init__(self, root_or_frame, embedded=False, status_callback=None, hint_callback=None, creation_start_callback=None, creation_done_callback=None, creation_cancel_callback=None, session=None):
         """
         Initialize the Project Tracker.
 
@@ -954,6 +954,10 @@ class ProjectTrackerApp:
         self.creation_start_callback = creation_start_callback
         self.creation_done_callback = creation_done_callback
         self.creation_cancel_callback = creation_cancel_callback
+        # Shared session (supplied by the hub in embedded mode; owns the
+        # authoritative scope filter). When None, the tracker falls back to
+        # its own persisted settings for scopes.
+        self.session = session
 
         if embedded:
             # Embedded mode: root_or_frame is the parent frame
@@ -1013,13 +1017,18 @@ class ProjectTrackerApp:
         }
 
         # Scope filter — set of enabled scopes (subset of {"personal", "client"}).
-        # Empty set is allowed and means "show nothing for scope".
-        saved_scopes = self.settings.get("filter_scopes", None)
-        if saved_scopes is None:
-            # Backward compat with old single "filter_scope" string setting.
-            old = self.settings.get("filter_scope", "all")
-            saved_scopes = ["personal", "client"] if old == "all" else [old]
-        self.filter_scopes = {s for s in saved_scopes if s in ("personal", "client")}
+        # Empty set is allowed and means "show nothing for scope". Session
+        # wins when present; otherwise load from the tracker's own settings.
+        if self.session is not None:
+            self.filter_scopes = set(self.session.scopes)
+            self.session.add_listener(self._on_session_change)
+        else:
+            saved_scopes = self.settings.get("filter_scopes", None)
+            if saved_scopes is None:
+                # Backward compat with old single "filter_scope" string setting.
+                old = self.settings.get("filter_scope", "all")
+                saved_scopes = ["personal", "client"] if old == "all" else [old]
+            self.filter_scopes = {s for s in saved_scopes if s in ("personal", "client")}
         self.scope_buttons = {}
 
         # Search query
@@ -1216,21 +1225,97 @@ class ProjectTrackerApp:
         self.search_entry.bind("<Enter>", on_search_enter)
         self.search_entry.bind("<Leave>", on_search_leave)
 
-        # Filter buttons frame
+        # Scope toggle buttons (Personal / Work) — moved from the hub so the
+        # project-filtering controls live next to the projects they affect.
+        scope_frame = tk.Frame(controls_frame, bg="#0d1117")
+        scope_frame.grid(row=0, column=2, sticky=tk.W, padx=(15, 0), pady=5)
+
+        for idx, (value, text, shortcut) in enumerate(
+            [("personal", "Personal", "1"), ("client", "Work", "2")]
+        ):
+            btn = tk.Label(
+                scope_frame,
+                text=text,
+                font=("Arial", 9),
+                fg="white",
+                bg="#1c2128",
+                padx=12,
+                pady=4,
+                cursor="hand2",
+            )
+            btn.pack(side=tk.LEFT, padx=(0, 2))
+
+            def make_click(v):
+                def on_click(e):
+                    # Shift+click: toggle (multi-select).
+                    # Plain click: select only this scope.
+                    if self.session is not None:
+                        self.session.toggle_scope(v, additive=event_has_shift(e))
+                    else:
+                        if event_has_shift(e):
+                            new = set(self.filter_scopes)
+                            if v in new:
+                                new.discard(v)
+                            else:
+                                new.add(v)
+                        else:
+                            new = {v}
+                        self.set_scopes(new)
+                return on_click
+
+            def make_enter(v, b, s):
+                def on_enter(e):
+                    if v not in self.filter_scopes:
+                        b.configure(bg="#2d333b")
+                    if self.hint_callback:
+                        self.hint_callback(f"Shortcut: {s}")
+                return on_enter
+
+            def make_leave(v, b):
+                def on_leave(e):
+                    if v not in self.filter_scopes:
+                        b.configure(bg="#1c2128")
+                    if self.hint_callback:
+                        self.hint_callback("")
+                return on_leave
+
+            btn.bind("<Button-1>", make_click(value))
+            btn.bind("<Enter>", make_enter(value, btn, shortcut))
+            btn.bind("<Leave>", make_leave(value, btn))
+
+            self.scope_buttons[value] = btn
+
+        self._update_scope_button_styles()
+
+        # Filter buttons frame. Active/Archive are status toggles; Sandbox is
+        # an orthogonal flag, so it sits in its own group separated by a thin
+        # vertical divider to make the distinction visible at a glance.
         filter_frame = tk.Frame(controls_frame, bg="#0d1117")
-        filter_frame.grid(row=0, column=2, columnspan=2, sticky=tk.W, padx=(15, 0), pady=5)
+        filter_frame.grid(row=0, column=3, sticky=tk.W, padx=(15, 0), pady=5)
+
+        # Status group (Active, Archive)
+        status_group = tk.Frame(filter_frame, bg="#0d1117")
+        status_group.pack(side=tk.LEFT)
 
         # Store filter buttons for styling updates
         self.filter_buttons = {}
 
+        # Sandbox uses the purple accent when selected to reinforce that it's
+        # a distinct flag, not a status — matches the list-view sandbox tag.
+        SANDBOX_SELECTED_BG = "#8957e5"
+        SANDBOX_SELECTED_FG = "#ffffff"
+        SANDBOX_BASE_BG = "#1c2128"
+        SANDBOX_HOVER_BG = "#2d243d"
+
         def create_filter_toggle(parent, text, value, shortcut):
             """Create a filter toggle button (can be independently on/off)."""
+            is_sandbox_btn = value == "sandbox"
             btn = tk.Label(
                 parent,
                 text=text,
                 font=("Arial", 9),
                 fg="white",
-                bg="#1c2128",
+                bg=SANDBOX_BASE_BG,
                 padx=12,
                 pady=4,
                 cursor="hand2"
@@ -1250,14 +1335,14 @@ class ProjectTrackerApp:
 
             def on_enter(e):
                 if not self.filter_toggles[value].get():
-                    btn.configure(bg="#2d333b")
+                    btn.configure(bg=SANDBOX_HOVER_BG if is_sandbox_btn else "#2d333b")
                 # Show shortcut hint
                 if self.hint_callback:
                     self.hint_callback(f"Toggle: {shortcut}")
 
             def on_leave(e):
                 if not self.filter_toggles[value].get():
-                    btn.configure(bg="#1c2128")
+                    btn.configure(bg=SANDBOX_BASE_BG)
                 # Clear shortcut hint
                 if self.hint_callback:
                     self.hint_callback("")
@@ -1269,9 +1354,23 @@ class ProjectTrackerApp:
             self.filter_buttons[value] = btn
             return btn
 
-        create_filter_toggle(filter_frame, "Active", "active", "4")
-        create_filter_toggle(filter_frame, "Sandbox", "sandbox", "5")
-        create_filter_toggle(filter_frame, "Archive", "archived", "6")
+        create_filter_toggle(status_group, "Active", "active", "4")
+        create_filter_toggle(status_group, "Archive", "archived", "6")
+
+        # Thin vertical divider to visually separate status toggles from the
+        # sandbox flag toggle.
+        tk.Frame(filter_frame, bg="#30363d", width=1).pack(
+            side=tk.LEFT, fill=tk.Y, padx=8, pady=2
+        )
+
+        # Sandbox group — labelled so the UI reads "Flag: Sandbox".
+        sandbox_group = tk.Frame(filter_frame, bg="#0d1117")
+        sandbox_group.pack(side=tk.LEFT)
+        tk.Label(
+            sandbox_group, text="Flag:", bg="#0d1117", fg="#8b949e",
+            font=("Arial", 8),
+        ).pack(side=tk.LEFT, padx=(0, 4))
+        create_filter_toggle(sandbox_group, "Sandbox", "sandbox", "5")
 
         # Update initial button styling
         self._update_filter_button_styles()
@@ -2174,33 +2273,37 @@ class ProjectTrackerApp:
         for item in self.project_tree.get_children():
             self.project_tree.delete(item)
 
-        # Get enabled status filters
-        active_statuses = self._get_active_statuses()
+        # Enabled filter toggles. "active"/"archived" are statuses;
+        # "sandbox" is an orthogonal flag (metadata.is_sandbox).
+        enabled = self._get_active_statuses()
 
         # Get search query
         query = self.search_query.get().strip()
 
-        # Get all projects, then filter by enabled statuses. Archived projects
-        # must be included in the search pool whenever archive OR sandbox is
-        # on, because sandbox now also surfaces archived-sandbox projects.
-        include_archived = "archived" in active_statuses or "sandbox" in active_statuses
+        # The search pool needs archived rows whenever archive OR sandbox is
+        # on, since an archived-sandbox project is surfaced by either toggle.
+        include_archived = "archived" in enabled or "sandbox" in enabled
         if query:
             projects = self.db.search_projects(query, include_archived=include_archived)
         else:
             projects = self.db.get_all_projects(status="all")
 
-        # Filter to only enabled statuses. Sandbox is treated as an orthogonal
-        # flag in addition to a status: the sandbox toggle also surfaces
-        # archived projects whose metadata records them as former sandbox
-        # projects, so an archived Polysense test still appears when "sandbox"
-        # is on (even without "archived" being on).
-        if active_statuses:
-            want_sandbox = "sandbox" in active_statuses
+        # Filter by toggles:
+        #   active  → status=="active" AND NOT is_sandbox
+        #   archived → status=="archived"
+        #   sandbox → is_sandbox (any status)
+        if enabled:
+            want_active = "active" in enabled
+            want_archived = "archived" in enabled
+            want_sandbox = "sandbox" in enabled
             def _matches(p):
+                is_sandbox = p.get("metadata", {}).get("is_sandbox", False)
                 status = p.get("status")
-                if status in active_statuses:
+                if want_sandbox and is_sandbox:
                     return True
-                if want_sandbox and p.get("metadata", {}).get("is_sandbox", False):
+                if want_archived and status == "archived":
+                    return True
+                if want_active and status == "active" and not is_sandbox:
                     return True
                 return False
             projects = [p for p in projects if _matches(p)]
@@ -2300,11 +2403,15 @@ class ProjectTrackerApp:
             client_name = project.get("client_name", "")
             project_name = project.get('project_name', '')
 
-            # Insert into tree. Archived projects that were formerly sandbox
-            # get the sandbox_archived tag so they render italic-grey.
+            # Insert into tree. Sandbox is a flag, not a status. An
+            # archived-sandbox row gets the sandbox_archived tag (italic
+            # grey); a plain active-sandbox row gets the sandbox tag.
             status = project.get("status")
-            if status == "archived" and project.get("metadata", {}).get("is_sandbox", False):
+            is_sandbox = project.get("metadata", {}).get("is_sandbox", False)
+            if status == "archived" and is_sandbox:
                 row_tags = ("sandbox_archived",)
+            elif is_sandbox:
+                row_tags = ("sandbox",)
             else:
                 row_tags = (status,)
             item_id = self.project_tree.insert(
@@ -2499,11 +2606,13 @@ class ProjectTrackerApp:
         # Truncation length for subtitle
         client_max = max(6, int(10 * font_scale))
 
-        # Colors - dim for archived projects, tint for sandbox
+        # Colors - dim for archived projects, tint for sandbox. Sandbox is a
+        # flag, not a status — an archived project can also be sandbox.
         accent_color = type_info.get("color", "#8b949e")
         is_archived = status == "archived"
-        is_sandbox = status == "sandbox"
-        was_sandbox = bool(project.get("metadata", {}).get("is_sandbox", False))
+        is_sandbox_flag = bool(project.get("metadata", {}).get("is_sandbox", False))
+        is_sandbox = is_sandbox_flag and not is_archived
+        was_sandbox = is_sandbox_flag
         card_bg = "#1c2128"
         title_fg = "white"
         sub_fg = "#8b949e"
@@ -2548,7 +2657,7 @@ class ProjectTrackerApp:
             # If this archived project was a sandbox project, stack a sandbox
             # badge directly beneath the archive badge.
             if was_sandbox:
-                sandbox_badge = tk.Label(card, text="sandbox", bg="#b5521a", fg="#f5d9c2",
+                sandbox_badge = tk.Label(card, text="sandbox", bg="#8957e5", fg="#ffffff",
                                          font=("Arial", badge_font_size),
                                          padx=3, pady=0)
                 sandbox_badge._is_accent_bar = True
@@ -2556,7 +2665,7 @@ class ProjectTrackerApp:
         elif is_sandbox:
             # Sandbox badge
             badge_font_size = max(5, int(5 * font_scale))
-            sandbox_badge = tk.Label(card, text="sandbox", bg="#b5521a", fg="#f5d9c2",
+            sandbox_badge = tk.Label(card, text="sandbox", bg="#8957e5", fg="#ffffff",
                                      font=("Arial", badge_font_size),
                                      padx=3, pady=0)
             sandbox_badge._is_accent_bar = True  # skip during highlight recolor
@@ -2776,16 +2885,26 @@ class ProjectTrackerApp:
         return {k for k, v in self.filter_toggles.items() if v.get()}
 
     def _update_filter_button_styles(self):
-        """Update filter button visual states based on current toggles."""
+        """Update filter button visual states based on current toggles.
+
+        Active / Archive use the blue accent when on. Sandbox uses its own
+        orange accent to reinforce that it's an orthogonal flag rather than
+        another status option.
+        """
         if not hasattr(self, 'filter_buttons'):
             return
         for value, btn in self.filter_buttons.items():
-            if self.filter_toggles[value].get():
-                # Toggled on - highlighted
-                btn.configure(bg="#58a6ff", fg="white")
+            is_on = self.filter_toggles[value].get()
+            if value == "sandbox":
+                if is_on:
+                    btn.configure(bg="#8957e5", fg="#ffffff")
+                else:
+                    btn.configure(bg="#1c2128", fg="white")
             else:
-                # Toggled off
-                btn.configure(bg="#1c2128", fg="white")
+                if is_on:
+                    btn.configure(bg="#58a6ff", fg="white")
+                else:
+                    btn.configure(bg="#1c2128", fg="white")
 
     def _update_physical_subtype_styles(self):
         """Update physical subtype button visual states."""
@@ -2817,14 +2936,34 @@ class ProjectTrackerApp:
                 self._update_physical_subtype_styles()
 
     def set_scopes(self, scopes):
-        """Set the scope filter set (called from external UI like pipeline)."""
-        self.filter_scopes = {s for s in scopes if s in ("personal", "client")}
-        self._on_scope_changed()
+        """Set the scope filter set (called from external UI like pipeline).
 
-    def _on_scope_changed(self, event=None):
+        When wired to a session, writes through the session (which then
+        notifies the listener and updates our cached filter_scopes). Without
+        a session, updates the cache directly.
+        """
+        new_scopes = {s for s in scopes if s in ("personal", "client")}
+        if self.session is not None:
+            self.session.set_scopes(new_scopes)
+        else:
+            self.filter_scopes = new_scopes
+            self._on_scope_changed()
+
+    def _on_session_change(self, change):
+        """Listener for the shared SessionState. Only scopes flow in via
+        session today; categories are pushed from the hub through
+        `set_categories`."""
+        from ui_session_state import CHANGE_SCOPES
+        if change == CHANGE_SCOPES:
+            self.filter_scopes = set(self.session.scopes)
+            self._on_scope_changed(persist=False)
+
+    def _on_scope_changed(self, event=None, persist=True):
         """Handle scope filter change."""
-        # Persist scope preference as a list.
-        self.settings.set("filter_scopes", sorted(self.filter_scopes))
+        # Persist scope preference as a list, only when we own persistence
+        # (no session). When a session drives us, persistence lives there.
+        if persist and self.session is None:
+            self.settings.set("filter_scopes", sorted(self.filter_scopes))
         # Update button styles (if buttons exist in this UI)
         self._update_scope_button_styles()
         self._update_physical_subtype_visibility()
@@ -3002,7 +3141,7 @@ class ProjectTrackerApp:
         self._current_active_path = None
 
         # Handle paths based on project status
-        if status in ("active", "sandbox"):
+        if status == "active":
             # Show Active Path frame
             self.active_path_frame.pack(fill=tk.X, pady=2)
 
@@ -3037,11 +3176,13 @@ class ProjectTrackerApp:
         # Enable buttons
         self.open_btn.config(state=tk.NORMAL)
 
-        # Enable archive/unarchive/promote based on status
-        if status in ("active", "sandbox"):
+        # Enable archive/unarchive/promote based on status. Promote is offered
+        # for active projects whose sandbox flag is set, to clear the flag.
+        is_sandbox_flag = bool(self.selected_project.get("metadata", {}).get("is_sandbox", False))
+        if status == "active":
             self.archive_btn.config(state=tk.NORMAL)
             self.unarchive_btn.config(state=tk.DISABLED)
-            self.promote_btn.config(state=tk.NORMAL if status == "sandbox" else tk.DISABLED)
+            self.promote_btn.config(state=tk.NORMAL if is_sandbox_flag else tk.DISABLED)
         elif status == "archived":
             self.archive_btn.config(state=tk.DISABLED)
             self.unarchive_btn.config(state=tk.NORMAL)
@@ -3122,8 +3263,8 @@ class ProjectTrackerApp:
         stored_path = self.selected_project["path"]
         status = self.selected_project.get("status", "active")
 
-        # For active/sandbox projects, convert to configured work drive path
-        if status in ("active", "sandbox"):
+        # For active projects, convert to configured work drive path
+        if status == "active":
             try:
                 settings = get_rak_settings()
                 open_path = settings.convert_to_work_drive_path(stored_path)
@@ -3190,7 +3331,7 @@ class ProjectTrackerApp:
             stored_path = self.selected_project["path"]
             status = self.selected_project.get("status", "active")
 
-            if status in ("active", "sandbox"):
+            if status == "active":
                 try:
                     settings = get_rak_settings()
                     folder = settings.convert_to_work_drive_path(stored_path)
@@ -3263,15 +3404,20 @@ class ProjectTrackerApp:
             self._update_status("Un-archive failed")
 
     def _promote_project(self):
-        """Promote a sandbox project to active."""
-        if not self.selected_project:
-            return
+        """Promote a sandbox project to non-sandbox active.
 
-        if self.selected_project.get("status") != "sandbox":
+        Sandbox is now a metadata flag (not a status), so promotion means
+        clearing metadata.is_sandbox and moving the folder out of _Sandbox.
+        Only offered for active projects that currently carry the flag.
+        """
+        if not self.selected_project:
             return
 
         project = self.selected_project
         metadata = project.get("metadata", {})
+        if project.get("status") != "active" or not metadata.get("is_sandbox", False):
+            return
+
         project_type = project.get("project_type", "")
         is_personal = metadata.get("is_personal", False)
 
@@ -3331,10 +3477,10 @@ class ProjectTrackerApp:
             logger.info(f"Promoting: {source_path} -> {active_path}")
             shutil.move(str(source_path), str(active_path))
 
-            # Update database: set status to active, clear sandbox flag, update path
+            # Update database: clear sandbox flag, update path. Status is
+            # already "active" — sandbox is a flag, not a separate status.
             metadata["is_sandbox"] = False
             project["metadata"] = metadata
-            project["status"] = "active"
             project["path"] = str(active_path)
             project["updated_at"] = datetime.now().isoformat()
             self.db.save()

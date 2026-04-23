@@ -98,6 +98,7 @@ class ProjectDatabase:
                 with open(self.db_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     if self._validate_schema(data):
+                        self._migrate_sandbox_status(data)
                         return data
                     else:
                         logger.error("Invalid database schema, creating new database")
@@ -113,6 +114,30 @@ class ProjectDatabase:
         except Exception as e:
             logger.error(f"Error loading database: {e}")
             return self._create_empty_db()
+
+    def _migrate_sandbox_status(self, data: Dict) -> None:
+        """Fold legacy status='sandbox' into status='active' + metadata.is_sandbox.
+
+        Sandbox is a flag, not a lifecycle stage. Older databases stored it as
+        a third status value; collapse those rows to status='active' and set
+        metadata.is_sandbox=True so the rest of the code can treat sandbox as
+        orthogonal to active/archived.
+        """
+        changed = False
+        for project in data.get("projects", []):
+            if project.get("status") == "sandbox":
+                project["status"] = "active"
+                metadata = project.setdefault("metadata", {})
+                metadata["is_sandbox"] = True
+                project["updated_at"] = datetime.now().isoformat()
+                changed = True
+        if changed:
+            logger.info("Migrated legacy sandbox status to metadata flag")
+            try:
+                with open(self.db_path, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+            except Exception as e:
+                logger.error(f"Failed to persist sandbox migration: {e}")
 
     def reload(self):
         """Reload database from disk (picks up changes made by other instances)."""
@@ -459,7 +484,7 @@ class ProjectDatabase:
         projects = self.data.get("projects", [])
 
         if not include_archived:
-            projects = [p for p in projects if p.get("status") in ("active", "sandbox")]
+            projects = [p for p in projects if p.get("status") == "active"]
 
         # Search in client_name and project_name
         results = []
@@ -509,14 +534,14 @@ class ProjectDatabase:
         self._save()
         logger.info(f"Archived project: {project_id}")
 
-    def unarchive_project(self, project_id: str, restored_path: str, restore_status: str = "active"):
+    def unarchive_project(self, project_id: str, restored_path: str):
         """
-        Mark project as active (or sandbox) and record restored path.
+        Mark project as active and record restored path. The sandbox flag (if
+        any) lives in metadata and is preserved across archive/unarchive.
 
         Args:
             project_id: Project UUID
             restored_path: Restored path (typically from archived_from)
-            restore_status: Status to restore to ("active" or "sandbox")
         """
         project = self.get_project_by_id(project_id)
         if not project:
@@ -526,7 +551,7 @@ class ProjectDatabase:
         archive_path = project["path"]
 
         # Update project
-        project["status"] = restore_status
+        project["status"] = "active"
         project["archived_date"] = None
         project["path"] = self.normalize_path(restored_path)
         project["updated_at"] = datetime.now().isoformat()
