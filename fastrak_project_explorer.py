@@ -2185,20 +2185,22 @@ class ProjectTrackerApp:
         else:
             projects = []
 
-        # Filter by scope (personal/client) — not applied when only sandbox is shown
+        # Filter by scope (personal/client). Sandbox projects are always exempt
+        # from scope filtering — they don't follow the personal/client dichotomy
+        # and should remain visible whenever the sandbox status toggle is on.
         scopes = self.filter_scopes
-        only_sandbox = active_statuses == {"sandbox"}
-        if not only_sandbox:
-            def _is_personal(p):
-                return (p.get("client_name", "").lower() == "personal" or
-                        p.get("metadata", {}).get("is_personal", False))
-            if not scopes:
-                projects = []
-            elif scopes == {"personal"}:
-                projects = [p for p in projects if _is_personal(p)]
-            elif scopes == {"client"}:
-                projects = [p for p in projects if not _is_personal(p)]
-            # else: scopes == {"personal", "client"} → no filter
+        def _is_personal(p):
+            return (p.get("client_name", "").lower() == "personal" or
+                    p.get("metadata", {}).get("is_personal", False))
+        def _is_sandbox(p):
+            return p.get("status") == "sandbox"
+        if not scopes:
+            projects = [p for p in projects if _is_sandbox(p)]
+        elif scopes == {"personal"}:
+            projects = [p for p in projects if _is_sandbox(p) or _is_personal(p)]
+        elif scopes == {"client"}:
+            projects = [p for p in projects if _is_sandbox(p) or not _is_personal(p)]
+        # else: scopes == {"personal", "client"} → no filter
 
         # Group projects by category
         categories = {
@@ -2518,7 +2520,7 @@ class ProjectTrackerApp:
         elif is_sandbox:
             # Sandbox badge
             badge_font_size = max(5, int(5 * font_scale))
-            sandbox_badge = tk.Label(card, text="sandbox", bg="#8957e5", fg="#e2d4f0",
+            sandbox_badge = tk.Label(card, text="sandbox", bg="#b5521a", fg="#f5d9c2",
                                      font=("Arial", badge_font_size),
                                      padx=3, pady=0)
             sandbox_badge._is_accent_bar = True  # skip during highlight recolor
@@ -2551,20 +2553,6 @@ class ProjectTrackerApp:
         date_label = tk.Label(card, text=date_str, bg=card_bg,
                              fg=sub_fg, font=("Arial", small_size))
         date_label.grid(row=3, column=0, sticky="s", pady=(0, int(6 * font_scale)))
-
-        # Personal indicator — small triangle in lower-left corner
-        is_personal = (
-            project.get("client_name", "").lower() == "personal" or
-            project.get("metadata", {}).get("is_personal", False)
-        )
-        if is_personal:
-            tri_size = max(8, int(10 * font_scale))
-            tri = tk.Canvas(card, width=tri_size, height=tri_size,
-                           bg=card_bg, highlightthickness=0)
-            tri.create_polygon(0, tri_size, 0, 0, tri_size, tri_size,
-                              fill=bar_color, outline="")
-            tri._is_accent_bar = True  # skip during highlight recolor
-            tri.place(x=0, rely=1.0, anchor="sw")
 
         # Bind click event to all card elements
         # Store index in closure for click handler
