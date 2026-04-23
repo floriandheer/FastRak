@@ -292,8 +292,13 @@ class KeyboardNavigatorMixin:
             next_scopes = both
         else:
             next_scopes = {"personal"}
-        self.current_scopes = next_scopes
-        self._apply_scopes()
+        # Route through shared session so hub + tracker stay in lockstep.
+        session = getattr(self, "session", None)
+        if session is not None:
+            session.set_scopes(next_scopes)
+        else:
+            self.current_scopes = next_scopes
+            self._apply_scopes()
 
     def _toggle_status_filter(self, status):
         """Toggle project tracker status filter (4/5/6 keys)."""
@@ -384,9 +389,29 @@ class KeyboardNavigatorMixin:
             category = tracker._get_category_for_type(project_type)
             current_cats = getattr(tracker, "selected_categories", set())
             if category and current_cats and category not in current_cats:
-                tracker.selected_categories = {category}
-                for name, btn_info in tracker.category_buttons.items():
-                    tracker._update_category_card_style(btn_info, name)
+                # Route through session when available so hub button styling
+                # and tools panel stay in sync. In standalone (no session)
+                # fall back to the tracker-local cache update.
+                session = getattr(self, "session", None)
+                if session is not None:
+                    # Session owns hub-side category keys; resolve the display
+                    # name back to a key via the pipeline category map.
+                    from ui_pipeline_categories import CREATIVE_CATEGORIES
+                    match_key = next(
+                        (k for k, v in CREATIVE_CATEGORIES.items()
+                         if v.get("name") == category),
+                        None,
+                    )
+                    if match_key is not None:
+                        session.set_categories([match_key])
+                    else:
+                        tracker.selected_categories = {category}
+                        for name, btn_info in tracker.category_buttons.items():
+                            tracker._update_category_card_style(btn_info, name)
+                else:
+                    tracker.selected_categories = {category}
+                    for name, btn_info in tracker.category_buttons.items():
+                        tracker._update_category_card_style(btn_info, name)
 
         # 5. Force geometry update so grid canvas has valid dimensions
         self.root.update_idletasks()
