@@ -11,6 +11,7 @@ Can be run standalone or embedded as a tab in the Pipeline Manager.
 
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
+import tkinter.font as tkfont
 import os
 import sys
 from pathlib import Path
@@ -1444,9 +1445,16 @@ class ProjectTrackerApp:
             style="Dark.Treeview"
         )
 
-        # Tag styling for archived and sandbox projects in list view
+        # Tag styling for archived and sandbox projects in list view.
+        # sandbox_archived = archived-styled row (grey) rendered italic so an
+        # archived-sandbox project is distinguishable from a plain archive.
         self.project_tree.tag_configure("archived", foreground="#8b949e")
         self.project_tree.tag_configure("sandbox", foreground="#d2a8ff")
+        _tree_font = tkfont.nametofont("TkDefaultFont").copy()
+        _tree_font.configure(slant="italic")
+        self.project_tree.tag_configure(
+            "sandbox_archived", foreground="#8b949e", font=_tree_font
+        )
 
         # Column display names
         self.column_names = {"date": "Date", "client": "Client", "project": "Project"}
@@ -2172,34 +2180,47 @@ class ProjectTrackerApp:
         # Get search query
         query = self.search_query.get().strip()
 
-        # Get all projects, then filter by enabled statuses
-        include_archived = "archived" in active_statuses
+        # Get all projects, then filter by enabled statuses. Archived projects
+        # must be included in the search pool whenever archive OR sandbox is
+        # on, because sandbox now also surfaces archived-sandbox projects.
+        include_archived = "archived" in active_statuses or "sandbox" in active_statuses
         if query:
             projects = self.db.search_projects(query, include_archived=include_archived)
         else:
             projects = self.db.get_all_projects(status="all")
 
-        # Filter to only enabled statuses
+        # Filter to only enabled statuses. Sandbox is treated as an orthogonal
+        # flag in addition to a status: the sandbox toggle also surfaces
+        # archived projects whose metadata records them as former sandbox
+        # projects, so an archived Polysense test still appears when "sandbox"
+        # is on (even without "archived" being on).
         if active_statuses:
-            projects = [p for p in projects if p.get("status") in active_statuses]
+            want_sandbox = "sandbox" in active_statuses
+            def _matches(p):
+                status = p.get("status")
+                if status in active_statuses:
+                    return True
+                if want_sandbox and p.get("metadata", {}).get("is_sandbox", False):
+                    return True
+                return False
+            projects = [p for p in projects if _matches(p)]
         else:
             projects = []
 
-        # Filter by scope (personal/client). Sandbox projects are always exempt
-        # from scope filtering — they don't follow the personal/client dichotomy
-        # and should remain visible whenever the sandbox status toggle is on.
+        # Filter by scope (personal/client). Sandbox projects follow the same
+        # dichotomy as regular projects — a sandbox folder without a client
+        # name is personal, one with a client (e.g. Polysense) is a client
+        # test project — so the scope filter applies to them too.
         scopes = self.filter_scopes
         def _is_personal(p):
             return (p.get("client_name", "").lower() == "personal" or
                     p.get("metadata", {}).get("is_personal", False))
-        def _is_sandbox(p):
-            return p.get("status") == "sandbox"
         if not scopes:
-            projects = [p for p in projects if _is_sandbox(p)]
+            projects = []
         elif scopes == {"personal"}:
-            projects = [p for p in projects if _is_sandbox(p) or _is_personal(p)]
+            projects = [p for p in projects if _is_personal(p)]
         elif scopes == {"client"}:
-            projects = [p for p in projects if _is_sandbox(p) or not _is_personal(p)]
+            projects = [p for p in projects if not _is_personal(p)]
         # else: scopes == {"personal", "client"} → no filter
 
         # Group projects by category
@@ -2279,12 +2300,18 @@ class ProjectTrackerApp:
             client_name = project.get("client_name", "")
             project_name = project.get('project_name', '')
 
-            # Insert into tree
+            # Insert into tree. Archived projects that were formerly sandbox
+            # get the sandbox_archived tag so they render italic-grey.
+            status = project.get("status")
+            if status == "archived" and project.get("metadata", {}).get("is_sandbox", False):
+                row_tags = ("sandbox_archived",)
+            else:
+                row_tags = (status,)
             item_id = self.project_tree.insert(
                 "",
                 tk.END,
                 values=(date_str, client_name, project_name),
-                tags=(project.get("status"),)
+                tags=row_tags
             )
 
             # Store mapping from tree item to project
@@ -2476,6 +2503,7 @@ class ProjectTrackerApp:
         accent_color = type_info.get("color", "#8b949e")
         is_archived = status == "archived"
         is_sandbox = status == "sandbox"
+        was_sandbox = bool(project.get("metadata", {}).get("is_sandbox", False))
         card_bg = "#1c2128"
         title_fg = "white"
         sub_fg = "#8b949e"
@@ -2517,6 +2545,14 @@ class ProjectTrackerApp:
                                      padx=3, pady=0)
             archive_badge._is_accent_bar = True  # skip during highlight recolor
             archive_badge.place(relx=1.0, y=0, anchor="ne")
+            # If this archived project was a sandbox project, stack a sandbox
+            # badge directly beneath the archive badge.
+            if was_sandbox:
+                sandbox_badge = tk.Label(card, text="sandbox", bg="#b5521a", fg="#f5d9c2",
+                                         font=("Arial", badge_font_size),
+                                         padx=3, pady=0)
+                sandbox_badge._is_accent_bar = True
+                sandbox_badge.place(relx=1.0, y=badge_height + 1, anchor="ne")
         elif is_sandbox:
             # Sandbox badge
             badge_font_size = max(5, int(5 * font_scale))
