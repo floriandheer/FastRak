@@ -30,9 +30,12 @@ from shared_logging import get_logger, setup_logging
 from shared_project_db import ProjectDatabase
 from rak_settings import get_rak_settings
 from shared_creator_registry import (
-    CREATOR_REGISTRY, CREATIVE_CATEGORIES,
+    CREATIVE_CATEGORIES,
     get_subtypes_for_category, get_subtype_display_name,
     has_multiple_subtypes, get_creator_class, is_creative_category
+)
+from pipeline_categories import (
+    category_color, project_type_info, archive_category as archive_category_for,
 )
 
 # Module name for logging (must match setup_logging call)
@@ -70,63 +73,9 @@ def _get_platform_path(windows_path: str) -> Path:
     return Path(windows_path)
 
 
-# Category colors matching pipeline manager
-CATEGORY_COLORS = {
-    "Audio": "#9333ea",      # Purple
-    "Photo": "#10b981",      # Emerald
-    "Visual": "#f97316",     # Orange
-    "Web": "#eab308",        # Yellow
-    "Physical": "#ec4899",   # Pink
-    "RealTime": "#06b6d4",   # Cyan
-}
-
-# Project type icons and display names
-PROJECT_TYPES = {
-    # New Visual types
-    "Visual-Graphic Design": {"icon": "🖼️", "name": "Visual-Graphic Design", "color": "#f97316"},
-    "Visual-Visual Effects": {"icon": "🎬", "name": "Visual-Visual Effects", "color": "#f97316"},
-    "Visual-Live Video": {"icon": "💫", "name": "Visual-Live Video", "color": "#f97316"},
-    # Legacy Visual types (for backwards compatibility)
-    "GD": {"icon": "🖼️", "name": "Visual-Graphic Design", "color": "#f97316"},
-    "FX": {"icon": "🎬", "name": "Visual-Visual Effects", "color": "#f97316"},
-    "VFX": {"icon": "🎬", "name": "Visual-Visual Effects", "color": "#f97316"},
-    "VJ": {"icon": "💫", "name": "Visual-Live Video", "color": "#f97316"},
-    # Old legacy types (backwards compatibility)
-    "Visual-Computer Graphics": {"icon": "🎬", "name": "Visual-Visual Effects", "color": "#f97316"},
-    "Visual-VJ": {"icon": "💫", "name": "Visual-Live Video", "color": "#f97316"},
-    # Other types
-    "Audio": {"icon": "🎵", "name": "Audio", "color": "#9333ea"},
-    "Physical": {"icon": "🔧", "name": "3D Print", "color": "#ec4899"},
-    "Godot": {"icon": "⚡", "name": "Godot", "color": "#06b6d4"},
-    "TD": {"icon": "⚡", "name": "TouchDesigner", "color": "#06b6d4"},
-    "RealTime": {"icon": "⚡", "name": "RealTime", "color": "#06b6d4"},
-    "Photo": {"icon": "📷", "name": "Photo", "color": "#10b981"},
-    "Web": {"icon": "🌐", "name": "Web", "color": "#eab308"},
-}
-
-# Archive category mapping
-ARCHIVE_CATEGORIES = {
-    # New Visual types
-    "Visual-Graphic Design": "Visual",
-    "Visual-Visual Effects": "Visual",
-    "Visual-Live Video": "Visual",
-    # Legacy Visual types (for backwards compatibility)
-    "GD": "Visual",
-    "FX": "Visual",
-    "VFX": "Visual",
-    "VJ": "Visual",
-    # Old legacy types (backwards compatibility)
-    "Visual-Computer Graphics": "Visual",
-    "Visual-VJ": "Visual",
-    # Other types
-    "Audio": "Audio",
-    "Physical": "Physical",
-    "Godot": "RealTime",
-    "TD": "RealTime",
-    "RealTime": "RealTime",
-    "Photo": "Photo",
-    "Web": "Web",
-}
+# Category colors, project type info, and archive routing all live in
+# pipeline_categories.py. Use category_color()/project_type_info()/
+# archive_category_for() instead of inlining constants here.
 
 
 def _get_appdata_path() -> Path:
@@ -199,7 +148,7 @@ class ArchiveManager:
     def _get_archive_dir(project_type: str, is_personal: bool, metadata: Dict = None) -> Path:
         """Get the archive directory for a project type."""
         settings = get_rak_settings()
-        archive_category = ARCHIVE_CATEGORIES.get(project_type, "Other")
+        archive_category = archive_category_for(project_type) or "Other"
         archive_path_str = settings.get_archive_path(archive_category)
         archive_dir = _get_platform_path(archive_path_str)
 
@@ -221,7 +170,7 @@ class ArchiveManager:
     def _get_active_dir(project_type: str, is_personal: bool, metadata: Dict = None) -> Path:
         """Get the active directory for a project type."""
         settings = get_rak_settings()
-        archive_category = ARCHIVE_CATEGORIES.get(project_type, "Other")
+        archive_category = archive_category_for(project_type) or "Other"
         work_path_str = settings.get_work_path(archive_category)
         active_dir = _get_platform_path(work_path_str)
 
@@ -1112,14 +1061,10 @@ class ProjectTrackerApp:
         buttons_frame = tk.Frame(left_frame, bg="#0d1117")
         buttons_frame.pack(fill=tk.BOTH, expand=True, padx=10)
 
-        # Define categories in unified order: Visual, RealTime, Audio, Physical, Photo, Web
+        from pipeline_categories import creative_categories, category_emoji
         categories = [
-            ("Visual", "🎬", CATEGORY_COLORS["Visual"]),
-            ("RealTime", "⚡", CATEGORY_COLORS["RealTime"]),
-            ("Audio", "🎵", CATEGORY_COLORS["Audio"]),
-            ("Physical", "🔧", CATEGORY_COLORS["Physical"]),
-            ("Photo", "📷", CATEGORY_COLORS["Photo"]),
-            ("Web", "🌐", CATEGORY_COLORS["Web"]),
+            (name, category_emoji(name), category_color(name))
+            for name in creative_categories()
         ]
 
         # Create category buttons in grid (2 columns)
@@ -1882,7 +1827,7 @@ class ProjectTrackerApp:
         self.creation_panel.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
         # Header with back button and category color
-        header_color = CATEGORY_COLORS.get(category, "#1c2128")
+        header_color = category_color(category) or "#1c2128"
         header = tk.Frame(self.creation_panel, bg=header_color, height=50)
         header.pack(fill=tk.X)
         header.pack_propagate(False)
@@ -1999,7 +1944,7 @@ class ProjectTrackerApp:
         self.creation_panel.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
         # Header with back button
-        header_color = CATEGORY_COLORS.get(category, "#1c2128")
+        header_color = category_color(category) or "#1c2128"
         header = tk.Frame(self.creation_panel, bg=header_color, height=50)
         header.pack(fill=tk.X)
         header.pack_propagate(False)
@@ -2327,32 +2272,22 @@ class ProjectTrackerApp:
         # else: scopes == {"personal", "client"} → no filter
 
         # Group projects by category
+        from pipeline_categories import creative_categories, category_emoji
         categories = {
-            "Visual": {"icon": "🎬", "projects": [], "color": CATEGORY_COLORS["Visual"]},
-            "Audio": {"icon": "🎵", "projects": [], "color": CATEGORY_COLORS["Audio"]},
-            "Physical": {"icon": "🔧", "projects": [], "color": CATEGORY_COLORS["Physical"]},
-            "RealTime": {"icon": "⚡", "projects": [], "color": CATEGORY_COLORS["RealTime"]},
-            "Photo": {"icon": "📷", "projects": [], "color": CATEGORY_COLORS["Photo"]},
-            "Web": {"icon": "🌐", "projects": [], "color": CATEGORY_COLORS["Web"]},
+            name: {
+                "icon": category_emoji(name),
+                "projects": [],
+                "color": category_color(name),
+            }
+            for name in creative_categories()
         }
 
-        # Categorize all projects
+        # Categorize all projects via the unified archive_category lookup
         for project in projects:
             project_type = project.get("project_type", "")
-
-            # Map project types to categories
-            if project_type in ["GD", "FX", "VFX", "VJ"] or project_type.startswith("Visual-"):
-                categories["Visual"]["projects"].append(project)
-            elif project_type == "Audio":
-                categories["Audio"]["projects"].append(project)
-            elif project_type == "Physical":
-                categories["Physical"]["projects"].append(project)
-            elif project_type in ["Godot", "TD", "RealTime"]:
-                categories["RealTime"]["projects"].append(project)
-            elif project_type == "Photo":
-                categories["Photo"]["projects"].append(project)
-            elif project_type == "Web":
-                categories["Web"]["projects"].append(project)
+            cat = archive_category_for(project_type)
+            if cat in categories:
+                categories[cat]["projects"].append(project)
 
         # Update category button counts
         for cat_name, cat_info in categories.items():
@@ -2396,7 +2331,7 @@ class ProjectTrackerApp:
         # Populate tree with flat list
         for project in category_projects:
             project_type = project.get("project_type", "")
-            type_info = PROJECT_TYPES.get(project_type, {"icon": "📁", "name": project_type})
+            type_info = project_type_info(project_type)
 
             # Get display values
             date_str = project.get("date_created", "")
@@ -2595,7 +2530,7 @@ class ProjectTrackerApp:
     def _create_project_card(self, project: Dict, row: int, col: int, card_size: int = 120):
         """Create a single square project card for grid view."""
         project_type = project.get("project_type", "")
-        type_info = PROJECT_TYPES.get(project_type, {"icon": "📁", "color": "#1c2128"})
+        type_info = project_type_info(project_type)
         status = project.get("status", "active")
 
         # Scale factor for fonts based on card size (120 is base)
@@ -3125,7 +3060,7 @@ class ProjectTrackerApp:
                     value = "-"
             elif key == "project_type":
                 value = project.get(key, "")
-                type_info = PROJECT_TYPES.get(value, {"name": value})
+                type_info = project_type_info(value)
                 value = type_info["name"]
             else:
                 value = project.get(key, "")

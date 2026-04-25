@@ -5,6 +5,32 @@ All notable changes to the Florian Dheer Pipeline Manager will be documented in 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- Folder structure creators consolidated into a single manifest-driven
+  `GenericFolderStructureCreator`. Adding a new project subtype is now a
+  one-entry change in `pipeline_categories.CATEGORIES`. Outliers (Photo,
+  Physical) are handled by small extension classes in
+  `modules/folder_structure_extensions/`.
+- All category metadata (colors, emojis, display names, subtypes, menu
+  scripts, legacy project_type aliases) consolidated into a single nested
+  `CATEGORIES` dict in `modules/pipeline_categories.py`. Adding or editing
+  a category is now a one-place change; everything else (registry, color
+  table, archive routing, menu tree, project_type lookup) is derived.
+- Audio folder-creator subtype renamed `Audio` → `PROD`; new projects write
+  `project_type="Audio-Production"`. Legacy DB rows with `"Audio"` resolve
+  via the alias index.
+- Audio `DJ` is now a registered subtype carrying its own menu scripts.
+
+### Removed
+- 9 legacy per-subtype creator scripts in
+  `modules/PipelineScript_*_FolderStructure*.py`.
+- `modules/folder_structure_manifest.py` (data moved into `pipeline_categories.py`).
+- Inline `CATEGORY_COLORS`, `PROJECT_TYPES`, `ARCHIVE_CATEGORIES` definitions
+  in `fastrak_project_explorer.py` and the duplicate `CATEGORY_COLORS` in
+  `ui_theme.py`. All now derive from `pipeline_categories.CATEGORIES`.
+
 ## [0.5.0] - 2025-01-27
 
 ### Added
