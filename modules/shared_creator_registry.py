@@ -3,10 +3,32 @@ Creator Registry Module
 
 Maps categories to their folder structure creator scripts.
 Provides utilities for dynamic loading and subtype discovery.
+
+Subtypes listed in folder_structure_manifest.MANIFEST are routed to
+GenericFolderStructureCreator; legacy entries fall back to the per-script
+creator class declared below.
 """
 
 import importlib
-from typing import Dict, List, Optional, Type, Any
+from functools import partial
+from typing import Dict, List, Optional, Callable, Any
+
+from folder_structure_manifest import get_manifest as _get_manifest
+
+# Subtypes that have been validated against GenericFolderStructureCreator.
+# Add (category, subtype) tuples here as each migration is verified; once all
+# 9 are listed, the legacy CREATOR_REGISTRY below can be deleted entirely.
+MIGRATED_SUBTYPES = {
+    ("Visual", "GD"),
+    ("Visual", "FX"),
+    ("Visual", "VJ"),
+    ("RealTime", "Godot"),
+    ("RealTime", "TD"),
+    ("Audio", "Audio"),
+    ("Web", "Web"),
+    ("Photo", "Photo"),
+    ("Physical", "Physical"),
+}
 
 
 # Registry mapping categories to their subtypes and creator modules
@@ -138,20 +160,30 @@ def has_multiple_subtypes(category: str) -> bool:
     return len(subtypes) > 1
 
 
-def get_creator_class(category: str, subtype: str) -> Optional[Type]:
+def get_creator_class(category: str, subtype: str) -> Optional[Callable]:
     """
-    Dynamically import and return the creator class for a category/subtype.
+    Return a callable that instantiates the creator for a category/subtype.
 
-    Args:
-        category: Category name (e.g., "Visual")
-        subtype: Subtype name (e.g., "GD")
+    For subtypes registered in folder_structure_manifest.MANIFEST, this
+    returns a partial that injects the manifest into GenericFolderStructureCreator.
+    Otherwise it falls back to the legacy per-script class.
 
-    Returns:
-        Creator class or None if not found/failed to import.
+    The returned callable has the same calling convention as the old per-script
+    class constructors: ``creator(parent, embedded=..., on_project_created=...,
+    on_cancel=..., project_db=...)``.
     """
+    manifest = _get_manifest(category, subtype)
+    if manifest is not None and (category, subtype) in MIGRATED_SUBTYPES:
+        try:
+            module = importlib.import_module("shared_folder_structure_creator")
+            generic = getattr(module, "GenericFolderStructureCreator")
+            return partial(generic, manifest=manifest)
+        except (ImportError, AttributeError) as e:
+            print(f"Failed to import GenericFolderStructureCreator: {e}")
+            return None
+
     if category not in CREATOR_REGISTRY:
         return None
-
     if subtype not in CREATOR_REGISTRY[category]:
         return None
 
