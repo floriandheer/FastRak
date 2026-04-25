@@ -1,6 +1,12 @@
 """
 UI Theme - Color constants and theme configuration for the Pipeline Manager.
+
+CATEGORY_COLORS is derived from pipeline_categories.CATEGORIES so the colors
+stay in lockstep with the rest of the codebase. Both TitleCase ("Audio") and
+UPPER ("AUDIO") keys are populated for compatibility with legacy callers.
 """
+
+from pipeline_categories import CATEGORIES as _CATEGORIES
 
 # Professional color scheme
 COLORS = {
@@ -21,14 +27,11 @@ COLORS = {
     "tab_active_fg": "#ffffff"    # Active tab text
 }
 
-# Category colors
-CATEGORY_COLORS = {
-    "AUDIO": "#9333ea",      # Purple
-    "PHOTO": "#10b981",      # Emerald
-    "VISUAL": "#f97316",     # Orange
-    "WEB": "#eab308",        # Yellow
-    "PHYSICAL": "#ec4899",   # Pink
-    "REALTIME": "#06b6d4",   # Cyan
-    "BUSINESS": "#22c55e",   # Green
-    "GLOBAL": "#6b7280"      # Gray
-}
+# Category colors — built from the unified pipeline_categories.CATEGORIES.
+# Both TitleCase and UPPER keys are exposed so existing callers don't break.
+CATEGORY_COLORS = {}
+for _name, _cat in _CATEGORIES.items():
+    _color = _cat["color"]
+    CATEGORY_COLORS[_name] = _color
+    CATEGORY_COLORS[_name.upper()] = _color
+del _name, _cat, _color

@@ -2,7 +2,7 @@
 Generic Folder Structure Creator
 
 Builds a standard keyboard-first form for project folder creation, driven by a
-manifest entry from folder_structure_manifest.MANIFEST. Per-subtype divergence
+manifest entry from pipeline_categories.subtype_manifest(). Per-subtype divergence
 is expressed either through manifest fields (software chips, extra combobox/
 entry rows, naming prefix) or through a FolderStructureExtension subclass.
 
