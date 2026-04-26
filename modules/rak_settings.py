@@ -33,6 +33,48 @@ def _get_appdata_path() -> Path:
         return Path.home() / ".local" / "share" / "PipelineManager"
 
 
+def _load_setup_seed() -> Optional[Dict]:
+    """First-run seed for rak_config.json.
+
+    rak_settings is the single runtime reader of pipeline config. setup_new_pc
+    used to be the only way to push values from the project-root
+    setup_config.json into rak_config.json; this function lets RakSettings
+    pull the same values itself the first time it runs on a new machine.
+
+    Returns a dict with optional keys ``drives`` and ``software_sync`` that
+    overlay DEFAULT_CONFIG, or None if no seed file exists / nothing to apply.
+    """
+    seed_path = Path(__file__).resolve().parent.parent / "setup_config.json"
+    if not seed_path.exists():
+        return None
+    try:
+        with open(seed_path, "r", encoding="utf-8") as f:
+            seed = json.load(f)
+    except Exception as e:
+        logger.warning(f"Could not read setup seed {seed_path}: {e}")
+        return None
+
+    pc = seed.get("pipeline_config", {}) or {}
+    if not pc:
+        return None
+
+    overrides: Dict = {"drives": {}, "software_sync": {}}
+    if "work_drive" in pc:
+        overrides["drives"]["work"] = pc["work_drive"]
+    if "active_base" in pc:
+        overrides["drives"]["active_base"] = pc["active_base"]
+    if "archive_base" in pc:
+        overrides["drives"]["archive_base"] = pc["archive_base"]
+    if "mapped_software_path" in pc:
+        overrides["software_sync"]["mapped_software_path"] = pc["mapped_software_path"]
+    if "launchers_base_path" in pc:
+        overrides["software_sync"]["launchers_base_path"] = pc["launchers_base_path"]
+
+    if not overrides["drives"] and not overrides["software_sync"]:
+        return None
+    return overrides
+
+
 class RakSettings:
     """
     Manages settings for FastRak Pipeline Manager.
@@ -147,7 +189,14 @@ class RakSettings:
         logger.info(f"Configuration loaded: {self.config_path}")
 
     def _load_or_create(self) -> Dict:
-        """Load configuration from file or create default."""
+        """Load configuration from file or create default.
+
+        On first run (no rak_config.json yet), the project-root
+        setup_config.json is used as a one-time seed for drives and
+        software_sync paths. After this initial save, rak_config.json is
+        canonical and setup_config.json is no longer consulted at runtime.
+        """
+        import copy
         try:
             if self.config_path.exists():
                 with open(self.config_path, 'r', encoding='utf-8') as f:
@@ -155,9 +204,18 @@ class RakSettings:
                     # Merge with defaults to handle new fields
                     return self._merge_with_defaults(loaded)
             else:
-                logger.info("Config not found, creating default")
-                self._save(self.DEFAULT_CONFIG)
-                return self.DEFAULT_CONFIG.copy()
+                seeded = copy.deepcopy(self.DEFAULT_CONFIG)
+                seed = _load_setup_seed()
+                if seed:
+                    if seed.get("drives"):
+                        seeded["drives"].update(seed["drives"])
+                    if seed.get("software_sync"):
+                        seeded["software_sync"].update(seed["software_sync"])
+                    logger.info("Config not found; seeded from setup_config.json")
+                else:
+                    logger.info("Config not found, creating default")
+                self._save(seeded)
+                return seeded
         except Exception as e:
             logger.error(f"Error loading config: {e}")
             return self.DEFAULT_CONFIG.copy()
