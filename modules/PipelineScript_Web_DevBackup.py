@@ -1337,7 +1337,19 @@ class DevBackupUI:
 def main():
     setup_shared_logging("web_devbackup")
     root = tk.Tk()
-    DevBackupUI(root)
+    ui = DevBackupUI(root)
+
+    # Pre-select the site row matching a project folder passed by the launcher.
+    # The user can still click a different row to switch sites.
+    if len(sys.argv) > 1 and sys.argv[1]:
+        site_name = os.path.basename(os.path.normpath(sys.argv[1]))
+        for item in ui.tree.get_children():
+            if ui.tree.item(item, "values")[0] == site_name:
+                ui.tree.selection_set(item)
+                ui.tree.focus(item)
+                ui.tree.see(item)
+                break
+
     root.mainloop()
     return 0
 

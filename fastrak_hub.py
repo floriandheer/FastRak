@@ -694,6 +694,11 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
         valid = [k for k in saved_list if k in PIPELINE_CATEGORIES]
         if valid:
             self.session.set_categories(valid)
+            # The session was seeded with these same values at __init__, so
+            # set_categories no-ops and listeners never fire. Sync the UI
+            # (button styles, tracker filter) explicitly so the saved
+            # selection is visibly restored.
+            self._apply_categories()
         else:
             # Show all by default (no category selected)
             self._clear_category_selection()
@@ -933,19 +938,25 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
         self.category_panel_outer.pack(fill=tk.BOTH, expand=True, padx=15, pady=(15, 15))
 
         # Collect tools from every selected category. Each tool is tagged with
-        # its source category so it keeps the right color accent.
+        # its source category so it keeps the right color accent. Project-
+        # context scripts are surfaced in the project detail Actions section
+        # instead, so skip them here.
         all_tools = []
         for category_key in valid_keys:
             category_data = PIPELINE_CATEGORIES[category_key]
 
             scripts = category_data.get("scripts", {})
             for script_key, script_data in scripts.items():
+                if script_data.get("context") == "project":
+                    continue
                 all_tools.append((category_key, script_key, None, script_data))
 
             subcategories = category_data.get("subcategories", {})
             for subcat_key, subcat_data in subcategories.items():
                 subcat_scripts = subcat_data.get("scripts", {})
                 for script_key, script_data in subcat_scripts.items():
+                    if script_data.get("context") == "project":
+                        continue
                     all_tools.append((category_key, script_key, subcat_key, script_data))
 
         if not all_tools:

@@ -10,7 +10,7 @@ Can be run standalone or embedded as a tab in the Pipeline Manager.
 """
 
 import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext
+from tkinter import ttk, messagebox, scrolledtext, simpledialog
 import tkinter.font as tkfont
 import os
 import sys
@@ -37,6 +37,7 @@ from shared_creator_registry import (
 from pipeline_categories import (
     category_color, project_type_info, archive_category as archive_category_for,
 )
+from ui_pipeline_categories import PIPELINE_CATEGORIES
 
 # Module name for logging (must match setup_logging call)
 MODULE_NAME = "project_tracker"
@@ -1563,6 +1564,19 @@ class ProjectTrackerApp:
                                 font=("Arial", 10, "bold"))
         details_title.pack(anchor=tk.W, padx=10, pady=(10, 5))
 
+        # Two-column body: project info + status actions on the left,
+        # project-context Actions sitting right next to it. Keeps the panel
+        # compact instead of growing vertically when several actions apply.
+        # The left column takes its natural width; the right column sits
+        # directly beside it with a small gap. Trailing space stays empty so
+        # the columns stay grouped on the left.
+        details_body = tk.Frame(self.details_frame, bg="#1c2128")
+        details_body.pack(fill=tk.X)
+        details_left = tk.Frame(details_body, bg="#1c2128")
+        details_left.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 16))
+        details_right = tk.Frame(details_body, bg="#1c2128")
+        details_right.pack(side=tk.LEFT, fill=tk.Y)
+
         # Detail labels
         self.detail_labels = {}
         detail_fields = [
@@ -1573,7 +1587,7 @@ class ProjectTrackerApp:
             ("Date", "date_created"),
         ]
 
-        details_grid = tk.Frame(self.details_frame, bg="#1c2128")
+        details_grid = tk.Frame(details_left, bg="#1c2128")
         details_grid.pack(fill=tk.X, padx=10, pady=5)
 
         for i, (label, key) in enumerate(detail_fields):
@@ -1587,7 +1601,7 @@ class ProjectTrackerApp:
             self.detail_labels[key] = value_label
 
         # Path section with clickable copy-to-clipboard
-        path_section = tk.Frame(self.details_frame, bg="#1c2128")
+        path_section = tk.Frame(details_left, bg="#1c2128")
         path_section.pack(fill=tk.X, padx=10, pady=(5, 0))
 
         # Active Path (only shown for active projects)
@@ -1625,7 +1639,7 @@ class ProjectTrackerApp:
         self.raw_path_label.bind("<Leave>", lambda e: self.raw_path_label.configure(fg="#58a6ff"))
 
         # Action buttons
-        button_frame = tk.Frame(self.details_frame, bg="#1c2128")
+        button_frame = tk.Frame(details_left, bg="#1c2128")
         button_frame.pack(fill=tk.X, padx=10, pady=(10, 10))
 
         self.open_btn = tk.Button(
@@ -1688,19 +1702,25 @@ class ProjectTrackerApp:
         )
         self.promote_btn.pack(side=tk.LEFT, padx=5)
 
-        self.raw_cleanup_btn = tk.Button(
-            button_frame,
-            text="🧹 RAW Cleanup",
-            command=self._raw_cleanup,
+        # Project-context Actions section, in the right column of details_body.
+        # Populated dynamically in _display_project_details based on the
+        # selected project's project_type. Hidden when no project is selected
+        # or no actions match. Buttons stack vertically here so the panel stays
+        # compact horizontally instead of growing taller.
+        self.actions_frame = tk.Frame(details_right, bg="#1c2128")
+        self.actions_header = tk.Label(
+            self.actions_frame,
+            text="ACTIONS",
             bg="#1c2128",
-            fg="white",
-            font=("Arial", 9),
-            relief=tk.FLAT,
-            cursor="hand2",
-            padx=15,
-            pady=6
+            fg="#8b949e",
+            font=("Arial", 8, "bold"),
+            anchor="w",
         )
-        self.raw_cleanup_btn.pack(side=tk.LEFT, padx=5)
+        self.actions_header.pack(fill=tk.X, pady=(8, 4))
+        self.actions_container = tk.Frame(self.actions_frame, bg="#1c2128")
+        self.actions_container.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        # Buttons created on the fly per project; track them so we can clear.
+        self._action_buttons = []
 
         # Store reference to right frame for FAB positioning
         self.right_frame = right_frame
@@ -3048,6 +3068,9 @@ class ProjectTrackerApp:
         self.unarchive_btn.config(state=tk.DISABLED)
         self.promote_btn.config(state=tk.DISABLED)
 
+        # Hide and clear the project-context Actions section.
+        self._populate_actions_section(None)
+
     def _display_project_details(self, project: Dict):
         """Display project details in right panel."""
         # Update detail labels
@@ -3123,7 +3146,105 @@ class ProjectTrackerApp:
             self.unarchive_btn.config(state=tk.NORMAL)
             self.promote_btn.config(state=tk.DISABLED)
 
-        self.raw_cleanup_btn.config(state=tk.NORMAL)
+        # Populate the project-context Actions section based on project_type.
+        self._populate_actions_section(project)
+
+    def _resolve_project_folder(self, project: Dict) -> str:
+        """Return the on-disk folder for a project, preferring the work-drive
+        path for active projects and falling back to the stored path."""
+        stored_path = project.get("path", "")
+        status = project.get("status", "active")
+        if status != "active":
+            return stored_path
+        try:
+            settings = get_rak_settings()
+            folder = settings.convert_to_work_drive_path(stored_path)
+            if not Path(folder).exists():
+                folder = stored_path
+            return folder
+        except Exception:
+            return stored_path
+
+    def _project_actions(self, project: Dict):
+        """Return [(category_key, script_key, subcat_key, script_data)] for
+        every project-context script applicable to the given project."""
+        if not project:
+            return []
+        project_type = project.get("project_type", "")
+        archive_cat = archive_category_for(project_type)
+        if not archive_cat:
+            return []
+        cat_key = archive_cat.upper()
+        cat_data = PIPELINE_CATEGORIES.get(cat_key, {})
+
+        def _matches(script_data):
+            if script_data.get("context") != "project":
+                return False
+            allowed = script_data.get("project_types") or []
+            return not allowed or project_type in allowed
+
+        actions = []
+        for script_key, script_data in cat_data.get("scripts", {}).items():
+            if _matches(script_data):
+                actions.append((cat_key, script_key, None, script_data))
+        for subcat_key, subcat_data in cat_data.get("subcategories", {}).items():
+            for script_key, script_data in subcat_data.get("scripts", {}).items():
+                if _matches(script_data):
+                    actions.append((cat_key, script_key, subcat_key, script_data))
+        return actions
+
+    def _populate_actions_section(self, project: Optional[Dict]):
+        """Rebuild the Actions section for the selected project, or hide it."""
+        for btn in self._action_buttons:
+            btn.destroy()
+        self._action_buttons = []
+
+        actions = self._project_actions(project) if project else []
+        if not actions:
+            self.actions_frame.pack_forget()
+            return
+
+        self.actions_frame.pack(fill=tk.Y, padx=0, pady=(5, 10))
+
+        for category_key, script_key, subcat_key, script_data in actions:
+            color = category_color(category_key.capitalize()) or "#238636"
+            label = f"{script_data.get('icon', '')} {script_data.get('name', script_key)}".strip()
+            btn = tk.Button(
+                self.actions_container,
+                text=label,
+                command=lambda sd=script_data: self._run_project_action(sd),
+                bg=color,
+                fg="white",
+                font=("Arial", 9),
+                relief=tk.FLAT,
+                cursor="hand2",
+                padx=15,
+                pady=6,
+                anchor="w",
+            )
+            btn.pack(side=tk.TOP, fill=tk.X, pady=2)
+            self._action_buttons.append(btn)
+
+    def _run_project_action(self, script_data: Dict):
+        """Run a project-context script, passing the selected project's folder
+        as the first positional argument."""
+        if not self.selected_project:
+            return
+        script_path = script_data.get("path")
+        if not script_path:
+            logger.warning(f"Project action has no path: {script_data.get('name')}")
+            return
+
+        import subprocess
+        folder = self._resolve_project_folder(self.selected_project)
+        args = [sys.executable, script_path, folder]
+        try:
+            subprocess.Popen(args)
+            logger.info(f"Launched {script_data.get('name')} for {folder}")
+            self._update_status(f"Launched: {script_data.get('name')}")
+        except Exception as e:
+            logger.error(f"Failed to launch {script_data.get('name')}: {e}")
+            messagebox.showerror("Action failed", f"Could not start tool:\n{e}")
 
     def _copy_path_to_clipboard(self, path_type: str):
         """Copy the specified path to clipboard."""
@@ -3256,31 +3377,6 @@ class ProjectTrackerApp:
             logger.error(f"Failed to open folder: {e}")
             messagebox.showerror("Error", f"Failed to open folder:\n{str(e)}")
 
-    def _raw_cleanup(self):
-        """Launch RAW Cleanup tool, pointed at the selected project's folder if available."""
-        import subprocess
-
-        args = [sys.executable, os.path.join(os.path.dirname(__file__), "modules", "PipelineScript_Photo_RawCleanup.py")]
-
-        if self.selected_project:
-            stored_path = self.selected_project["path"]
-            status = self.selected_project.get("status", "active")
-
-            if status == "active":
-                try:
-                    settings = get_rak_settings()
-                    folder = settings.convert_to_work_drive_path(stored_path)
-                    if not Path(folder).exists():
-                        folder = stored_path
-                except Exception:
-                    folder = stored_path
-            else:
-                folder = stored_path
-
-            args.append(folder)
-
-        subprocess.Popen(args)
-        logger.info(f"Launched RAW Cleanup")
 
     def _archive_project(self):
         """Archive the selected project."""

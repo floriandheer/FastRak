@@ -1,4 +1,5 @@
 import os
+import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from PIL import Image as PilImage
@@ -393,4 +394,9 @@ class ImageMetadataApp:
 if __name__ == "__main__":
     root = tk.Tk()
     app = ImageMetadataApp(root)
+    # Pre-seed source/dest from a project folder passed by the launcher.
+    # The user can still browse to a different folder afterwards.
+    if len(sys.argv) > 1 and sys.argv[1] and os.path.isdir(sys.argv[1]):
+        app.image_dir_var.set(sys.argv[1])
+        app.dest_dir_var.set(sys.argv[1])
     root.mainloop()
