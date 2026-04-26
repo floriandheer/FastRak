@@ -1246,12 +1246,14 @@ class ProjectTrackerApp:
         # Store filter buttons for styling updates
         self.filter_buttons = {}
 
-        # Sandbox uses the purple accent when selected to reinforce that it's
+        # Sandbox uses an amber accent when selected to reinforce that it's
         # a distinct flag, not a status — matches the list-view sandbox tag.
-        SANDBOX_SELECTED_BG = "#8957e5"
+        # Amber instead of purple so it doesn't clash with the Audio category
+        # color.
+        SANDBOX_SELECTED_BG = "#b45309"
         SANDBOX_SELECTED_FG = "#ffffff"
         SANDBOX_BASE_BG = "#1c2128"
-        SANDBOX_HOVER_BG = "#2d243d"
+        SANDBOX_HOVER_BG = "#3a2c14"
 
         def create_filter_toggle(parent, text, value, shortcut):
             """Create a filter toggle button (can be independently on/off)."""
@@ -1269,13 +1271,19 @@ class ProjectTrackerApp:
             btn.pack(side=tk.LEFT, padx=(0, 2))
 
             def on_click(e):
-                # Shift+click: toggle only this one (multi-select).
-                # Plain click: set only this one on, turn the rest off.
-                if event_has_shift(e):
+                # Sandbox is an extra modifier on top of the Active/Archive
+                # status toggles, so it's always additive — clicking it just
+                # flips its own state and leaves the rest alone. Shift+click
+                # on any toggle is also additive (multi-select). A plain click
+                # on Active/Archive collapses the *status* selection to that
+                # one, but preserves Sandbox.
+                if is_sandbox_btn or event_has_shift(e):
                     var = self.filter_toggles[value]
                     var.set(not var.get())
                 else:
                     for k, v in self.filter_toggles.items():
+                        if k == "sandbox":
+                            continue
                         v.set(k == value)
                 self._on_filter_changed()
 
@@ -1303,20 +1311,11 @@ class ProjectTrackerApp:
         create_filter_toggle(status_group, "Active", "active", "4")
         create_filter_toggle(status_group, "Archive", "archived", "6")
 
-        # Thin vertical divider to visually separate status toggles from the
-        # sandbox flag toggle.
-        tk.Frame(filter_frame, bg="#30363d", width=1).pack(
-            side=tk.LEFT, fill=tk.Y, padx=8, pady=2
-        )
-
-        # Sandbox group — labelled so the UI reads "Flag: Sandbox".
-        sandbox_group = tk.Frame(filter_frame, bg="#0d1117")
-        sandbox_group.pack(side=tk.LEFT)
-        tk.Label(
-            sandbox_group, text="Flag:", bg="#0d1117", fg="#8b949e",
-            font=("Arial", 8),
-        ).pack(side=tk.LEFT, padx=(0, 4))
-        create_filter_toggle(sandbox_group, "Sandbox", "sandbox", "5")
+        # Sandbox flag toggle — same row as the status toggles, with a small
+        # gap (matching the gap between Work and Active) to visually group it
+        # apart without a label or divider.
+        tk.Frame(filter_frame, bg="#0d1117", width=15).pack(side=tk.LEFT)
+        create_filter_toggle(filter_frame, "Sandbox", "sandbox", "5")
 
         # Update initial button styling
         self._update_filter_button_styles()
@@ -1494,7 +1493,7 @@ class ProjectTrackerApp:
         # sandbox_archived = archived-styled row (grey) rendered italic so an
         # archived-sandbox project is distinguishable from a plain archive.
         self.project_tree.tag_configure("archived", foreground="#8b949e")
-        self.project_tree.tag_configure("sandbox", foreground="#d2a8ff")
+        self.project_tree.tag_configure("sandbox", foreground="#fbbf24")
         _tree_font = tkfont.nametofont("TkDefaultFont").copy()
         _tree_font.configure(slant="italic")
         self.project_tree.tag_configure(
@@ -1701,6 +1700,24 @@ class ProjectTrackerApp:
             pady=6
         )
         self.promote_btn.pack(side=tk.LEFT, padx=5)
+
+        # Append a timestamped, project-tagged entry to the category-level
+        # notes/<category>_notes.txt scratchpad. Per-project notes still live
+        # in the project DB; this button is for the running category log.
+        self.log_note_btn = tk.Button(
+            button_frame,
+            text="📝 Log to Notes",
+            command=self._log_to_category_notes,
+            bg="#1c2128",
+            fg="white",
+            font=("Arial", 9),
+            relief=tk.FLAT,
+            cursor="hand2",
+            state=tk.DISABLED,
+            padx=15,
+            pady=6,
+        )
+        self.log_note_btn.pack(side=tk.LEFT, padx=5)
 
         # Project-context Actions section, in the right column of details_body.
         # Populated dynamically in _display_project_details based on the
@@ -2612,7 +2629,7 @@ class ProjectTrackerApp:
             # If this archived project was a sandbox project, stack a sandbox
             # badge directly beneath the archive badge.
             if was_sandbox:
-                sandbox_badge = tk.Label(card, text="sandbox", bg="#8957e5", fg="#ffffff",
+                sandbox_badge = tk.Label(card, text="sandbox", bg="#b45309", fg="#ffffff",
                                          font=("Arial", badge_font_size),
                                          padx=3, pady=0)
                 sandbox_badge._is_accent_bar = True
@@ -2620,7 +2637,7 @@ class ProjectTrackerApp:
         elif is_sandbox:
             # Sandbox badge
             badge_font_size = max(5, int(5 * font_scale))
-            sandbox_badge = tk.Label(card, text="sandbox", bg="#8957e5", fg="#ffffff",
+            sandbox_badge = tk.Label(card, text="sandbox", bg="#b45309", fg="#ffffff",
                                      font=("Arial", badge_font_size),
                                      padx=3, pady=0)
             sandbox_badge._is_accent_bar = True  # skip during highlight recolor
@@ -2852,7 +2869,7 @@ class ProjectTrackerApp:
             is_on = self.filter_toggles[value].get()
             if value == "sandbox":
                 if is_on:
-                    btn.configure(bg="#8957e5", fg="#ffffff")
+                    btn.configure(bg="#b45309", fg="#ffffff")
                 else:
                     btn.configure(bg="#1c2128", fg="white")
             else:
@@ -3067,6 +3084,7 @@ class ProjectTrackerApp:
         self.archive_btn.config(state=tk.DISABLED)
         self.unarchive_btn.config(state=tk.DISABLED)
         self.promote_btn.config(state=tk.DISABLED)
+        self.log_note_btn.config(state=tk.DISABLED)
 
         # Hide and clear the project-context Actions section.
         self._populate_actions_section(None)
@@ -3149,6 +3167,10 @@ class ProjectTrackerApp:
         # Populate the project-context Actions section based on project_type.
         self._populate_actions_section(project)
 
+        # The note-log button is enabled whenever a project is selected; the
+        # target category file is derived from the project's archive_category.
+        self.log_note_btn.config(state=tk.NORMAL)
+
     def _resolve_project_folder(self, project: Dict) -> str:
         """Return the on-disk folder for a project, preferring the work-drive
         path for active projects and falling back to the stored path."""
@@ -3224,6 +3246,48 @@ class ProjectTrackerApp:
             )
             btn.pack(side=tk.TOP, fill=tk.X, pady=2)
             self._action_buttons.append(btn)
+
+    def _log_to_category_notes(self):
+        """Append a timestamped, project-tagged line to the category notes
+        scratchpad (notes/<category>_notes.txt). Per-project notes in the DB
+        remain canonical; this is for cheap running-log entries on the
+        category, e.g. "tried X on ProjectY today"."""
+        if not self.selected_project:
+            return
+
+        project_type = self.selected_project.get("project_type", "")
+        archive_cat = archive_category_for(project_type) or "Global"
+        notes_dir = SCRIPT_DIR / "notes"
+        notes_dir.mkdir(parents=True, exist_ok=True)
+        note_path = notes_dir / f"{archive_cat.lower()}_notes.txt"
+
+        client = self.selected_project.get("client_name", "?")
+        project_name = self.selected_project.get("project_name", "?")
+        prompt = (
+            f"Append a note to {note_path.name}\n"
+            f"Project: {client} / {project_name}"
+        )
+        text = simpledialog.askstring("Log to category notes", prompt, parent=self.root)
+        if text is None:
+            return
+        text = text.strip()
+        if not text:
+            return
+
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+        header = f"# Notes for {archive_cat}\n\n"
+        line = f"[{ts}] {client} / {project_name} — {text}\n"
+        try:
+            new_file = not note_path.exists()
+            with open(note_path, "a", encoding="utf-8") as f:
+                if new_file:
+                    f.write(header)
+                f.write(line)
+            self._update_status(f"Logged to {note_path.name}")
+            logger.info(f"Appended to {note_path}: {line.rstrip()}")
+        except Exception as e:
+            logger.error(f"Failed to log to {note_path}: {e}")
+            messagebox.showerror("Log failed", f"Could not write note:\n{e}")
 
     def _run_project_action(self, script_data: Dict):
         """Run a project-context script, passing the selected project's folder
