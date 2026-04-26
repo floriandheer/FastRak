@@ -24,6 +24,7 @@ import base64
 # Setup logging using shared utility
 from shared_logging import get_logger, setup_logging as setup_shared_logging
 from rak_settings import get_rak_settings
+from shared_project_db import ProjectDatabase
 
 # Get logger reference (configured in main())
 logger = get_logger("woocommerce_monitor")
@@ -1006,6 +1007,14 @@ class OrderMonitor:
         self.doc_manager = DocumentManager(config, self.wc_client)
         self.invoice_filer = InvoiceFiler(config, self.wc_client)
         self.tracker = ProcessedOrdersTracker(config)
+        # The project tracker DB is canonical for projects. Order folders are
+        # registered the moment they're created so the tracker doesn't have
+        # to re-scan the Order directory afterwards.
+        try:
+            self.db = ProjectDatabase()
+        except Exception as e:
+            logger.warning(f"Project DB unavailable; orders will not be registered: {e}")
+            self.db = None
         self.running = False
         self.callback = None
         self.order_list_callback = None
@@ -1030,6 +1039,78 @@ class OrderMonitor:
         else:
             logger.info(message)
 
+    def _register_order_in_db(self, order: Dict, order_folder: Path) -> None:
+        """Insert the order's folder into the project DB as a Physical/Order
+        project. register_project is idempotent on the path, so re-runs (or
+        the legacy folder-scan importer) won't create duplicates."""
+        if not self.db:
+            return
+        try:
+            order_id = order.get("id")
+            order_number = order.get("number", order_id)
+
+            billing = order.get("billing", {}) or {}
+            customer_name = (
+                f"{billing.get('first_name', '')} {billing.get('last_name', '')}"
+            ).strip()
+            if not customer_name:
+                customer_name = "Guest"
+
+            # Best-effort date — fall back to today if WooCommerce gave us
+            # something unparseable.
+            date_str = ""
+            for key in ("date_paid", "date_completed", "date_created"):
+                raw = order.get(key)
+                if raw:
+                    try:
+                        date_str = str(raw)[:10]
+                        if len(date_str) == 10:
+                            break
+                    except Exception:
+                        continue
+            if not date_str:
+                date_str = datetime.now().strftime("%Y-%m-%d")
+
+            shipping = order.get("shipping", {}) or {}
+            location_parts = [
+                shipping.get("city", ""),
+                shipping.get("country", ""),
+            ]
+            location = ", ".join(p for p in location_parts if p)
+
+            metadata = {
+                "is_personal": False,
+                "is_sandbox": False,
+                "physical_subtype": "Order",
+                "location": location,
+                "woo_order_id": order_id,
+                "woo_order_number": order_number,
+                "woo_status": order.get("status", ""),
+                "woo_total": order.get("total", ""),
+                "woo_currency": order.get("currency", ""),
+            }
+
+            self.db.register_project({
+                "client_name": customer_name,
+                "project_name": f"Order_{order_number}",
+                "project_type": "Physical",
+                "date_created": date_str,
+                "path": str(order_folder),
+                "base_directory": str(self.doc_manager.base_dir),
+                "status": "active",
+                "notes": "",
+                "metadata": metadata,
+            })
+            logger.info(
+                f"Registered Physical/Order project for #{order_number} "
+                f"({customer_name}) in DB"
+            )
+        except Exception as e:
+            # Don't let DB issues break order processing — folder + invoices
+            # still work, and the legacy folder-scan importer can pick the
+            # row up later.
+            logger.error(f"Failed to register order in project DB: {e}")
+
     def process_order(self, order: Dict) -> bool:
         """Process a single order"""
         order_id = str(order['id'])
@@ -1050,6 +1131,10 @@ class OrderMonitor:
             # Create order folder
             order_folder = self.doc_manager.create_order_folder(order)
             self.log_status(f"Created folder: {order_folder.name}", "success")
+
+            # Register in the project DB right away so the tracker sees it
+            # without needing a folder rescan.
+            self._register_order_in_db(order, order_folder)
 
             documents = {}
 
@@ -1164,6 +1249,7 @@ class OrderMonitor:
                 # Create folder if it doesn't exist
                 order_folder = self.doc_manager.create_order_folder(order)
                 self.log_status(f"Created folder for order #{order_number}", "info")
+                self._register_order_in_db(order, order_folder)
 
             # Check if invoice already filed (look for .lnk in outgoing)
             outgoing = self.invoice_filer._find_outgoing_folder(order_folder)
@@ -1744,6 +1830,7 @@ class OrderMonitorGUI:
                         if not project_folder:
                             project_folder = self.monitor.doc_manager.create_order_folder(order)
                             self.update_status(f"Created folder for order #{order_num}", "info")
+                            self.monitor._register_order_in_db(order, project_folder)
 
                         # Refile
                         filed_path = self.monitor.invoice_filer.refile_invoice(order, project_folder)
