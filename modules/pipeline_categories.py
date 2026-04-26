@@ -13,6 +13,16 @@ to know about a category and its subtypes:
       category_scripts     — script entries shown at the category level in menus
       subtypes             — {key: subtype_dict}; empty for Business / Global
 
+  Script-level fields (entries inside category_scripts / subtype.scripts):
+      key, name, module|url, description, icon
+      context              — "project" if the tool runs against a selected
+                             project (it is hidden from the category Tools panel
+                             and surfaced in the project detail Actions section).
+                             Omit for category-level / global tools.
+      project_types        — optional list of project_type values to restrict a
+                             project-context tool further. Empty/missing means
+                             "any project under this category".
+
   Subtype-level fields (keys that may be present on each subtype):
       display_name, emoji, description, scripts (menu items)
       title, tree_template, folder_prefix, project_type,
@@ -336,6 +346,7 @@ CATEGORIES: Dict[str, Dict[str, Any]] = {
                 "module": "PipelineScript_Photo_RawCleanup",
                 "description": "Delete orphaned RAW files that have no matching JPG in the same folder",
                 "icon": "🧹",
+                "context": "project",
             },
         ],
         "subtypes": {
@@ -381,6 +392,7 @@ CATEGORIES: Dict[str, Dict[str, Any]] = {
                 "module": "PipelineScript_Web_PublishStatic",
                 "description": "Upload Staatic exports to FTP, sync DokuWiki, and create dated archives",
                 "icon": "🚀",
+                "context": "project",
             },
             {
                 "key": "devbackup_wordpress",
@@ -388,6 +400,7 @@ CATEGORIES: Dict[str, Dict[str, Any]] = {
                 "module": "PipelineScript_Web_DevBackup",
                 "description": "Backup/restore WordPress dev sites (files + DB) and Laragon environment",
                 "icon": "💾",
+                "context": "project",
             },
         ],
         "subtypes": {

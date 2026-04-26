@@ -1376,7 +1376,22 @@ def main():
     setup_shared_logging("web_publish_static")
 
     root = tk.Tk()
-    PublishStaticUI(root)
+    ui = PublishStaticUI(root)
+
+    # Pre-select the site matching a project folder passed by the launcher.
+    # The user can still pick a different site from the combobox.
+    if len(sys.argv) > 1 and sys.argv[1]:
+        site_key = os.path.basename(os.path.normpath(sys.argv[1]))
+        label = next(
+            (lbl for lbl, key in ui.site_labels_map.items() if key == site_key),
+            None,
+        )
+        if label:
+            ui.site_var.set(label)
+            ui._on_site_changed()
+        else:
+            logger.info(f"No matching site for {site_key}; keeping last selection")
+
     root.mainloop()
     return 0
 

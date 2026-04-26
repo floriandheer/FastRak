@@ -62,6 +62,10 @@ def _script_entry(spec: Dict[str, Any]) -> Dict[str, Any]:
         out["path"] = os.path.join(SCRIPTS_DIR, f"{spec['module']}.py")
     if "url" in spec:
         out["url"] = spec["url"]
+    if "context" in spec:
+        out["context"] = spec["context"]
+    if "project_types" in spec:
+        out["project_types"] = list(spec["project_types"])
     return out
 
 
