@@ -36,6 +36,10 @@ VALID_EXTENSIONS = {'.mp3', '.flac', '.wav', '.aiff', '.m4a', '.ogg', '.opus'}
 APP_DATA_DIR = os.path.join(os.path.expanduser("~"), "AppData", "Local", "PipelineManager")
 CONFIG_FILE = os.path.join(APP_DATA_DIR, "traktor_sync_config.json")
 
+# Built-in preset that mirrors the Auto Select rule (digits 1-9 prefix).
+# Resolved dynamically against the loaded playlist list, never stored.
+DEFAULT_PRESET_NAME = "Default (Auto)"
+
 
 # ============================================================================
 # DATA CLASSES
@@ -55,6 +59,7 @@ class SyncSettings:
     archive_removed: bool = True
     selected_playlists: List[str] = field(default_factory=list)
     selection_mode: str = "include"
+    playlist_presets: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -132,17 +137,18 @@ class PlaylistSyncUI:
         main_frame.columnconfigure(0, weight=1)
         main_frame.rowconfigure(2, weight=1)
 
+        self.config_manager = ConfigManager()
+
         self.create_config_panel(main_frame)
         self.create_results_panel(main_frame)
-        
+
         self.status_var = tk.StringVar()
         self.status_var.set("Ready")
-        self.status_bar = tk.Label(self.root, textvariable=self.status_var, bd=1, 
+        self.status_bar = tk.Label(self.root, textvariable=self.status_var, bd=1,
                                  relief=tk.SUNKEN, anchor=tk.W)
         self.status_bar.grid(row=2, column=0, sticky="ew")
-        
+
         self.syncing = False
-        self.config_manager = ConfigManager()
         self.initialize_default_paths()
         self.all_playlists = []  # Will be populated when analyzing XML
         self.playlist_data = {}  # Store playlist metadata
@@ -390,9 +396,24 @@ class PlaylistSyncUI:
         tree_scroll.grid(row=0, column=1, sticky="ns")
         self.playlist_tree.config(yscrollcommand=tree_scroll.set)
         
+        # Presets frame
+        preset_frame = ttk.Frame(playlist_frame)
+        preset_frame.grid(row=3, column=0, sticky="ew", padx=5, pady=5)
+        preset_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(preset_frame, text="Preset:").grid(row=0, column=0, sticky="w", padx=5)
+        self.preset_var = tk.StringVar()
+        self.preset_combo = ttk.Combobox(preset_frame, textvariable=self.preset_var, state="readonly")
+        self.preset_combo.grid(row=0, column=1, sticky="ew", padx=5)
+        self.preset_combo.bind("<<ComboboxSelected>>", lambda e: self._load_preset())
+        ttk.Button(preset_frame, text="Save…", command=self._save_preset_as).grid(row=0, column=2, padx=2)
+        ttk.Button(preset_frame, text="Overwrite", command=self._overwrite_preset).grid(row=0, column=3, padx=2)
+        ttk.Button(preset_frame, text="Delete", command=self._delete_preset).grid(row=0, column=4, padx=2)
+        self._refresh_preset_combo()
+
         # Buttons frame
         btn_frame = ttk.Frame(playlist_frame)
-        btn_frame.grid(row=3, column=0, sticky="ew", pady=5)
+        btn_frame.grid(row=4, column=0, sticky="ew", pady=5)
         btn_frame.columnconfigure(4, weight=1)
 
         ttk.Button(btn_frame, text="Select All", command=self.select_all_playlists).grid(row=0, column=0, padx=5)
@@ -458,7 +479,8 @@ class PlaylistSyncUI:
             overwrite_all=self.overwrite_all_var.get(),
             archive_removed=self.archive_removed_var.get(),
             selected_playlists=selected,
-            selection_mode=self.selection_mode.get()
+            selection_mode=self.selection_mode.get(),
+            playlist_presets=self.config_manager.settings.playlist_presets,
         )
         self.status_var.set("Settings saved")
         messagebox.showinfo("Settings Saved", "Configuration saved successfully!")
@@ -533,18 +555,149 @@ class PlaylistSyncUI:
     def auto_select_playlists(self):
         """Auto-select playlists (only those starting with numbers 1-9)"""
         self.clear_all_playlists()
-        
+
         for item in self.playlist_tree.get_children():
             playlist_name = self.playlist_tree.item(item, "text")
-            
+
             # Only select playlists that start with a digit 1-9
             # Exclude playlists that don't start with a number or start with 0
             if playlist_name and len(playlist_name) > 0:
                 first_char = playlist_name[0]
                 if first_char.isdigit() and first_char != '0':
                     self.playlist_tree.selection_add(item)
-        
+
         self.update_selection_summary()
+
+    # ------------------------------------------------------------------
+    # Playlist presets
+    # ------------------------------------------------------------------
+
+    def _refresh_preset_combo(self, select: Optional[str] = None):
+        """Refresh the preset dropdown values from settings."""
+        if not hasattr(self, "preset_combo"):
+            return
+        names = [DEFAULT_PRESET_NAME] + sorted(self.config_manager.settings.playlist_presets.keys())
+        self.preset_combo["values"] = names
+        if select and select in names:
+            self.preset_var.set(select)
+        elif self.preset_var.get() not in names:
+            self.preset_var.set(DEFAULT_PRESET_NAME)
+
+    def _apply_selection(self, playlists: List[str], mode: str):
+        """Apply a (playlists, mode) selection to the tree, logging missing names."""
+        self.selection_mode.set(mode if mode in ("include", "exclude") else "include")
+        self.clear_all_playlists()
+
+        wanted = set(playlists)
+        found = set()
+        for item in self.playlist_tree.get_children():
+            name = self.playlist_tree.item(item, "text")
+            if name in wanted:
+                self.playlist_tree.selection_add(item)
+                found.add(name)
+
+        missing = sorted(wanted - found)
+        if missing and hasattr(self, "sync_text"):
+            self.append_to_text_widget(
+                self.sync_text,
+                f"Preset: skipped {len(missing)} playlist(s) not in current XML: {', '.join(missing)}\n"
+            )
+        self.update_selection_summary()
+
+    def _load_preset(self):
+        """Load the currently selected preset into the playlist tree."""
+        name = self.preset_var.get()
+        if not name:
+            return
+
+        if not self.all_playlists:
+            messagebox.showinfo("Load Preset", "Load playlists first, then apply the preset.")
+            return
+
+        if name == DEFAULT_PRESET_NAME:
+            self.auto_select_playlists()
+            self.status_var.set(f"Applied preset: {name}")
+            return
+
+        preset = self.config_manager.settings.playlist_presets.get(name)
+        if not preset:
+            messagebox.showerror("Load Preset", f"Preset '{name}' not found.")
+            self._refresh_preset_combo()
+            return
+
+        self._apply_selection(preset.get("playlists", []), preset.get("mode", "include"))
+        self.status_var.set(f"Applied preset: {name}")
+
+    def _capture_current_selection(self) -> Dict[str, Any]:
+        """Capture the current tree selection + mode as a preset payload."""
+        selected = [
+            self.playlist_tree.item(item, "text")
+            for item in self.playlist_tree.selection()
+        ]
+        return {"playlists": selected, "mode": self.selection_mode.get()}
+
+    def _save_preset_as(self):
+        """Prompt for a name and save the current selection as a new preset."""
+        from tkinter import simpledialog
+        name = simpledialog.askstring("Save Preset", "Preset name:", parent=self.root)
+        if not name:
+            return
+        name = name.strip()
+        if not name:
+            return
+        if name == DEFAULT_PRESET_NAME:
+            messagebox.showerror("Save Preset", f"'{DEFAULT_PRESET_NAME}' is reserved.")
+            return
+
+        presets = self.config_manager.settings.playlist_presets
+        if name in presets:
+            if not messagebox.askyesno("Save Preset", f"Preset '{name}' exists. Overwrite?"):
+                return
+
+        presets[name] = self._capture_current_selection()
+        self.config_manager.save_settings()
+        self._refresh_preset_combo(select=name)
+        self.status_var.set(f"Saved preset: {name}")
+
+    def _overwrite_preset(self):
+        """Overwrite the currently selected user preset with the current selection."""
+        name = self.preset_var.get()
+        if not name or name == DEFAULT_PRESET_NAME:
+            messagebox.showinfo("Overwrite Preset", "Select a saved preset to overwrite, or use Save… to create a new one.")
+            return
+
+        presets = self.config_manager.settings.playlist_presets
+        if name not in presets:
+            messagebox.showerror("Overwrite Preset", f"Preset '{name}' not found.")
+            self._refresh_preset_combo()
+            return
+
+        if not messagebox.askyesno("Overwrite Preset", f"Overwrite '{name}' with the current selection?"):
+            return
+
+        presets[name] = self._capture_current_selection()
+        self.config_manager.save_settings()
+        self.status_var.set(f"Overwrote preset: {name}")
+
+    def _delete_preset(self):
+        """Delete the currently selected user preset."""
+        name = self.preset_var.get()
+        if not name or name == DEFAULT_PRESET_NAME:
+            messagebox.showinfo("Delete Preset", f"'{DEFAULT_PRESET_NAME}' is built-in and cannot be deleted.")
+            return
+
+        presets = self.config_manager.settings.playlist_presets
+        if name not in presets:
+            self._refresh_preset_combo()
+            return
+
+        if not messagebox.askyesno("Delete Preset", f"Delete preset '{name}'?"):
+            return
+
+        del presets[name]
+        self.config_manager.save_settings()
+        self._refresh_preset_combo()
+        self.status_var.set(f"Deleted preset: {name}")
 
     def preview_selection(self):
         """Show a preview of what will be synced"""
@@ -2355,15 +2508,27 @@ class PlaylistSyncUI:
                 # Determine destination extension
                 dest_ext = ".flac" if convert_to_flac and file_ext != '.flac' else file_ext
                 dest_path = os.path.join(dj_library, base_name + dest_ext)
-
-                # Handle potential filename conflicts by adding suffix
-                counter = 1
                 original_dest_path = dest_path
-                # Check if this destination is already used in our mapping OR exists on disk
-                while dest_path in file_mapping.values() or os.path.exists(dest_path):
+
+                # Handle filename conflicts with OTHER tracks in current session.
+                # Mirror update_dj_library's " -01"/" -02" numbering so paths match
+                # the files the original sync actually wrote to disk. Do NOT renumber
+                # just because the file exists — in export-xml-only mode every
+                # mapped file is expected to already be on disk.
+                if dest_path in file_mapping.values() and dest_path != file_mapping.get(track_path):
+                    # Renumber the first occurrence to " -01"
                     name_without_ext = os.path.splitext(original_dest_path)[0]
-                    dest_path = f"{name_without_ext} ({counter}){dest_ext}"
-                    counter += 1
+                    for src_path, dst_path in file_mapping.items():
+                        if dst_path == original_dest_path:
+                            file_mapping[src_path] = f"{name_without_ext} -01{dest_ext}"
+                            break
+
+                    # Find the next available "-NN" suffix for this track
+                    counter = 2
+                    dest_path = f"{name_without_ext} -{counter:02d}{dest_ext}"
+                    while dest_path in file_mapping.values() and dest_path != file_mapping.get(track_path):
+                        counter += 1
+                        dest_path = f"{name_without_ext} -{counter:02d}{dest_ext}"
 
                 file_mapping[track_path] = dest_path
 
