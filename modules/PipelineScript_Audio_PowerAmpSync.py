@@ -59,6 +59,10 @@ HEADER_COLOR = "#2c3e50"
 # Valid audio extensions
 VALID_EXTENSIONS = {'.mp3', '.flac', '.wav', '.aiff', '.m4a', '.ogg', '.opus', '.wma', '.aac'}
 
+# Built-in preset that mirrors the Auto Select rule (digits 1-9 prefix).
+# Resolved dynamically against the loaded playlist list, never stored.
+DEFAULT_PRESET_NAME = "Default (Auto)"
+
 
 # ============================================================================
 # LOGGING SETUP
@@ -93,6 +97,9 @@ class SyncSettings:
     sync_target: str = "local"  # "local" or "adb"
     adb_music_path: str = "/storage/emulated/0/Music/"
     adb_playlist_path: str = "/storage/emulated/0/Music/Playlists/"
+    # Saved playlist selection presets
+    playlist_presets: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    active_preset: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -355,6 +362,21 @@ class PowerAmpSyncApp:
         except (subprocess.SubprocessError, FileNotFoundError, OSError) as e:
             logger.error(f"ADB list files failed: {e}")
             return []
+
+    def _local_list_files(self, local_dir: str) -> List[str]:
+        """List all files recursively in a local directory.
+
+        Returns paths relative to local_dir, with forward slashes.
+        """
+        files: List[str] = []
+        if not local_dir or not os.path.isdir(local_dir):
+            return files
+        for root, _dirs, fnames in os.walk(local_dir):
+            for f in fnames:
+                full = os.path.join(root, f)
+                rel = os.path.relpath(full, local_dir).replace('\\', '/')
+                files.append(rel)
+        return files
 
     def _adb_delete(self, remote_path: str) -> bool:
         """Delete a file on the device."""
@@ -623,9 +645,24 @@ class PowerAmpSyncApp:
         self.playlist_tree.config(yscrollcommand=scrollbar.set)
         self.playlist_tree.bind('<<TreeviewSelect>>', lambda e: self._update_selection_summary())
 
+        # Presets frame
+        preset_frame = ttk.Frame(playlist_frame)
+        preset_frame.grid(row=3, column=0, sticky="ew", padx=5, pady=5)
+        preset_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(preset_frame, text="Preset:").grid(row=0, column=0, sticky="w", padx=5)
+        self.preset_var = tk.StringVar(value=self.config_manager.settings.active_preset)
+        self.preset_combo = ttk.Combobox(preset_frame, textvariable=self.preset_var, state="readonly")
+        self.preset_combo.grid(row=0, column=1, sticky="ew", padx=5)
+        self.preset_combo.bind("<<ComboboxSelected>>", lambda e: self._load_preset())
+        ttk.Button(preset_frame, text="Save…", command=self._save_preset_as).grid(row=0, column=2, padx=2)
+        ttk.Button(preset_frame, text="Overwrite", command=self._overwrite_preset).grid(row=0, column=3, padx=2)
+        ttk.Button(preset_frame, text="Delete", command=self._delete_preset).grid(row=0, column=4, padx=2)
+        self._refresh_preset_combo()
+
         # Selection buttons
         sel_btn_frame = ttk.Frame(playlist_frame)
-        sel_btn_frame.grid(row=3, column=0, sticky="ew", pady=5)
+        sel_btn_frame.grid(row=4, column=0, sticky="ew", pady=5)
 
         ttk.Button(sel_btn_frame, text="Select All", command=self._select_all_playlists).grid(row=0, column=0, padx=5)
         ttk.Button(sel_btn_frame, text="Clear All", command=self._clear_all_playlists).grid(row=0, column=1, padx=5)
@@ -982,7 +1019,10 @@ TROUBLESHOOTING
             # ADB settings
             sync_target=self.sync_target_var.get(),
             adb_music_path=self.adb_music_path_var.get(),
-            adb_playlist_path=self.adb_playlist_path_var.get()
+            adb_playlist_path=self.adb_playlist_path_var.get(),
+            # Preset state (presets dict already mutated in place; explicit for clarity)
+            playlist_presets=self.config_manager.settings.playlist_presets,
+            active_preset=self.preset_var.get(),
         )
         self.status_var.set("Settings saved")
         messagebox.showinfo("Settings Saved", "Configuration saved successfully!")
@@ -1115,8 +1155,11 @@ TROUBLESHOOTING
 
                 self.status_var.set(f"Loaded {len(self.all_playlists)} playlists")
 
-                # Auto-select playlists
-                self._auto_select_playlists()
+                active = self.preset_var.get()
+                if active and active != DEFAULT_PRESET_NAME and active in self.config_manager.settings.playlist_presets:
+                    self._load_preset()
+                else:
+                    self._auto_select_playlists()
                 self._filter_playlists()
 
             else:
@@ -1295,6 +1338,136 @@ TROUBLESHOOTING
                     self.playlist_tree.selection_add(item)
 
         self._update_selection_summary()
+
+    # ------------------------------------------------------------------
+    # Playlist presets
+    # ------------------------------------------------------------------
+
+    def _refresh_preset_combo(self, select: Optional[str] = None) -> None:
+        """Refresh the preset dropdown values from settings."""
+        if not hasattr(self, "preset_combo"):
+            return
+        names = [DEFAULT_PRESET_NAME] + sorted(self.config_manager.settings.playlist_presets.keys())
+        self.preset_combo["values"] = names
+        if select and select in names:
+            self.preset_var.set(select)
+        elif self.preset_var.get() not in names:
+            self.preset_var.set(DEFAULT_PRESET_NAME)
+
+    def _apply_selection(self, playlists: List[str], mode: str) -> None:
+        """Apply a (playlists, mode) selection to the tree, logging missing names."""
+        self.selection_mode.set(mode if mode in ("include", "exclude") else "include")
+        self._clear_all_playlists()
+
+        wanted = set(playlists)
+        found = set()
+        for item in self.playlist_tree.get_children():
+            name = self.playlist_tree.item(item, "text")
+            if name in wanted:
+                self.playlist_tree.selection_add(item)
+                found.add(name)
+
+        missing = sorted(wanted - found)
+        if missing and hasattr(self, "sync_text"):
+            self._append_sync_text(
+                f"Preset: skipped {len(missing)} playlist(s) not in current XML: {', '.join(missing)}\n"
+            )
+        self._update_selection_summary()
+
+    def _load_preset(self) -> None:
+        """Load the currently selected preset into the playlist tree."""
+        name = self.preset_var.get()
+        if not name:
+            return
+
+        if not self.all_playlists:
+            messagebox.showinfo("Load Preset", "Load playlists first, then apply the preset.")
+            return
+
+        if name == DEFAULT_PRESET_NAME:
+            self._auto_select_playlists()
+            self.status_var.set(f"Applied preset: {name}")
+            return
+
+        preset = self.config_manager.settings.playlist_presets.get(name)
+        if not preset:
+            messagebox.showerror("Load Preset", f"Preset '{name}' not found.")
+            self._refresh_preset_combo()
+            return
+
+        self._apply_selection(preset.get("playlists", []), preset.get("mode", "include"))
+        self.status_var.set(f"Applied preset: {name}")
+
+    def _capture_current_selection(self) -> Dict[str, Any]:
+        """Capture the current tree selection + mode as a preset payload."""
+        selected = [
+            self.playlist_tree.item(item, "text")
+            for item in self.playlist_tree.selection()
+        ]
+        return {"playlists": selected, "mode": self.selection_mode.get()}
+
+    def _save_preset_as(self) -> None:
+        """Prompt for a name and save the current selection as a new preset."""
+        from tkinter import simpledialog
+        name = simpledialog.askstring("Save Preset", "Preset name:", parent=self.root)
+        if not name:
+            return
+        name = name.strip()
+        if not name:
+            return
+        if name == DEFAULT_PRESET_NAME:
+            messagebox.showerror("Save Preset", f"'{DEFAULT_PRESET_NAME}' is reserved.")
+            return
+
+        presets = self.config_manager.settings.playlist_presets
+        if name in presets:
+            if not messagebox.askyesno("Save Preset", f"Preset '{name}' exists. Overwrite?"):
+                return
+
+        presets[name] = self._capture_current_selection()
+        self.config_manager.save_settings()
+        self._refresh_preset_combo(select=name)
+        self.status_var.set(f"Saved preset: {name}")
+
+    def _overwrite_preset(self) -> None:
+        """Overwrite the currently selected user preset with the current selection."""
+        name = self.preset_var.get()
+        if not name or name == DEFAULT_PRESET_NAME:
+            messagebox.showinfo("Overwrite Preset", "Select a saved preset to overwrite, or use Save… to create a new one.")
+            return
+
+        presets = self.config_manager.settings.playlist_presets
+        if name not in presets:
+            messagebox.showerror("Overwrite Preset", f"Preset '{name}' not found.")
+            self._refresh_preset_combo()
+            return
+
+        if not messagebox.askyesno("Overwrite Preset", f"Overwrite '{name}' with the current selection?"):
+            return
+
+        presets[name] = self._capture_current_selection()
+        self.config_manager.save_settings()
+        self.status_var.set(f"Overwrote preset: {name}")
+
+    def _delete_preset(self) -> None:
+        """Delete the currently selected user preset."""
+        name = self.preset_var.get()
+        if not name or name == DEFAULT_PRESET_NAME:
+            messagebox.showinfo("Delete Preset", f"'{DEFAULT_PRESET_NAME}' is built-in and cannot be deleted.")
+            return
+
+        presets = self.config_manager.settings.playlist_presets
+        if name not in presets:
+            self._refresh_preset_combo()
+            return
+
+        if not messagebox.askyesno("Delete Preset", f"Delete preset '{name}'?"):
+            return
+
+        del presets[name]
+        self.config_manager.save_settings()
+        self._refresh_preset_combo()
+        self.status_var.set(f"Deleted preset: {name}")
 
     def _preview_selection(self) -> None:
         """Show a preview of what will be synced."""
@@ -1781,6 +1954,16 @@ TROUBLESHOOTING
                 skip_existing = self.skip_existing_var.get()
                 processed_cover_dirs = set()  # Track dirs where we've handled cover art
 
+                # Pre-scan destination ONCE for fast existence checks.
+                # Avoids one subprocess (or stat) per track during the sync loop.
+                self._append_sync_text("Scanning destination for existing files...\n")
+                self.root.after(0, lambda: self.status_var.set("Scanning destination..."))
+                if is_adb_mode:
+                    existing_set = set(self._adb_list_files(music_dest))
+                else:
+                    existing_set = set(self._local_list_files(self.music_dest_var.get().strip()))
+                self._append_sync_text(f"Found {len(existing_set)} existing file(s) in destination\n\n")
+
                 for i, (source_path, track_info) in enumerate(unique_tracks.items()):
                     if not self.syncing:
                         self._append_sync_text("\nSync cancelled by user.\n")
@@ -1817,9 +2000,12 @@ TROUBLESHOOTING
 
                     filename = os.path.basename(source_path)
 
+                    # Relative form for set membership against the pre-built scan.
+                    relative_dest_key = relative_path_converted.replace('\\', '/').lstrip('/')
+
                     if is_adb_mode:
-                        # ADB mode: check if file exists on device
-                        if skip_existing and self._adb_exists(dest_path):
+                        # ADB mode: O(1) check against the pre-scanned set
+                        if skip_existing and relative_dest_key in existing_set:
                             skipped_count += 1
                             continue
 
@@ -1860,9 +2046,11 @@ TROUBLESHOOTING
                         dest_dir = os.path.dirname(dest_path)
                         if dest_dir not in processed_cover_dirs:
                             processed_cover_dirs.add(dest_dir)
-                            # Check if cover already exists on device
+                            # Check the pre-scanned set rather than another adb shell call
+                            cover_rel_dir = os.path.dirname(relative_dest_key)
+                            cover_rel = (cover_rel_dir + '/cover.jpg').lstrip('/') if cover_rel_dir else 'cover.jpg'
                             remote_cover = dest_dir + '/cover.jpg'
-                            if not self._adb_exists(remote_cover):
+                            if cover_rel not in existing_set:
                                 # Try to find and push cover art
                                 cover_source = self._find_cover_art(source_path)
                                 if cover_source:
@@ -1882,8 +2070,8 @@ TROUBLESHOOTING
                                         if os.path.exists(tmp_cover):
                                             os.remove(tmp_cover)
                     else:
-                        # Local mode
-                        if skip_existing and os.path.exists(dest_path):
+                        # Local mode: O(1) check against the pre-scanned set
+                        if skip_existing and relative_dest_key in existing_set:
                             skipped_count += 1
                             # Still check for cover art even if audio is skipped
                             dest_dir = os.path.dirname(dest_path)
@@ -1942,10 +2130,14 @@ TROUBLESHOOTING
                 deleted_dirs = 0
 
                 if is_adb_mode:
-                    # Get existing files from device
-                    self._append_sync_text("Scanning device for existing files...\n")
-                    existing_files = self._adb_list_files(music_dest)
-                    self._append_sync_text(f"Found {len(existing_files)} files on device\n")
+                    # Reuse the pre-scan from Phase 1 if available; otherwise scan now.
+                    if 'existing_set' in locals():
+                        existing_files = list(existing_set)
+                        self._append_sync_text(f"Reusing earlier scan ({len(existing_files)} files on device)\n")
+                    else:
+                        self._append_sync_text("Scanning device for existing files...\n")
+                        existing_files = self._adb_list_files(music_dest)
+                        self._append_sync_text(f"Found {len(existing_files)} files on device\n")
 
                     # Find orphaned files (exclude cover art from deletion consideration)
                     orphaned = []
@@ -1989,18 +2181,15 @@ TROUBLESHOOTING
                     else:
                         self._append_sync_text("No orphaned files found\n")
                 else:
-                    # Local mode mirror sync
+                    # Local mode mirror sync — reuse the Phase 1 scan if available.
                     local_music_dest = self.music_dest_var.get().strip()
-                    self._append_sync_text("Scanning local folder for existing files...\n")
-
-                    existing_files = []
-                    for root, dirs, files in os.walk(local_music_dest):
-                        for f in files:
-                            full_path = os.path.join(root, f)
-                            rel_path = os.path.relpath(full_path, local_music_dest).replace('\\', '/')
-                            existing_files.append(rel_path)
-
-                    self._append_sync_text(f"Found {len(existing_files)} files locally\n")
+                    if 'existing_set' in locals():
+                        existing_files = list(existing_set)
+                        self._append_sync_text(f"Reusing earlier scan ({len(existing_files)} files locally)\n")
+                    else:
+                        self._append_sync_text("Scanning local folder for existing files...\n")
+                        existing_files = self._local_list_files(local_music_dest)
+                        self._append_sync_text(f"Found {len(existing_files)} files locally\n")
 
                     # Find orphaned files
                     orphaned = []
