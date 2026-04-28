@@ -60,6 +60,7 @@ class SyncSettings:
     selected_playlists: List[str] = field(default_factory=list)
     selection_mode: str = "include"
     playlist_presets: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    active_preset: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -402,7 +403,7 @@ class PlaylistSyncUI:
         preset_frame.columnconfigure(1, weight=1)
 
         ttk.Label(preset_frame, text="Preset:").grid(row=0, column=0, sticky="w", padx=5)
-        self.preset_var = tk.StringVar()
+        self.preset_var = tk.StringVar(value=self.config_manager.settings.active_preset)
         self.preset_combo = ttk.Combobox(preset_frame, textvariable=self.preset_var, state="readonly")
         self.preset_combo.grid(row=0, column=1, sticky="ew", padx=5)
         self.preset_combo.bind("<<ComboboxSelected>>", lambda e: self._load_preset())
@@ -481,6 +482,7 @@ class PlaylistSyncUI:
             selected_playlists=selected,
             selection_mode=self.selection_mode.get(),
             playlist_presets=self.config_manager.settings.playlist_presets,
+            active_preset=self.preset_var.get(),
         )
         self.status_var.set("Settings saved")
         messagebox.showinfo("Settings Saved", "Configuration saved successfully!")
@@ -1486,7 +1488,11 @@ class PlaylistSyncUI:
                 
                 self.status_var.set(f"Loaded {len(self.all_playlists)} playlists")
 
-                self.auto_select_playlists()  # Auto-select user playlists
+                active = self.preset_var.get()
+                if active and active != DEFAULT_PRESET_NAME and active in self.config_manager.settings.playlist_presets:
+                    self._load_preset()
+                else:
+                    self.auto_select_playlists()  # Auto-select user playlists
                 self.filter_playlists()  # Apply initial filtering
             else:
                 messagebox.showerror("Error", "No playlists found in XML!")
