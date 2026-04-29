@@ -11,6 +11,7 @@ import os
 import sys
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
+from shared_window_icon import apply_category_icon
 import requests
 from requests.auth import HTTPBasicAuth
 import json
@@ -2214,6 +2215,7 @@ def main():
     setup_shared_logging("woocommerce_monitor")
 
     root = tk.Tk()
+    apply_category_icon(root)
     app = OrderMonitorGUI(root)
     root.mainloop()
 

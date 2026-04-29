@@ -13,6 +13,7 @@ import subprocess
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
+from shared_window_icon import apply_category_icon
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -856,6 +857,7 @@ def main():
     setup_shared_logging("laragon_workspace")
 
     root = tk.Tk()
+    apply_category_icon(root)
     LaragonManagerUI(root)
     root.mainloop()
     return 0
