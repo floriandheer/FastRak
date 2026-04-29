@@ -30,7 +30,7 @@ logger = get_logger("setup_new_pc")
 # Constants
 # ============================================================
 
-STEPS = ("folders", "drives", "synology", "config")
+STEPS = ("folders", "drives", "synology", "config", "shortcut")
 BANNER_WIDTH = 60
 
 
@@ -482,7 +482,51 @@ def step_config(cfg: dict, dry_run: bool) -> bool:
 
 
 # ============================================================
-# Step 6: Final Report
+# Step 6: Desktop / Taskbar Shortcut
+# ============================================================
+
+def step_shortcut(dry_run: bool, auto_yes: bool) -> bool:
+    """Run make_shortcut.py to generate Fastrak.lnk next to the repo."""
+    banner("Step 6: Windows Shortcut")
+
+    if sys.platform != "win32":
+        print("  Skipped (Windows-only).")
+        return True
+
+    helper = Path(SCRIPT_FILE_DIR) / "make_shortcut.py"
+    if not helper.exists():
+        status_line("make_shortcut.py", False, "not found")
+        return False
+
+    shortcut_path = Path(SCRIPT_FILE_DIR) / "Fastrak.lnk"
+    if shortcut_path.exists():
+        print(f"  Shortcut already exists: {shortcut_path}")
+        if not confirm("  Regenerate?", auto_yes):
+            print("  Skipped.")
+            return True
+
+    if dry_run:
+        print(f"  [DRY RUN] Would run: python {helper}")
+        return True
+
+    try:
+        subprocess.run(
+            [sys.executable, str(helper)],
+            check=True, cwd=SCRIPT_FILE_DIR, timeout=30
+        )
+        status_line("Shortcut", True, str(shortcut_path))
+        print("\n  Right-click Fastrak.lnk -> 'Pin to taskbar' or 'Pin to Start'.")
+        return True
+    except subprocess.CalledProcessError as e:
+        status_line("Shortcut", False, f"make_shortcut.py failed: {e}")
+        return False
+    except subprocess.TimeoutExpired:
+        status_line("Shortcut", False, "timeout running make_shortcut.py")
+        return False
+
+
+# ============================================================
+# Step 7: Final Report
 # ============================================================
 
 def final_report(results: dict):
@@ -505,6 +549,7 @@ def final_report(results: dict):
     print("       https://www.ntwind.com/software/visual-subst.html")
     print("    3. Reboot to verify drive persistence via registry")
     print("    4. Launch Pipeline Manager and verify paths in Settings (Ctrl+,)")
+    print("    5. Right-click Fastrak.lnk -> 'Pin to taskbar' / 'Pin to Start'")
 
 
 # ============================================================
@@ -579,7 +624,11 @@ def main():
     if run_all or args.step == "config":
         results["Pipeline Config"] = step_config(cfg, args.dry_run)
 
-    # Step 6: Report
+    # Step 6: Windows shortcut
+    if run_all or args.step == "shortcut":
+        results["Windows Shortcut"] = step_shortcut(args.dry_run, args.yes)
+
+    # Step 7: Report
     final_report(results)
 
     # Windows console keep-alive

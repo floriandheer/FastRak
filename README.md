@@ -93,27 +93,43 @@ Use `--dry-run` to preview changes without modifying anything. See [docs/INSTALL
 python fastrak_hub.py
 ```
 
-**Method 2: VBS Launcher (Windows only)**
-- Double-click `fastrak_launcher.vbs`
-- This method hides the console window for a cleaner experience
+**Method 2: Pinned Windows shortcut (recommended)**
 
-### Creating a Taskbar Shortcut (Windows)
+A `Fastrak.lnk` shortcut launches the hub through `pythonw.exe` (no console window) and can be pinned to the taskbar/Start menu like a native app. The running window groups under the same taskbar slot as the pinned icon thanks to the `AppUserModelID` set inside `fastrak_hub.py`.
 
-To pin a VBS launcher shortcut to your Windows taskbar:
+### Creating the Windows Shortcut
 
-1. Create a shortcut to the VBS file
-2. Right-click the shortcut and select **Properties**
-3. In the **Target** field, add `explorer` before the path:
+#### Option A — Generated (recommended)
+
+Run the helper script from the repo root:
+
+```bash
+python make_shortcut.py
+```
+
+This produces `Fastrak.lnk` next to the script, with paths resolved relative to wherever the repo is cloned (no hardcoded drive letters). It's also invoked automatically by `setup_new_pc.py`. Then:
+
+1. Right-click `Fastrak.lnk` → **Pin to taskbar** or **Pin to Start**
+2. (Optional) Copy the `.lnk` to your Desktop for a desktop icon
+
+#### Option B — Manual setup
+
+If you'd rather configure it by hand (or the helper failed):
+
+1. Right-click on the desktop → **New** → **Shortcut**
+2. **Location**: enter the full target with arguments, e.g.
    ```
-   explorer C:\path\to\fastrak_launcher.vbs
+   "C:\Path\To\Python\pythonw.exe" "C:\Path\To\floriandheer\fastrak_hub.py"
    ```
-4. Click **OK** to save
-5. Right-click the shortcut and select **Pin to taskbar**
-6. After pinning, right-click the taskbar icon → **Properties** to change the icon back to your preferred icon
+   - Use `pythonw.exe` (not `python.exe`) so no console window appears
+   - Quote both paths if they contain spaces
+3. **Name** the shortcut `Fastrak` and finish
+4. Right-click the new shortcut → **Properties**
+   - **Start in**: set to the repo folder (e.g. `C:\Path\To\floriandheer`)
+   - **Change Icon...** → browse to `assets\Favicon_FlorianDheer.ico` in the repo
+5. Click **OK**, then right-click → **Pin to taskbar**
 
-**Example:** `explorer C:\iTunes.VBS`
-
-**Note:** You'll need to reapply the custom icon after adding the `explorer` prefix, as Windows may reset it.
+The icon and AppUserModelID are already wired up inside `fastrak_hub.py`, so the running window will inherit the icon and merge with the pinned shortcut on the taskbar.
 
 ### Keyboard Shortcuts
 

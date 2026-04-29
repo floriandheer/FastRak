@@ -14,6 +14,22 @@ import tkinter as tk
 from tkinter import ttk, font
 import datetime
 import threading
+import ctypes
+
+# Windows taskbar identity — must be set before any Tk window is created so
+# pinned shortcut and running window share the same taskbar slot.
+APP_USER_MODEL_ID = "floriandheer.fastrak"
+if sys.platform == "win32":
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
+    except (AttributeError, OSError):
+        pass
+
+ICON_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "assets",
+    "Favicon_FlorianDheer.ico",
+)
 
 # ====================================
 # CONSTANTS AND CONFIGURATION
@@ -171,6 +187,12 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
         """Initialize the Pipeline Manager GUI."""
         self.root = root
         self.root.title(f"{APP_NAME} v{APP_VERSION}")
+
+        if os.path.exists(ICON_PATH):
+            try:
+                self.root.iconbitmap(default=ICON_PATH)
+            except tk.TclError:
+                pass
 
         # Open maximized or fullscreen depending on setting
         self.root.state('zoomed')  # Windows maximized
