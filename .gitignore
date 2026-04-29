@@ -86,6 +86,7 @@ rclone.conf
 
 # Setup config (user-specific paths, only .example is committed)
 setup_config.json
+Fastrak.lnk
 
 # AI assistant
 .claude/
