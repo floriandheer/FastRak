@@ -15,6 +15,7 @@ import shutil
 import logging
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+from shared_window_icon import apply_category_icon
 
 # Setup logging using shared utility
 from shared_logging import get_logger, setup_logging as setup_shared_logging
@@ -888,6 +889,7 @@ def main():
     else:
         # Run in GUI mode
         root = tk.Tk()
+        apply_category_icon(root)
         app = UnifiedCleaner(root)
         root.mainloop()
         return 0

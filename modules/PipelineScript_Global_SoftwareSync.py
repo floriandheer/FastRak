@@ -16,6 +16,7 @@ import datetime
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox
+from shared_window_icon import apply_category_icon
 from typing import Dict, List, Optional, Tuple
 
 from shared_logging import get_logger, setup_logging as setup_shared_logging
@@ -535,6 +536,7 @@ class SoftwareSyncManager(FormKeyboardMixin):
 def main():
     setup_shared_logging("software_sync")
     root = tk.Tk()
+    apply_category_icon(root)
     app = SoftwareSyncManager(root)
     root.mainloop()
     return 0

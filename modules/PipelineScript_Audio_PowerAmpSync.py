@@ -31,6 +31,7 @@ import subprocess
 import tempfile
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+from shared_window_icon import apply_category_icon
 from typing import Optional, Dict, List, Any, Tuple
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
@@ -2349,6 +2350,7 @@ def main():
     setup_shared_logging("poweramp_sync")
 
     root = tk.Tk()
+    apply_category_icon(root)
     app = PowerAmpSyncApp(root)
     root.mainloop()
     return 0

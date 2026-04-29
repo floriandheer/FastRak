@@ -14,6 +14,7 @@ import threading
 import subprocess
 import tkinter as tk
 from tkinter import ttk, messagebox
+from shared_window_icon import apply_category_icon
 from typing import Dict, Optional, Tuple
 from urllib.request import urlopen, Request
 from urllib.error import URLError
@@ -414,6 +415,7 @@ class SoftwareLauncherManager(FormKeyboardMixin):
 def main():
     setup_shared_logging("software_launcher")
     root = tk.Tk()
+    apply_category_icon(root)
     app = SoftwareLauncherManager(root)
     root.mainloop()
     return 0

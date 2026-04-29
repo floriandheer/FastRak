@@ -19,6 +19,7 @@ import tempfile
 import time
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, scrolledtext
+from shared_window_icon import apply_category_icon
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional, List
@@ -1376,6 +1377,7 @@ def main():
     setup_shared_logging("web_publish_static")
 
     root = tk.Tk()
+    apply_category_icon(root)
     ui = PublishStaticUI(root)
 
     # Pre-select the site matching a project folder passed by the launcher.

@@ -2,6 +2,7 @@ import os
 import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+from shared_window_icon import apply_category_icon
 
 # Common RAW extensions (case-insensitive matching is used)
 RAW_EXTENSIONS = {
@@ -215,5 +216,6 @@ class PhotoRawCleanup:
 if __name__ == "__main__":
     initial_dir = sys.argv[1] if len(sys.argv) > 1 else None
     root = tk.Tk()
+    apply_category_icon(root)
     app = PhotoRawCleanup(root, initial_dir=initial_dir)
     root.mainloop()

@@ -23,6 +23,7 @@ import subprocess
 import tempfile
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext, filedialog
+from shared_window_icon import apply_category_icon
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -1337,6 +1338,7 @@ class DevBackupUI:
 def main():
     setup_shared_logging("web_devbackup")
     root = tk.Tk()
+    apply_category_icon(root)
     ui = DevBackupUI(root)
 
     # Pre-select the site row matching a project folder passed by the launcher.

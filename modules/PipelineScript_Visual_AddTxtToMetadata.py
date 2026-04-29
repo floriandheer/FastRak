@@ -2,6 +2,7 @@ import os
 import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+from shared_window_icon import apply_category_icon
 from PIL import Image as PilImage
 import pyexiv2
 import threading
@@ -393,6 +394,7 @@ class ImageMetadataApp:
 # Run the application
 if __name__ == "__main__":
     root = tk.Tk()
+    apply_category_icon(root)
     app = ImageMetadataApp(root)
     # Pre-seed source/dest from a project folder passed by the launcher.
     # The user can still browse to a different folder afterwards.

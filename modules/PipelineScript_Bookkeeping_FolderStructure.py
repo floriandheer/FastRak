@@ -12,6 +12,7 @@ import os
 import sys
 import tkinter as tk
 from tkinter import ttk, messagebox
+from shared_window_icon import apply_category_icon
 import datetime
 
 # Setup logging using shared utility
@@ -451,7 +452,8 @@ def main():
 
     # Create Tkinter root
     root = tk.Tk()
-    
+    apply_category_icon(root)
+
     # Setup styles
     style = ttk.Style()
     style.configure("TButton", padding=5)

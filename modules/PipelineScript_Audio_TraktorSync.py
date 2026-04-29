@@ -16,6 +16,7 @@ import logging
 import json
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+from shared_window_icon import apply_category_icon
 import xml.etree.ElementTree as ET
 import urllib.parse
 import re
@@ -3406,6 +3407,7 @@ def main():
         print("Starting GUI...")
         
         root = tk.Tk()
+        apply_category_icon(root)
         app = PlaylistSyncUI(root)
         app.itunes_xml_var.set(args.itunes_xml)
         app.dj_library_var.set(args.dj_library)
@@ -3415,6 +3417,7 @@ def main():
         
     else:
         root = tk.Tk()
+        apply_category_icon(root)
         app = PlaylistSyncUI(root)
         root.mainloop()
         return 0

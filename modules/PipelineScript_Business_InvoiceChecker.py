@@ -10,6 +10,7 @@ import sys
 import threading
 import tkinter as tk
 from tkinter import ttk
+from shared_window_icon import apply_category_icon
 from datetime import datetime
 from pathlib import Path
 import yaml
@@ -1497,6 +1498,7 @@ class InvoiceCheckerGUI:
 def main():
     setup_shared_logging("invoice_checker")
     root = tk.Tk()
+    apply_category_icon(root)
     InvoiceCheckerGUI(root)
     root.mainloop()
 
