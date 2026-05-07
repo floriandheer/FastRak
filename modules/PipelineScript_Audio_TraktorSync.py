@@ -57,7 +57,7 @@ class SyncSettings:
     debug_mode: bool = True
     skip_existing: bool = True
     overwrite_all: bool = False
-    archive_removed: bool = True
+    delete_removed: bool = True
     selected_playlists: List[str] = field(default_factory=list)
     selection_mode: str = "include"
     playlist_presets: Dict[str, Dict[str, Any]] = field(default_factory=dict)
@@ -155,6 +155,9 @@ class PlaylistSyncUI:
         self.all_playlists = []  # Will be populated when analyzing XML
         self.playlist_data = {}  # Store playlist metadata
         self.itunes_root = None  # Store the XML root for reuse
+
+        # Reload playlists when the iTunes XML changes on disk (e.g. iTunes rewrote it).
+        self.root.bind("<FocusIn>", self._on_window_focus, add="+")
         
     def initialize_default_paths(self):
         """Initialize paths from saved settings or use defaults."""
@@ -199,7 +202,7 @@ class PlaylistSyncUI:
         self.debug_var.set(settings.debug_mode)
         self.skip_existing_var.set(settings.skip_existing)
         self.overwrite_all_var.set(settings.overwrite_all)
-        self.archive_removed_var.set(settings.archive_removed)
+        self.delete_removed_var.set(settings.delete_removed)
         self.selection_mode.set(settings.selection_mode)
 
         # Update Mac paths visibility based on loaded target_os
@@ -272,8 +275,8 @@ class PlaylistSyncUI:
         # Embed album art is now always enabled (no checkbox)
         self.preserve_album_art_var = tk.BooleanVar(value=True)
 
-        self.archive_removed_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(options_frame, text="Archive removed tracks (tracks no longer in any playlists)", variable=self.archive_removed_var).grid(row=4, column=0, columnspan=3, sticky="w", padx=10, pady=5)
+        self.delete_removed_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(options_frame, text="Delete removed tracks (tracks no longer in any playlists)", variable=self.delete_removed_var).grid(row=4, column=0, columnspan=3, sticky="w", padx=10, pady=5)
 
         # === CONFIGURATION (file paths) ===
         config_frame = ttk.LabelFrame(parent, text="Configuration")
@@ -291,6 +294,10 @@ class PlaylistSyncUI:
         # iTunes XML path (source)
         ttk.Label(config_frame, text="iTunes XML:").grid(row=current_row, column=0, sticky="w", padx=10, pady=10)
         self.itunes_xml_var = tk.StringVar()
+        self._itunes_autoload_after_id = None
+        self._loaded_xml_path = None
+        self._loaded_xml_mtime = None
+        self.itunes_xml_var.trace('w', lambda *args: self._schedule_autoload_playlists())
         ttk.Entry(config_frame, textvariable=self.itunes_xml_var, width=50).grid(row=current_row, column=1, sticky="ew", padx=5, pady=10)
         ttk.Button(config_frame, text="Browse", command=self.browse_itunes_xml).grid(row=current_row, column=2, padx=5, pady=10)
 
@@ -408,8 +415,8 @@ class PlaylistSyncUI:
         self.preset_combo = ttk.Combobox(preset_frame, textvariable=self.preset_var, state="readonly")
         self.preset_combo.grid(row=0, column=1, sticky="ew", padx=5)
         self.preset_combo.bind("<<ComboboxSelected>>", lambda e: self._load_preset())
-        ttk.Button(preset_frame, text="Save…", command=self._save_preset_as).grid(row=0, column=2, padx=2)
-        ttk.Button(preset_frame, text="Overwrite", command=self._overwrite_preset).grid(row=0, column=3, padx=2)
+        ttk.Button(preset_frame, text="Save As", command=self._save_preset_as).grid(row=0, column=2, padx=2)
+        ttk.Button(preset_frame, text="Save", command=self._overwrite_preset).grid(row=0, column=3, padx=2)
         ttk.Button(preset_frame, text="Delete", command=self._delete_preset).grid(row=0, column=4, padx=2)
         self._refresh_preset_combo()
 
@@ -428,16 +435,13 @@ class PlaylistSyncUI:
         main_btn_frame = ttk.Frame(config_frame)
         main_btn_frame.grid(row=current_row+1, column=0, columnspan=3, sticky="ew", pady=10)
         main_btn_frame.columnconfigure(1, weight=1)
-        
-        self.load_playlists_btn = ttk.Button(main_btn_frame, text="Load Playlists", command=self.load_playlists, width=15)
-        self.load_playlists_btn.grid(row=0, column=0, padx=10)
 
         self.save_settings_btn = ttk.Button(main_btn_frame, text="Save Settings", command=self._save_settings, width=15)
-        self.save_settings_btn.grid(row=1, column=0, padx=10)
+        self.save_settings_btn.grid(row=0, column=0, padx=10)
 
         # Action buttons aligned together on the right
         action_btns = ttk.Frame(main_btn_frame)
-        action_btns.grid(row=0, column=1, rowspan=2, sticky="e", padx=10)
+        action_btns.grid(row=0, column=1, sticky="e", padx=10)
 
         self.export_xml_btn = tk.Button(action_btns, text="Export XML", command=self.export_xml_only, width=15, bg="yellow", fg="black", font=('', 9, 'bold'))
         self.export_xml_btn.pack(side=tk.LEFT, padx=(0, 5))
@@ -479,7 +483,7 @@ class PlaylistSyncUI:
             debug_mode=self.debug_var.get(),
             skip_existing=self.skip_existing_var.get(),
             overwrite_all=self.overwrite_all_var.get(),
-            archive_removed=self.archive_removed_var.get(),
+            delete_removed=self.delete_removed_var.get(),
             selected_playlists=selected,
             selection_mode=self.selection_mode.get(),
             playlist_presets=self.config_manager.settings.playlist_presets,
@@ -663,24 +667,24 @@ class PlaylistSyncUI:
         self.status_var.set(f"Saved preset: {name}")
 
     def _overwrite_preset(self):
-        """Overwrite the currently selected user preset with the current selection."""
+        """Save the current selection into the currently selected user preset."""
         name = self.preset_var.get()
         if not name or name == DEFAULT_PRESET_NAME:
-            messagebox.showinfo("Overwrite Preset", "Select a saved preset to overwrite, or use Save… to create a new one.")
+            messagebox.showinfo("Save Preset", "Select a saved preset to save into, or use Save As to create a new one.")
             return
 
         presets = self.config_manager.settings.playlist_presets
         if name not in presets:
-            messagebox.showerror("Overwrite Preset", f"Preset '{name}' not found.")
+            messagebox.showerror("Save Preset", f"Preset '{name}' not found.")
             self._refresh_preset_combo()
             return
 
-        if not messagebox.askyesno("Overwrite Preset", f"Overwrite '{name}' with the current selection?"):
+        if not messagebox.askyesno("Save Preset", f"Save current selection into '{name}'?"):
             return
 
         presets[name] = self._capture_current_selection()
         self.config_manager.save_settings()
-        self.status_var.set(f"Overwrote preset: {name}")
+        self.status_var.set(f"Saved preset: {name}")
 
     def _delete_preset(self):
         """Delete the currently selected user preset."""
@@ -872,19 +876,16 @@ class PlaylistSyncUI:
         xml_scrollbar.grid(row=0, column=1, sticky="ns")
         self.xml_text.config(yscrollcommand=xml_scrollbar.set)
 
-    def archive_removed_tracks(self, dj_library, export_xml_path):
-        """Archive tracks in DJ Library that are not referenced in the exported XML"""
-        archived_count = 0
+    def delete_removed_tracks(self, dj_library, export_xml_path):
+        """Delete tracks in DJ Library that are not referenced in the exported XML"""
+        deleted_count = 0
 
         if not dj_library or not os.path.exists(dj_library):
-            return archived_count
+            return deleted_count
 
         if not export_xml_path or not os.path.exists(export_xml_path):
-            self.append_to_text_widget(self.sync_text, "Warning: Export XML not found, skipping archive step.\n")
-            return archived_count
-
-        # Define archive folder path (will be created only if needed)
-        archive_folder = os.path.join(dj_library, "_Removed")
+            self.append_to_text_widget(self.sync_text, "Warning: Export XML not found, skipping delete step.\n")
+            return deleted_count
 
         # Parse the exported XML to get all tracks that are actually referenced
         active_files = set()
@@ -895,8 +896,8 @@ class PlaylistSyncUI:
             # Get the main dictionary element
             export_dict = next((child for child in export_root if child.tag == 'dict'), None)
             if export_dict is None:
-                self.append_to_text_widget(self.sync_text, "Warning: Invalid export XML structure, skipping archive step.\n")
-                return archived_count
+                self.append_to_text_widget(self.sync_text, "Warning: Invalid export XML structure, skipping delete step.\n")
+                return deleted_count
 
             # Find the Tracks dictionary in the exported XML
             tracks_element = None
@@ -933,15 +934,15 @@ class PlaylistSyncUI:
 
         except Exception as e:
             self.append_to_text_widget(self.sync_text, f"Error reading export XML: {e}\n")
-            self.append_to_text_widget(self.sync_text, "Skipping archive step to avoid data loss.\n")
-            return archived_count
+            self.append_to_text_widget(self.sync_text, "Skipping delete step to avoid data loss.\n")
+            return deleted_count
 
         # Get all files currently in DJ Library
         try:
             existing_files = os.listdir(dj_library)
 
             for existing_file in existing_files:
-                # Skip archive folder and other special folders
+                # Skip special folders (legacy _Removed, etc.)
                 if existing_file.startswith('_'):
                     continue
 
@@ -951,37 +952,21 @@ class PlaylistSyncUI:
                 if not os.path.isfile(file_path):
                     continue
 
-                # If this file is not in our active files list, archive it
+                # If this file is not in our active files list, delete it
                 if existing_file not in active_files:
-                    # Create archive folder only when we have the first file to archive
-                    if not os.path.exists(archive_folder):
-                        os.makedirs(archive_folder)
-                        self.append_to_text_widget(self.sync_text, f"Created archive folder: {archive_folder}\n")
-
-                    archive_path = os.path.join(archive_folder, existing_file)
-
-                    # Handle filename conflicts in archive folder
-                    if os.path.exists(archive_path):
-                        base_name, ext = os.path.splitext(existing_file)
-                        counter = 1
-                        while os.path.exists(archive_path):
-                            archive_path = os.path.join(archive_folder, f"{base_name}_{counter}{ext}")
-                            counter += 1
-
-                    # Move the file to archive
-                    shutil.move(file_path, archive_path)
-                    self.append_to_text_widget(self.sync_text, f"Archived: {existing_file}\n")
-                    archived_count += 1
+                    os.remove(file_path)
+                    self.append_to_text_widget(self.sync_text, f"Deleted: {existing_file}\n")
+                    deleted_count += 1
 
         except Exception as e:
-            self.append_to_text_widget(self.sync_text, f"Error archiving tracks: {e}\n")
+            self.append_to_text_widget(self.sync_text, f"Error deleting tracks: {e}\n")
 
-        if archived_count > 0:
-            self.append_to_text_widget(self.sync_text, f"\nArchived {archived_count} removed track(s) to {archive_folder}\n")
+        if deleted_count > 0:
+            self.append_to_text_widget(self.sync_text, f"\nDeleted {deleted_count} removed track(s) from {dj_library}\n")
         else:
-            self.append_to_text_widget(self.sync_text, "No orphaned tracks to archive.\n")
+            self.append_to_text_widget(self.sync_text, "No orphaned tracks to delete.\n")
 
-        return archived_count
+        return deleted_count
 
     def browse_itunes_xml(self):
         filename = filedialog.askopenfilename(
@@ -990,7 +975,43 @@ class PlaylistSyncUI:
         )
         if filename:
             self.itunes_xml_var.set(filename)
-            self.load_playlists()
+
+    def _schedule_autoload_playlists(self, delay=400):
+        """Debounced auto-load of playlists when iTunes XML path changes."""
+        if self._itunes_autoload_after_id is not None:
+            try:
+                self.root.after_cancel(self._itunes_autoload_after_id)
+            except Exception:
+                pass
+        self._itunes_autoload_after_id = self.root.after(delay, self._auto_load_playlists)
+
+    def _auto_load_playlists(self):
+        self._itunes_autoload_after_id = None
+        xml_path = self.itunes_xml_var.get()
+        if not xml_path or not os.path.exists(xml_path):
+            return
+        if xml_path == self._loaded_xml_path:
+            return
+        self.load_playlists(silent=True)
+
+    def _on_window_focus(self, event):
+        # FocusIn fires for child widgets too — only react to the root window.
+        if event.widget is not self.root:
+            return
+        self._check_xml_mtime()
+
+    def _check_xml_mtime(self):
+        """Reload playlists if the loaded iTunes XML changed on disk (e.g. iTunes rewrote it)."""
+        xml_path = self._loaded_xml_path
+        if not xml_path or not os.path.exists(xml_path):
+            return
+        try:
+            current_mtime = os.path.getmtime(xml_path)
+        except OSError:
+            return
+        if self._loaded_xml_mtime is not None and current_mtime != self._loaded_xml_mtime:
+            self._loaded_xml_path = None  # force the dedup check to pass
+            self._schedule_autoload_playlists(delay=0)
     
     def browse_dj_library(self):
         directory = filedialog.askdirectory(title="Select DJ Library Folder")
@@ -1337,7 +1358,7 @@ class PlaylistSyncUI:
 
                 # For each file in DJ Library, check if it corresponds to any selected track
                 for existing_file in existing_files:
-                    if existing_file.startswith('_'):  # Skip archive folders
+                    if existing_file.startswith('_'):  # Skip special folders
                         continue
 
                     file_path = os.path.join(dj_library, existing_file)
@@ -1369,7 +1390,7 @@ class PlaylistSyncUI:
             self.analysis_text.insert(tk.END, f"Found {len(removed_tracks)} orphaned file(s) in DJ Library:\n\n")
             for track_file in sorted(removed_tracks):
                 self.analysis_text.insert(tk.END, f"  • {track_file}\n")
-            self.analysis_text.insert(tk.END, f"\nThese files will be archived when you run the sync.\n")
+            self.analysis_text.insert(tk.END, f"\nThese files will be deleted when you run the sync.\n")
         else:
             self.analysis_text.insert(tk.END, "No orphaned tracks found. DJ Library is in sync with selected playlists.\n")
 
@@ -1391,11 +1412,15 @@ class PlaylistSyncUI:
         # Switch to the Library Analysis tab
         self.results_notebook.select(0)
 
-    def load_playlists(self):
-        """Load playlists from iTunes XML into the treeview"""
+    def load_playlists(self, silent=False):
+        """Load playlists from iTunes XML into the treeview.
+
+        silent=True suppresses error popups (used by the path-change auto-loader).
+        """
         xml_path = self.itunes_xml_var.get()
         if not xml_path or not os.path.exists(xml_path):
-            messagebox.showerror("Error", "Please select a valid iTunes XML file first!")
+            if not silent:
+                messagebox.showerror("Error", "Please select a valid iTunes XML file first!")
             return
         
         self.status_var.set("Loading playlists...")
@@ -1414,7 +1439,8 @@ class PlaylistSyncUI:
                 
             library_dict = next((child for child in self.itunes_root if child.tag == 'dict'), None)
             if library_dict is None:
-                messagebox.showerror("Error", "Invalid iTunes XML format!")
+                if not silent:
+                    messagebox.showerror("Error", "Invalid iTunes XML format!")
                 return
                 
             playlists_element = None
@@ -1488,6 +1514,11 @@ class PlaylistSyncUI:
                                                                values=(track_count, 0, playlist_type))
                 
                 self.status_var.set(f"Loaded {len(self.all_playlists)} playlists")
+                self._loaded_xml_path = xml_path
+                try:
+                    self._loaded_xml_mtime = os.path.getmtime(xml_path)
+                except OSError:
+                    self._loaded_xml_mtime = None
 
                 active = self.preset_var.get()
                 if active and active != DEFAULT_PRESET_NAME and active in self.config_manager.settings.playlist_presets:
@@ -1496,9 +1527,11 @@ class PlaylistSyncUI:
                     self.auto_select_playlists()  # Auto-select user playlists
                 self.filter_playlists()  # Apply initial filtering
             else:
-                messagebox.showerror("Error", "No playlists found in XML!")
+                if not silent:
+                    messagebox.showerror("Error", "No playlists found in XML!")
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to load playlists: {str(e)}")
+            if not silent:
+                messagebox.showerror("Error", f"Failed to load playlists: {str(e)}")
             self.status_var.set("Error loading playlists")
 
     def get_subprocess_args(self):
@@ -1641,7 +1674,6 @@ class PlaylistSyncUI:
 
         self.sync_btn.config(state=tk.DISABLED)
         self.export_xml_btn.config(state=tk.DISABLED)
-        self.load_playlists_btn.config(state=tk.DISABLED)
         self.cancel_btn.config(state=tk.NORMAL)
         self.syncing = True
 
@@ -1730,16 +1762,16 @@ class PlaylistSyncUI:
                     step3_time = time.time() - step3_start
                     self.append_to_text_widget(self.xml_text, f"Step 3 completed in {step3_time:.2f} seconds\n\n")
 
-            # Archive removed tracks if option is enabled
-            if self.archive_removed_var.get() and not export_xml_only:
-                archive_start = time.time()
-                self.append_to_text_widget(self.sync_text, "\nStep 4: Archiving removed tracks...\n")
-                self.status_var.set("Archiving removed tracks...")
+            # Delete removed tracks if option is enabled
+            if self.delete_removed_var.get() and not export_xml_only:
+                delete_start = time.time()
+                self.append_to_text_widget(self.sync_text, "\nStep 4: Deleting removed tracks...\n")
+                self.status_var.set("Deleting removed tracks...")
 
-                archived_count = self.archive_removed_tracks(dj_library, export_xml)
+                deleted_count = self.delete_removed_tracks(dj_library, export_xml)
 
-                archive_time = time.time() - archive_start
-                self.append_to_text_widget(self.sync_text, f"Step 4 completed in {archive_time:.2f} seconds - Archived {archived_count} file(s)\n\n")
+                delete_time = time.time() - delete_start
+                self.append_to_text_widget(self.sync_text, f"Step 4 completed in {delete_time:.2f} seconds - Deleted {deleted_count} file(s)\n\n")
 
             total_time = time.time() - start_time
             self.append_to_text_widget(self.xml_text, f"\nTotal sync process completed in {total_time:.2f} seconds\n")
@@ -1762,7 +1794,6 @@ class PlaylistSyncUI:
     def enable_buttons(self):
         self.sync_btn.config(state=tk.NORMAL)
         self.export_xml_btn.config(state=tk.NORMAL)
-        self.load_playlists_btn.config(state=tk.NORMAL)
         self.cancel_btn.config(state=tk.DISABLED)
 
     def _cancel_sync(self):
