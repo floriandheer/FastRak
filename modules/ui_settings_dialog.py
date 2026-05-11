@@ -3,6 +3,7 @@ UI Settings Dialog - Multi-tab settings window for the Pipeline Manager.
 """
 
 import os
+import shutil
 import subprocess
 import sys
 import tkinter as tk
@@ -167,12 +168,26 @@ class SettingsDialog:
             pady=6
         ).pack(side=tk.LEFT)
 
+        tk.Button(
+            setup_row,
+            text="Create Shortcut",
+            command=self._create_shortcut,
+            bg=COLORS["bg_secondary"],
+            fg=COLORS["text_primary"],
+            font=font.Font(family="Segoe UI", size=10),
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=15,
+            pady=6
+        ).pack(side=tk.LEFT, padx=(10, 0))
+
         tk.Label(
             setup_section,
             text=(
-                "Provisions folders, drive mappings, Synology checks, pipeline config, "
-                "and Fastrak shortcut.\nOpens in a new console window. Windows only — "
-                "requires setup_config.json next to fastrak_hub.py."
+                "Run New PC Setup: provisions folders, drive mappings, Synology checks "
+                "and pipeline config in a new console window.\n"
+                "Create Shortcut: regenerates Fastrak.lnk next to fastrak_hub.py.\n"
+                "Windows only."
             ),
             font=font.Font(family="Segoe UI", size=9, slant="italic"),
             fg=COLORS["text_secondary"],
@@ -180,10 +195,69 @@ class SettingsDialog:
             justify="left"
         ).pack(anchor="w", pady=(6, 0))
 
+    def _project_root(self):
+        """Return the directory containing fastrak_hub.py."""
+        return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def _console_python(self):
+        """Return python.exe (not pythonw.exe) so the spawned console gets working stdio."""
+        exe = sys.executable
+        base = os.path.basename(exe).lower()
+        if base.startswith("pythonw"):
+            candidate = os.path.join(os.path.dirname(exe), "python.exe")
+            if os.path.isfile(candidate):
+                return candidate
+        return exe
+
+    def _ensure_setup_config(self, project_root):
+        """Make sure setup_config.json exists; offer to copy from .example if not."""
+        config_path = os.path.join(project_root, "setup_config.json")
+        if os.path.isfile(config_path):
+            return True
+
+        example_path = os.path.join(project_root, "setup_config.json.example")
+        if not os.path.isfile(example_path):
+            messagebox.showerror(
+                "Config Missing",
+                "setup_config.json not found, and no setup_config.json.example "
+                "exists to copy from.",
+                parent=self.dialog,
+            )
+            return False
+
+        if not messagebox.askyesno(
+            "Create setup_config.json?",
+            "setup_config.json doesn't exist yet.\n\n"
+            "Copy setup_config.json.example to setup_config.json now? "
+            "You can edit it afterwards to match this PC.",
+            parent=self.dialog,
+        ):
+            return False
+
+        try:
+            shutil.copy(example_path, config_path)
+            logger.info("Copied setup_config.json.example -> setup_config.json")
+            return True
+        except OSError as e:
+            messagebox.showerror(
+                "Copy Failed",
+                f"Could not create setup_config.json:\n{e}",
+                parent=self.dialog,
+            )
+            return False
+
     def _run_new_pc_setup(self):
         """Launch setup_new_pc.py in a new console window."""
-        # setup_new_pc.py lives next to fastrak_hub.py (one level above modules/)
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if sys.platform != "win32":
+            messagebox.showwarning(
+                "Windows Only",
+                "New PC Setup requires native Windows (drive mappings, registry).\n"
+                "Run it from a Windows command prompt instead.",
+                parent=self.dialog,
+            )
+            return
+
+        project_root = self._project_root()
         script_path = os.path.join(project_root, "setup_new_pc.py")
 
         if not os.path.isfile(script_path):
@@ -194,13 +268,7 @@ class SettingsDialog:
             )
             return
 
-        if sys.platform != "win32":
-            messagebox.showwarning(
-                "Windows Only",
-                "New PC Setup requires native Windows (drive mappings, registry).\n"
-                "Run it from a Windows command prompt instead.",
-                parent=self.dialog,
-            )
+        if not self._ensure_setup_config(project_root):
             return
 
         if not messagebox.askyesno(
@@ -213,9 +281,12 @@ class SettingsDialog:
         ):
             return
 
+        exe = self._console_python()
         try:
+            # Wrap with `cmd /k` so the console stays open after the script exits,
+            # even if it fails fast (otherwise the window closes before you can read it).
             subprocess.Popen(
-                [sys.executable, script_path],
+                ["cmd", "/k", exe, script_path],
                 cwd=project_root,
                 creationflags=subprocess.CREATE_NEW_CONSOLE,
             )
@@ -225,6 +296,78 @@ class SettingsDialog:
             messagebox.showerror(
                 "Launch Failed",
                 f"Could not start setup script:\n{e}",
+                parent=self.dialog,
+            )
+
+    def _create_shortcut(self):
+        """Run make_shortcut.py to (re)generate Fastrak.lnk."""
+        if sys.platform != "win32":
+            messagebox.showwarning(
+                "Windows Only",
+                "Shortcut creation is Windows-only (uses WScript.Shell).",
+                parent=self.dialog,
+            )
+            return
+
+        project_root = self._project_root()
+        script_path = os.path.join(project_root, "make_shortcut.py")
+
+        if not os.path.isfile(script_path):
+            messagebox.showerror(
+                "make_shortcut.py Not Found",
+                f"Could not locate:\n{script_path}",
+                parent=self.dialog,
+            )
+            return
+
+        shortcut_path = os.path.join(project_root, "Fastrak.lnk")
+        if os.path.exists(shortcut_path):
+            if not messagebox.askyesno(
+                "Regenerate Shortcut?",
+                f"Fastrak.lnk already exists in:\n{project_root}\n\nReplace it?",
+                parent=self.dialog,
+            ):
+                return
+
+        exe = self._console_python()
+        try:
+            result = subprocess.run(
+                [exe, script_path],
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except subprocess.TimeoutExpired:
+            messagebox.showerror(
+                "Shortcut Creation Timed Out",
+                "make_shortcut.py did not finish within 30 seconds.",
+                parent=self.dialog,
+            )
+            return
+        except Exception as e:
+            logger.exception("Failed to run make_shortcut.py")
+            messagebox.showerror(
+                "Launch Failed",
+                f"Could not run make_shortcut.py:\n{e}",
+                parent=self.dialog,
+            )
+            return
+
+        if result.returncode == 0:
+            logger.info("Shortcut created: %s", shortcut_path)
+            messagebox.showinfo(
+                "Shortcut Created",
+                f"Fastrak.lnk created at:\n{shortcut_path}\n\n"
+                "Right-click it and choose 'Pin to taskbar' or 'Pin to Start'.",
+                parent=self.dialog,
+            )
+        else:
+            err = (result.stderr or result.stdout or "").strip() or "Unknown error"
+            logger.error("make_shortcut.py failed: %s", err)
+            messagebox.showerror(
+                "Shortcut Creation Failed",
+                f"make_shortcut.py exited with code {result.returncode}.\n\n{err}",
                 parent=self.dialog,
             )
 
