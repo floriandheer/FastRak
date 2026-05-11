@@ -22,6 +22,11 @@ to know about a category and its subtypes:
       project_types        — optional list of project_type values to restrict a
                              project-context tool further. Empty/missing means
                              "any project under this category".
+      applies_when         — optional predicate name (see PROJECT_ACTION_PREDICATES
+                             in fastrak_project_explorer). Evaluated against the
+                             resolved project folder; the action is hidden when
+                             it returns False. Use for distinctions the project
+                             schema doesn't capture (e.g. wordpress vs static).
 
   Subtype-level fields (keys that may be present on each subtype):
       display_name, emoji, description, scripts (menu items)
@@ -401,6 +406,7 @@ CATEGORIES: Dict[str, Dict[str, Any]] = {
                 "description": "Backup/restore WordPress dev sites (files + DB) and Laragon environment",
                 "icon": "💾",
                 "context": "project",
+                "applies_when": "wordpress",
             },
         ],
         "subtypes": {
