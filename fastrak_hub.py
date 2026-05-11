@@ -1949,10 +1949,43 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
         # Warn about any missing optional dependencies
         self._check_optional_dependencies()
 
+        # Warn about any configured paths that don't resolve
+        self._check_configured_paths()
+
         # Apply saved collapse state
         if not self.status_expanded:
             self.status_text_container.pack_forget()
             self.toggle_button.config(text="▶ Status Log")
+
+    def _check_configured_paths(self):
+        """Validate configured drives/paths; warn in the status log if any are unreachable."""
+        checks = [
+            ("Active Drive", self.settings.get_work_drive()),
+            ("Active Base", self.settings.get_active_base()),
+            ("Archive Base", self.settings.get_archive_base()),
+            ("Software (NAS)", self.settings.get_mapped_software_path()),
+            ("Launchers Path", self.settings.get_launchers_base_path()),
+        ]
+
+        missing = []
+        for label, value in checks:
+            if not value:
+                missing.append((label, "(not set)"))
+                continue
+            ok, msg = self.settings.validate_drive(value)
+            if not ok:
+                missing.append((label, f"{value} — {msg}"))
+
+        if not missing:
+            return
+
+        self.update_status(
+            f"{len(missing)} configured path(s) unreachable — open Settings (Ctrl+,) > Paths to fix",
+            "warning",
+        )
+        for label, detail in missing:
+            self.update_status(f"  - {label}: {detail}", "warning")
+            logger.warning("Configured path unreachable: %s -> %s", label, detail)
 
     def _check_optional_dependencies(self):
         """Probe optional third-party deps; warn in the status log for any missing."""
