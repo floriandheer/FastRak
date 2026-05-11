@@ -28,6 +28,7 @@ sys.path.insert(0, str(MODULES_DIR))
 
 from shared_logging import get_logger, setup_logging
 from shared_project_db import ProjectDatabase
+from shared_wordpress import is_wordpress_project
 from rak_settings import get_rak_settings
 from shared_creator_registry import (
     CREATIVE_CATEGORIES,
@@ -44,6 +45,14 @@ MODULE_NAME = "project_tracker"
 
 # Get logger reference (configured in main())
 logger = get_logger(MODULE_NAME)
+
+
+# Predicate registry for the `applies_when` script field (see
+# pipeline_categories.py). Each predicate receives (project_dict, folder_path)
+# and returns True iff the corresponding action button should be shown.
+PROJECT_ACTION_PREDICATES = {
+    "wordpress": lambda project, folder: is_wordpress_project(folder),
+}
 
 
 def event_has_shift(event) -> bool:
@@ -2597,12 +2606,14 @@ class ProjectTrackerApp:
         card.grid_propagate(False)  # Keep fixed size
         card.pack_propagate(False)  # Keep fixed size
 
-        # Use grid layout: accent bar top, title fills middle, subtitle+date pinned to bottom
+        # Use grid layout: accent bar top, title fills middle, then variant
+        # (for Web projects), subtitle, and date pinned to bottom.
         card.columnconfigure(0, weight=1)
         card.rowconfigure(0, weight=0)  # accent bar - fixed
         card.rowconfigure(1, weight=1)  # title - expands to fill available space
-        card.rowconfigure(2, weight=0)  # subtitle - fixed at bottom
-        card.rowconfigure(3, weight=0)  # date - fixed at bottom
+        card.rowconfigure(2, weight=0)  # variant text (Web only)
+        card.rowconfigure(3, weight=0)  # subtitle - fixed at bottom
+        card.rowconfigure(4, weight=0)  # date - fixed at bottom
 
         # Store default bg on card for highlight restore
         card._card_bg = card_bg
@@ -2650,6 +2661,20 @@ class ProjectTrackerApp:
                              justify=tk.CENTER)
         name_label.grid(row=1, column=0, sticky="n", pady=(int(8 * font_scale), 0))
 
+        # Web variant indicator: plain small text above the subtitle so the
+        # user sees WordPress vs. Static at a glance without an extra badge.
+        if type_info.get("category") == "Web":
+            try:
+                folder = self._resolve_project_folder(project)
+                is_wp = is_wordpress_project(folder)
+            except Exception:
+                is_wp = False
+            variant_text = "WordPress" if is_wp else "Static"
+            variant_fg = "#58a6ff" if is_wp else sub_fg
+            variant_label = tk.Label(card, text=variant_text, bg=card_bg,
+                                     fg=variant_fg, font=("Arial", small_size))
+            variant_label.grid(row=2, column=0, sticky="s")
+
         # Subtitle - location for Photo, client name for others
         if project_type == "Photo":
             location = project.get("metadata", {}).get("location", "")
@@ -2661,7 +2686,7 @@ class ProjectTrackerApp:
             subtitle_display += "..."
         client_label = tk.Label(card, text=subtitle_display, bg=card_bg, fg=sub_fg,
                                font=("Arial", small_size))
-        client_label.grid(row=2, column=0, sticky="s")
+        client_label.grid(row=3, column=0, sticky="s")
 
         # Date - compact format, pinned to bottom
         date_str = project.get("date_created", "")
@@ -2669,7 +2694,7 @@ class ProjectTrackerApp:
             date_str = date_str[2:]  # Remove century: 2025-12-29 -> 25-12-29
         date_label = tk.Label(card, text=date_str, bg=card_bg,
                              fg=sub_fg, font=("Arial", small_size))
-        date_label.grid(row=3, column=0, sticky="s", pady=(0, int(6 * font_scale)))
+        date_label.grid(row=4, column=0, sticky="s", pady=(0, int(6 * font_scale)))
 
         # Bind click event to all card elements
         # Store index in closure for click handler
@@ -3100,9 +3125,15 @@ class ProjectTrackerApp:
                 else:
                     value = "-"
             elif key == "project_type":
-                value = project.get(key, "")
-                type_info = project_type_info(value)
+                raw_type = project.get(key, "")
+                type_info = project_type_info(raw_type)
                 value = type_info["name"]
+                # For Web projects, annotate the type with the WP/static variant
+                # so the user can see at a glance which action set will apply.
+                if type_info.get("category") == "Web":
+                    folder = self._resolve_project_folder(project)
+                    variant = "WordPress" if is_wordpress_project(folder) else "Static"
+                    value = f"{value} — {variant}"
             else:
                 value = project.get(key, "")
 
@@ -3199,11 +3230,36 @@ class ProjectTrackerApp:
         cat_key = archive_cat.upper()
         cat_data = PIPELINE_CATEGORIES.get(cat_key, {})
 
+        # Resolve once; predicate lookups below are memoized per-call so any
+        # given applies_when key only fires its filesystem probe once even when
+        # several actions share it.
+        folder = self._resolve_project_folder(project)
+        predicate_cache: Dict[str, bool] = {}
+
+        def _check_applies_when(name: str) -> bool:
+            if name not in predicate_cache:
+                fn = PROJECT_ACTION_PREDICATES.get(name)
+                if fn is None:
+                    logger.warning(f"Unknown applies_when predicate: {name!r}")
+                    predicate_cache[name] = True  # fail-open: show the button
+                else:
+                    try:
+                        predicate_cache[name] = bool(fn(project, folder))
+                    except Exception as e:
+                        logger.warning(f"applies_when {name!r} raised: {e}")
+                        predicate_cache[name] = True
+            return predicate_cache[name]
+
         def _matches(script_data):
             if script_data.get("context") != "project":
                 return False
             allowed = script_data.get("project_types") or []
-            return not allowed or project_type in allowed
+            if allowed and project_type not in allowed:
+                return False
+            predicate = script_data.get("applies_when")
+            if predicate and not _check_applies_when(predicate):
+                return False
+            return True
 
         actions = []
         for script_key, script_data in cat_data.get("scripts", {}).items():

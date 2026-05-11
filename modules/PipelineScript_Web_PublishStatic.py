@@ -27,6 +27,7 @@ from urllib.parse import quote
 
 # Setup logging using shared utility
 from shared_logging import get_logger, setup_logging as setup_shared_logging
+from shared_wordpress import is_wordpress_folder
 from rak_settings import get_rak_settings
 
 # Get logger reference (configured in main())
@@ -127,11 +128,10 @@ class WebPublishConfig:
                         wiki_local_dir = brainii_candidate
                         wiki_remote_path = "/brainii"
 
-                # Detect WordPress (wp-config.php in Laragon www)
-                is_wordpress = False
-                if laragon_www:
-                    wp_config = os.path.join(laragon_www, entry, "wp-config.php")
-                    is_wordpress = os.path.isfile(wp_config)
+                # Detect WordPress via shared helper (Laragon www/<entry>).
+                is_wordpress = bool(laragon_www) and is_wordpress_folder(
+                    os.path.join(laragon_www, entry)
+                )
 
                 sites[entry] = {
                     "label": entry,
@@ -1382,6 +1382,8 @@ def main():
 
     # Pre-select the site matching a project folder passed by the launcher.
     # The user can still pick a different site from the combobox.
+    # When the folder name matches a configured site key exactly, kick off
+    # the publish workflow automatically so the launcher acts as a one-click.
     if len(sys.argv) > 1 and sys.argv[1]:
         site_key = os.path.basename(os.path.normpath(sys.argv[1]))
         label = next(
@@ -1391,6 +1393,9 @@ def main():
         if label:
             ui.site_var.set(label)
             ui._on_site_changed()
+            # Defer until the window is mapped so the UI shows progress as it runs.
+            root.after(200, ui._start_publish)
+            logger.info(f"Auto-starting publish for matched site '{site_key}'")
         else:
             logger.info(f"No matching site for {site_key}; keeping last selection")
 

@@ -192,6 +192,9 @@ class PowerAmpSyncApp:
         # Find ADB executable
         self._find_adb()
 
+        # Reload playlists when the iTunes XML changes on disk (e.g. iTunes rewrote it).
+        self.root.bind("<FocusIn>", self._on_window_focus, add="+")
+
         # Create UI
         self._create_ui()
 
@@ -508,6 +511,10 @@ class PowerAmpSyncApp:
         # iTunes XML path (source)
         ttk.Label(config_frame, text="iTunes XML:").grid(row=current_row, column=0, sticky="w", padx=10, pady=10)
         self.itunes_xml_var = tk.StringVar()
+        self._itunes_autoload_after_id = None
+        self._loaded_xml_path = None
+        self._loaded_xml_mtime = None
+        self.itunes_xml_var.trace('w', lambda *args: self._schedule_autoload_playlists())
         ttk.Entry(config_frame, textvariable=self.itunes_xml_var, width=50).grid(row=current_row, column=1, sticky="ew", padx=5, pady=10)
         ttk.Button(config_frame, text="Browse", command=self._browse_itunes_xml).grid(row=current_row, column=2, padx=5, pady=10)
 
@@ -656,8 +663,8 @@ class PowerAmpSyncApp:
         self.preset_combo = ttk.Combobox(preset_frame, textvariable=self.preset_var, state="readonly")
         self.preset_combo.grid(row=0, column=1, sticky="ew", padx=5)
         self.preset_combo.bind("<<ComboboxSelected>>", lambda e: self._load_preset())
-        ttk.Button(preset_frame, text="Save…", command=self._save_preset_as).grid(row=0, column=2, padx=2)
-        ttk.Button(preset_frame, text="Overwrite", command=self._overwrite_preset).grid(row=0, column=3, padx=2)
+        ttk.Button(preset_frame, text="Save As", command=self._save_preset_as).grid(row=0, column=2, padx=2)
+        ttk.Button(preset_frame, text="Save", command=self._overwrite_preset).grid(row=0, column=3, padx=2)
         ttk.Button(preset_frame, text="Delete", command=self._delete_preset).grid(row=0, column=4, padx=2)
         self._refresh_preset_combo()
 
@@ -676,15 +683,12 @@ class PowerAmpSyncApp:
         main_btn_frame.grid(row=current_row, column=0, columnspan=3, sticky="ew", pady=10)
         main_btn_frame.columnconfigure(1, weight=1)
 
-        self.load_btn = ttk.Button(main_btn_frame, text="Load Playlists", command=self._load_playlists, width=15)
-        self.load_btn.grid(row=0, column=0, padx=10)
-
         self.save_settings_btn = ttk.Button(main_btn_frame, text="Save Settings", command=self._save_settings, width=15)
-        self.save_settings_btn.grid(row=1, column=0, padx=10)
+        self.save_settings_btn.grid(row=0, column=0, padx=10)
 
         # Action buttons aligned together on the right
         action_btns = ttk.Frame(main_btn_frame)
-        action_btns.grid(row=0, column=1, rowspan=2, sticky="e", padx=10)
+        action_btns.grid(row=0, column=1, sticky="e", padx=10)
 
         self.sync_playlists_btn = tk.Button(action_btns, text="Sync Playlists", command=self._start_sync_playlists_only,
                                              width=15, bg="yellow", fg="black", font=('', 9, 'bold'))
@@ -813,7 +817,43 @@ class PowerAmpSyncApp:
         )
         if filename:
             self.itunes_xml_var.set(filename)
-            self._load_playlists()
+
+    def _schedule_autoload_playlists(self, delay=400) -> None:
+        """Debounced auto-load of playlists when iTunes XML path changes."""
+        if self._itunes_autoload_after_id is not None:
+            try:
+                self.root.after_cancel(self._itunes_autoload_after_id)
+            except Exception:
+                pass
+        self._itunes_autoload_after_id = self.root.after(delay, self._auto_load_playlists)
+
+    def _auto_load_playlists(self) -> None:
+        self._itunes_autoload_after_id = None
+        xml_path = self.itunes_xml_var.get()
+        if not xml_path or not os.path.exists(xml_path):
+            return
+        if xml_path == self._loaded_xml_path:
+            return
+        self._load_playlists(silent=True)
+
+    def _on_window_focus(self, event) -> None:
+        # FocusIn fires for child widgets too — only react to the root window.
+        if event.widget is not self.root:
+            return
+        self._check_xml_mtime()
+
+    def _check_xml_mtime(self) -> None:
+        """Reload playlists if the loaded iTunes XML changed on disk (e.g. iTunes rewrote it)."""
+        xml_path = self._loaded_xml_path
+        if not xml_path or not os.path.exists(xml_path):
+            return
+        try:
+            current_mtime = os.path.getmtime(xml_path)
+        except OSError:
+            return
+        if self._loaded_xml_mtime is not None and current_mtime != self._loaded_xml_mtime:
+            self._loaded_xml_path = None  # force the dedup check to pass
+            self._schedule_autoload_playlists(delay=0)
 
     def _browse_destination(self) -> None:
         """Browse for destination folder."""
@@ -1028,11 +1068,15 @@ TROUBLESHOOTING
         self.status_var.set("Settings saved")
         messagebox.showinfo("Settings Saved", "Configuration saved successfully!")
 
-    def _load_playlists(self) -> None:
-        """Load playlists from iTunes XML into the treeview."""
+    def _load_playlists(self, silent: bool = False) -> None:
+        """Load playlists from iTunes XML into the treeview.
+
+        silent=True suppresses error popups (used by the path-change auto-loader).
+        """
         xml_path = self.itunes_xml_var.get()
         if not xml_path or not os.path.exists(xml_path):
-            messagebox.showerror("Error", "Please select a valid iTunes/MusicBee XML file first!")
+            if not silent:
+                messagebox.showerror("Error", "Please select a valid iTunes/MusicBee XML file first!")
             return
 
         self.status_var.set("Loading playlists...")
@@ -1056,7 +1100,8 @@ TROUBLESHOOTING
 
             library_dict = next((child for child in self.itunes_root if child.tag == 'dict'), None)
             if library_dict is None:
-                messagebox.showerror("Error", "Invalid iTunes XML format!")
+                if not silent:
+                    messagebox.showerror("Error", "Invalid iTunes XML format!")
                 return
 
             # First, build tracks dictionary for track lookups
@@ -1155,6 +1200,11 @@ TROUBLESHOOTING
                     self.analysis_text.insert(tk.END, f"  {t}: {count}\n")
 
                 self.status_var.set(f"Loaded {len(self.all_playlists)} playlists")
+                self._loaded_xml_path = xml_path
+                try:
+                    self._loaded_xml_mtime = os.path.getmtime(xml_path)
+                except OSError:
+                    self._loaded_xml_mtime = None
 
                 active = self.preset_var.get()
                 if active and active != DEFAULT_PRESET_NAME and active in self.config_manager.settings.playlist_presets:
@@ -1164,10 +1214,12 @@ TROUBLESHOOTING
                 self._filter_playlists()
 
             else:
-                messagebox.showerror("Error", "No playlists found in XML!")
+                if not silent:
+                    messagebox.showerror("Error", "No playlists found in XML!")
 
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to load playlists: {str(e)}")
+            if not silent:
+                messagebox.showerror("Error", f"Failed to load playlists: {str(e)}")
             self.status_var.set("Error loading playlists")
             logger.error(f"Error loading playlists: {e}")
 
@@ -1431,24 +1483,24 @@ TROUBLESHOOTING
         self.status_var.set(f"Saved preset: {name}")
 
     def _overwrite_preset(self) -> None:
-        """Overwrite the currently selected user preset with the current selection."""
+        """Save the current selection into the currently selected user preset."""
         name = self.preset_var.get()
         if not name or name == DEFAULT_PRESET_NAME:
-            messagebox.showinfo("Overwrite Preset", "Select a saved preset to overwrite, or use Save… to create a new one.")
+            messagebox.showinfo("Save Preset", "Select a saved preset to save into, or use Save As to create a new one.")
             return
 
         presets = self.config_manager.settings.playlist_presets
         if name not in presets:
-            messagebox.showerror("Overwrite Preset", f"Preset '{name}' not found.")
+            messagebox.showerror("Save Preset", f"Preset '{name}' not found.")
             self._refresh_preset_combo()
             return
 
-        if not messagebox.askyesno("Overwrite Preset", f"Overwrite '{name}' with the current selection?"):
+        if not messagebox.askyesno("Save Preset", f"Save current selection into '{name}'?"):
             return
 
         presets[name] = self._capture_current_selection()
         self.config_manager.save_settings()
-        self.status_var.set(f"Overwrote preset: {name}")
+        self.status_var.set(f"Saved preset: {name}")
 
     def _delete_preset(self) -> None:
         """Delete the currently selected user preset."""
@@ -1899,7 +1951,6 @@ TROUBLESHOOTING
         self.sync_btn.config(state=tk.DISABLED)
         self.sync_playlists_btn.config(state=tk.DISABLED)
         self.cancel_btn.config(state=tk.NORMAL)
-        self.load_btn.config(state=tk.DISABLED)
 
         self.sync_text.delete(1.0, tk.END)
         self.results_notebook.select(1)  # Switch to Sync Progress tab
@@ -2321,7 +2372,6 @@ TROUBLESHOOTING
         self.sync_btn.config(state=tk.NORMAL)
         self.sync_playlists_btn.config(state=tk.NORMAL)
         self.cancel_btn.config(state=tk.DISABLED)
-        self.load_btn.config(state=tk.NORMAL)
         self.status_var.set("Sync complete")
 
         messagebox.showinfo("Sync Complete", "Playlists have been synced to PowerAmp format!")

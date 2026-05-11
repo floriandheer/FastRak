@@ -13,7 +13,6 @@ files plus a mysqldump. The environment backup is Laragon-specific.
 
 import os
 import sys
-import re
 import glob
 import json
 import shutil
@@ -29,6 +28,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from shared_logging import get_logger, setup_logging as setup_shared_logging
+from shared_wordpress import parse_wp_config as _shared_parse_wp_config
 from rak_settings import get_rak_settings
 
 logger = get_logger("web_devbackup")
@@ -201,42 +201,14 @@ class WPSite:
 class SiteDiscovery:
     """Finds WordPress sites by scanning the Laragon www folder."""
 
-    # Matches: define( 'DB_NAME', 'value' );  or  define("DB_NAME", "value");
-    _DEFINE_RE = re.compile(
-        r"""define\s*\(\s*['"](?P<key>[A-Z_]+)['"]\s*,\s*['"](?P<val>[^'"]*)['"]\s*\)\s*;""",
-        re.IGNORECASE,
-    )
-    _PREFIX_RE = re.compile(
-        r"""\$table_prefix\s*=\s*['"](?P<val>[^'"]*)['"]\s*;"""
-    )
-
     @classmethod
     def parse_wp_config(cls, wp_config_path: str) -> Optional[Dict[str, str]]:
-        """Parse wp-config.php for DB credentials. Returns dict or None on error."""
-        try:
-            with open(wp_config_path, "r", encoding="utf-8", errors="replace") as f:
-                content = f.read()
-        except Exception as e:
-            logger.warning(f"Failed to read {wp_config_path}: {e}")
-            return None
+        """Parse wp-config.php for DB credentials. Returns dict or None on error.
 
-        values = {}
-        for m in cls._DEFINE_RE.finditer(content):
-            values[m.group("key").upper()] = m.group("val")
-
-        prefix_match = cls._PREFIX_RE.search(content)
-        table_prefix = prefix_match.group("val") if prefix_match else "wp_"
-
-        if "DB_NAME" not in values:
-            return None
-
-        return {
-            "db_name": values.get("DB_NAME", ""),
-            "db_user": values.get("DB_USER", "root"),
-            "db_password": values.get("DB_PASSWORD", ""),
-            "db_host": values.get("DB_HOST", "localhost"),
-            "table_prefix": table_prefix,
-        }
+        Thin wrapper around shared_wordpress.parse_wp_config so legacy callers
+        (and tests) that reach for SiteDiscovery.parse_wp_config keep working.
+        """
+        return _shared_parse_wp_config(wp_config_path)
 
     @classmethod
     def discover(cls, www_path: str) -> List[WPSite]:
