@@ -3,6 +3,8 @@ UI Settings Dialog - Multi-tab settings window for the Pipeline Manager.
 """
 
 import os
+import subprocess
+import sys
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, font
 
@@ -136,6 +138,95 @@ class SettingsDialog:
             activeforeground=COLORS["text_primary"]
         )
         cb.pack(anchor="w")
+
+        # Setup & Maintenance section
+        setup_section = tk.LabelFrame(
+            content_frame,
+            text=" Setup & Maintenance ",
+            font=font.Font(family="Segoe UI", size=11, weight="bold"),
+            fg=COLORS["text_primary"],
+            bg=COLORS["bg_card"],
+            padx=15,
+            pady=10
+        )
+        setup_section.pack(fill=tk.X, padx=20, pady=(0, 15))
+
+        setup_row = tk.Frame(setup_section, bg=COLORS["bg_card"])
+        setup_row.pack(fill=tk.X, pady=5)
+
+        tk.Button(
+            setup_row,
+            text="Run New PC Setup...",
+            command=self._run_new_pc_setup,
+            bg=COLORS["bg_secondary"],
+            fg=COLORS["text_primary"],
+            font=font.Font(family="Segoe UI", size=10),
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=15,
+            pady=6
+        ).pack(side=tk.LEFT)
+
+        tk.Label(
+            setup_section,
+            text=(
+                "Provisions folders, drive mappings, Synology checks, pipeline config, "
+                "and Fastrak shortcut.\nOpens in a new console window. Windows only — "
+                "requires setup_config.json next to fastrak_hub.py."
+            ),
+            font=font.Font(family="Segoe UI", size=9, slant="italic"),
+            fg=COLORS["text_secondary"],
+            bg=COLORS["bg_card"],
+            justify="left"
+        ).pack(anchor="w", pady=(6, 0))
+
+    def _run_new_pc_setup(self):
+        """Launch setup_new_pc.py in a new console window."""
+        # setup_new_pc.py lives next to fastrak_hub.py (one level above modules/)
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        script_path = os.path.join(project_root, "setup_new_pc.py")
+
+        if not os.path.isfile(script_path):
+            messagebox.showerror(
+                "Setup Script Not Found",
+                f"Could not locate:\n{script_path}",
+                parent=self.dialog,
+            )
+            return
+
+        if sys.platform != "win32":
+            messagebox.showwarning(
+                "Windows Only",
+                "New PC Setup requires native Windows (drive mappings, registry).\n"
+                "Run it from a Windows command prompt instead.",
+                parent=self.dialog,
+            )
+            return
+
+        if not messagebox.askyesno(
+            "Run New PC Setup",
+            "This will create folders, configure drive mappings, and check Synology "
+            "Drive status on this PC.\n\n"
+            "The script runs interactively in a new console window — you can answer "
+            "prompts there. Continue?",
+            parent=self.dialog,
+        ):
+            return
+
+        try:
+            subprocess.Popen(
+                [sys.executable, script_path],
+                cwd=project_root,
+                creationflags=subprocess.CREATE_NEW_CONSOLE,
+            )
+            logger.info("Launched setup_new_pc.py in new console")
+        except Exception as e:
+            logger.exception("Failed to launch setup_new_pc.py")
+            messagebox.showerror(
+                "Launch Failed",
+                f"Could not start setup script:\n{e}",
+                parent=self.dialog,
+            )
 
     def _build_paths_tab(self, parent):
         """Build the Paths settings tab."""

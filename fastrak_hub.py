@@ -1946,10 +1946,42 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
         # Initial message
         self.update_status("Pipeline Manager ready", "info")
 
+        # Warn about any missing optional dependencies
+        self._check_optional_dependencies()
+
         # Apply saved collapse state
         if not self.status_expanded:
             self.status_text_container.pack_forget()
             self.toggle_button.config(text="▶ Status Log")
+
+    def _check_optional_dependencies(self):
+        """Probe optional third-party deps; warn in the status log for any missing."""
+        deps = [
+            ("PIL", "Pillow", "logo and image processing"),
+            ("requests", "requests", "WooCommerce order monitoring"),
+            ("yaml", "PyYAML", "invoice template parsing"),
+        ]
+        if sys.platform == "win32":
+            deps.append(("win32com.client", "pywin32", "Outlook integration, shortcut creation"))
+
+        missing = []
+        for module_name, pip_name, purpose in deps:
+            try:
+                __import__(module_name)
+            except ImportError:
+                missing.append((pip_name, purpose))
+
+        if not missing:
+            return
+
+        pip_names = " ".join(p for p, _ in missing)
+        self.update_status(
+            f"Missing optional dependencies — run: pip install {pip_names}",
+            "warning",
+        )
+        for pip_name, purpose in missing:
+            self.update_status(f"  - {pip_name}: needed for {purpose}", "warning")
+            logger.warning("Missing optional dependency: %s (%s)", pip_name, purpose)
 
     def toggle_status(self, event=None):
         """Toggle status area visibility."""
