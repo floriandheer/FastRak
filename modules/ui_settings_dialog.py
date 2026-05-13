@@ -157,8 +157,8 @@ class SettingsDialog:
 
         tk.Button(
             setup_row,
-            text="Run New PC Setup...",
-            command=self._run_new_pc_setup,
+            text="Install Dependencies",
+            command=self._install_dependencies,
             bg=COLORS["bg_secondary"],
             fg=COLORS["text_primary"],
             font=font.Font(family="Segoe UI", size=10),
@@ -167,6 +167,19 @@ class SettingsDialog:
             padx=15,
             pady=6
         ).pack(side=tk.LEFT)
+
+        tk.Button(
+            setup_row,
+            text="Run Environment Setup...",
+            command=self._run_environment_setup,
+            bg=COLORS["bg_secondary"],
+            fg=COLORS["text_primary"],
+            font=font.Font(family="Segoe UI", size=10),
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=15,
+            pady=6
+        ).pack(side=tk.LEFT, padx=(10, 0))
 
         tk.Button(
             setup_row,
@@ -184,10 +197,11 @@ class SettingsDialog:
         tk.Label(
             setup_section,
             text=(
-                "Run New PC Setup: provisions folders, drive mappings, Synology checks "
+                "Install Dependencies: runs install_dependencies.py via pip in a new console.\n"
+                "Run Environment Setup: provisions folders, drive mappings, Synology checks "
                 "and pipeline config in a new console window.\n"
                 "Create Shortcut: regenerates Fastrak.lnk next to fastrak_hub.py.\n"
-                "Windows only."
+                "Environment Setup and Create Shortcut are Windows only."
             ),
             font=font.Font(family="Segoe UI", size=9, slant="italic"),
             fg=COLORS["text_secondary"],
@@ -246,19 +260,19 @@ class SettingsDialog:
             )
             return False
 
-    def _run_new_pc_setup(self):
-        """Launch setup_new_pc.py in a new console window."""
+    def _run_environment_setup(self):
+        """Launch setup_environment.py in a new console window."""
         if sys.platform != "win32":
             messagebox.showwarning(
                 "Windows Only",
-                "New PC Setup requires native Windows (drive mappings, registry).\n"
+                "Environment Setup requires native Windows (drive mappings, registry).\n"
                 "Run it from a Windows command prompt instead.",
                 parent=self.dialog,
             )
             return
 
         project_root = self._project_root()
-        script_path = os.path.join(project_root, "setup_new_pc.py")
+        script_path = os.path.join(project_root, "setup_environment.py")
 
         if not os.path.isfile(script_path):
             messagebox.showerror(
@@ -272,7 +286,7 @@ class SettingsDialog:
             return
 
         if not messagebox.askyesno(
-            "Run New PC Setup",
+            "Run Environment Setup",
             "This will create folders, configure drive mappings, and check Synology "
             "Drive status on this PC.\n\n"
             "The script runs interactively in a new console window — you can answer "
@@ -290,12 +304,55 @@ class SettingsDialog:
                 cwd=project_root,
                 creationflags=subprocess.CREATE_NEW_CONSOLE,
             )
-            logger.info("Launched setup_new_pc.py in new console")
+            logger.info("Launched setup_environment.py in new console")
         except Exception as e:
-            logger.exception("Failed to launch setup_new_pc.py")
+            logger.exception("Failed to launch setup_environment.py")
             messagebox.showerror(
                 "Launch Failed",
                 f"Could not start setup script:\n{e}",
+                parent=self.dialog,
+            )
+
+    def _install_dependencies(self):
+        """Launch install_dependencies.py in a new console window."""
+        project_root = self._project_root()
+        script_path = os.path.join(project_root, "install_dependencies.py")
+
+        if not os.path.isfile(script_path):
+            messagebox.showerror(
+                "Installer Not Found",
+                f"Could not locate:\n{script_path}",
+                parent=self.dialog,
+            )
+            return
+
+        if not messagebox.askyesno(
+            "Install Dependencies",
+            "This will install the Python packages required by the pipeline "
+            "(Pillow, pdfplumber, invoice2data, etc.) via pip.\n\n"
+            "The installer runs interactively in a new console window — you can "
+            "answer prompts there. Continue?",
+            parent=self.dialog,
+        ):
+            return
+
+        exe = self._console_python()
+        try:
+            if sys.platform == "win32":
+                # `cmd /k` keeps the console open so install output stays readable.
+                subprocess.Popen(
+                    ["cmd", "/k", exe, script_path],
+                    cwd=project_root,
+                    creationflags=subprocess.CREATE_NEW_CONSOLE,
+                )
+            else:
+                subprocess.Popen([exe, script_path], cwd=project_root)
+            logger.info("Launched install_dependencies.py in new console")
+        except Exception as e:
+            logger.exception("Failed to launch install_dependencies.py")
+            messagebox.showerror(
+                "Launch Failed",
+                f"Could not start dependency installer:\n{e}",
                 parent=self.dialog,
             )
 

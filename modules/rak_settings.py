@@ -36,10 +36,11 @@ def _get_appdata_path() -> Path:
 def _load_setup_seed() -> Optional[Dict]:
     """First-run seed for rak_config.json.
 
-    rak_settings is the single runtime reader of pipeline config. setup_new_pc
-    used to be the only way to push values from the project-root
-    setup_config.json into rak_config.json; this function lets RakSettings
-    pull the same values itself the first time it runs on a new machine.
+    rak_settings is the single runtime reader of pipeline config.
+    setup_environment used to be the only way to push values from the
+    project-root setup_config.json into rak_config.json; this function lets
+    RakSettings pull the same values itself the first time it runs on a new
+    machine.
 
     Returns a dict with optional keys ``drives`` and ``software_sync`` that
     overlay DEFAULT_CONFIG, or None if no seed file exists / nothing to apply.

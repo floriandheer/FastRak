@@ -85,9 +85,9 @@
    pip install -r requirements.txt
    ```
 
-## New PC Setup
+## Environment Setup
 
-The `setup_new_pc.py` script automates the one-time provisioning steps for a new workstation.
+The `setup_environment.py` script automates the one-time provisioning steps for the pipeline environment on a workstation.
 
 ### What it automates
 
@@ -115,7 +115,7 @@ The `setup_new_pc.py` script automates the one-time provisioning steps for a new
 
 3. **Run the setup script**
    ```bash
-   python setup_new_pc.py
+   python setup_environment.py
    ```
    The script walks through each step, shows what it will do, and asks for confirmation.
 
