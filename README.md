@@ -72,14 +72,14 @@ Some pipeline scripts require additional external software:
    python install_dependencies.py
    ```
 
-### New PC Setup
+### Environment Setup
 
-The `setup_new_pc.py` script automates provisioning a new workstation: it creates the folder structure, maps `subst` drives with registry persistence (no admin rights needed), checks Synology Drive sync status, and generates the pipeline config file.
+The `setup_environment.py` script automates provisioning the pipeline environment on a workstation: it creates the folder structure, maps `subst` drives with registry persistence (no admin rights needed), checks Synology Drive sync status, and generates the pipeline config file.
 
 ```bash
 copy setup_config.json.example setup_config.json   # 1. Copy template
 # 2. Edit setup_config.json with your drive letters and paths
-python setup_new_pc.py                              # 3. Run setup
+python setup_environment.py                         # 3. Run setup
 ```
 
 Use `--dry-run` to preview changes without modifying anything. See [docs/INSTALLATION.md](docs/INSTALLATION.md) for a full walkthrough.
@@ -107,7 +107,7 @@ Run the helper script from the repo root:
 python make_shortcut.py
 ```
 
-This produces `Fastrak.lnk` next to the script, with paths resolved relative to wherever the repo is cloned (no hardcoded drive letters). It's also invoked automatically by `setup_new_pc.py`. Then:
+This produces `Fastrak.lnk` next to the script, with paths resolved relative to wherever the repo is cloned (no hardcoded drive letters). You can also trigger it from Pipeline Manager > Settings > **Create Shortcut**. Then:
 
 1. Right-click `Fastrak.lnk` → **Pin to taskbar** or **Pin to Start**
 2. (Optional) Copy the `.lnk` to your Desktop for a desktop icon

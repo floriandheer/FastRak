@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 """
-Florian Dheer Pipeline - New PC Setup Script
----------------------------------------------
-Automates new PC provisioning: folder creation, subst drive mappings
-with registry persistence, Synology Drive status checks, and pipeline
-config generation.
+Florian Dheer Pipeline - Environment Setup Script
+-------------------------------------------------
+Automates pipeline environment provisioning: folder creation, subst drive
+mappings with registry persistence, Synology Drive status checks, and
+pipeline config generation.
 
 Usage:
-    python setup_new_pc.py [--config PATH] [--dry-run] [--yes] [--step STEP]
+    python setup_environment.py [--config PATH] [--dry-run] [--yes] [--step STEP]
 """
 
 import sys
@@ -24,13 +24,13 @@ sys.path.insert(0, SCRIPTS_DIR)
 
 from shared_logging import setup_logging, get_logger
 
-logger = get_logger("setup_new_pc")
+logger = get_logger("setup_environment")
 
 # ============================================================
 # Constants
 # ============================================================
 
-STEPS = ("folders", "drives", "synology", "config", "shortcut")
+STEPS = ("folders", "drives", "synology", "config")
 BANNER_WIDTH = 60
 
 
@@ -482,51 +482,7 @@ def step_config(cfg: dict, dry_run: bool) -> bool:
 
 
 # ============================================================
-# Step 6: Desktop / Taskbar Shortcut
-# ============================================================
-
-def step_shortcut(dry_run: bool, auto_yes: bool) -> bool:
-    """Run make_shortcut.py to generate Fastrak.lnk next to the repo."""
-    banner("Step 6: Windows Shortcut")
-
-    if sys.platform != "win32":
-        print("  Skipped (Windows-only).")
-        return True
-
-    helper = Path(SCRIPT_FILE_DIR) / "make_shortcut.py"
-    if not helper.exists():
-        status_line("make_shortcut.py", False, "not found")
-        return False
-
-    shortcut_path = Path(SCRIPT_FILE_DIR) / "Fastrak.lnk"
-    if shortcut_path.exists():
-        print(f"  Shortcut already exists: {shortcut_path}")
-        if not confirm("  Regenerate?", auto_yes):
-            print("  Skipped.")
-            return True
-
-    if dry_run:
-        print(f"  [DRY RUN] Would run: python {helper}")
-        return True
-
-    try:
-        subprocess.run(
-            [sys.executable, str(helper)],
-            check=True, cwd=SCRIPT_FILE_DIR, timeout=30
-        )
-        status_line("Shortcut", True, str(shortcut_path))
-        print("\n  Right-click Fastrak.lnk -> 'Pin to taskbar' or 'Pin to Start'.")
-        return True
-    except subprocess.CalledProcessError as e:
-        status_line("Shortcut", False, f"make_shortcut.py failed: {e}")
-        return False
-    except subprocess.TimeoutExpired:
-        status_line("Shortcut", False, "timeout running make_shortcut.py")
-        return False
-
-
-# ============================================================
-# Step 7: Final Report
+# Step 6: Final Report
 # ============================================================
 
 def final_report(results: dict):
@@ -549,7 +505,8 @@ def final_report(results: dict):
     print("       https://www.ntwind.com/software/visual-subst.html")
     print("    3. Reboot to verify drive persistence via registry")
     print("    4. Launch Pipeline Manager and verify paths in Settings (Ctrl+,)")
-    print("    5. Right-click Fastrak.lnk -> 'Pin to taskbar' / 'Pin to Start'")
+    print("    5. In Pipeline Manager > Settings, run 'Install Dependencies'")
+    print("       and 'Create Shortcut' if not already done.")
 
 
 # ============================================================
@@ -558,7 +515,7 @@ def final_report(results: dict):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Florian Dheer Pipeline - New PC Setup"
+        description="Florian Dheer Pipeline - Environment Setup"
     )
     parser.add_argument(
         "--config", default="./setup_config.json",
@@ -580,11 +537,11 @@ def main():
     args = parser.parse_args()
 
     # Set up logging (console only for setup script, file handler deferred)
-    setup_logging("setup_new_pc", include_console=False)
+    setup_logging("setup_environment", include_console=False)
 
     # Banner
     print("=" * BANNER_WIDTH)
-    print("  Florian Dheer Pipeline - New PC Setup")
+    print("  Florian Dheer Pipeline - Environment Setup")
     print("=" * BANNER_WIDTH)
     print(f"  Python:  {sys.version.split()[0]}")
     print(f"  Config:  {args.config}")
@@ -624,11 +581,7 @@ def main():
     if run_all or args.step == "config":
         results["Pipeline Config"] = step_config(cfg, args.dry_run)
 
-    # Step 6: Windows shortcut
-    if run_all or args.step == "shortcut":
-        results["Windows Shortcut"] = step_shortcut(args.dry_run, args.yes)
-
-    # Step 7: Report
+    # Step 6: Report
     final_report(results)
 
     # Windows console keep-alive
