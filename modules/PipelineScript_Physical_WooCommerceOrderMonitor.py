@@ -8,6 +8,7 @@ Description: Automatically monitor WooCommerce orders and organize order folders
 """
 
 import os
+import re
 import sys
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
@@ -63,8 +64,8 @@ class Config:
                 "download_labels": True
             },
             "folder_structure": {
-                "naming_format": "Order_{order_number}_{customer_name}",  # Options: order_number, customer_name, date
-                "include_date": False,
+                "naming_format": "{customer_name}_{order_number}",  # Placeholders: order_number, order_id, customer_name
+                "include_date": True,  # Prepends YYYY-MM-DD_ (uses order's date_created, falls back to today)
                 "subfolder_documents": False  # Create Documents/ subfolder
             },
             "documents": {
@@ -532,14 +533,12 @@ class DocumentManager:
         order_id = order['id']
         order_number = order.get('number', order_id)
 
-        # Get customer name
+        # Build customer name in PascalCase (e.g. "Dirk Scheers" -> "DirkScheers")
         billing = order.get('billing', {})
-        customer_name = f"{billing.get('first_name', '')}_{billing.get('last_name', '')}".strip('_')
-        if not customer_name:
-            customer_name = "Guest"
-
-        # Clean customer name for filesystem
-        customer_name = self._sanitize_filename(customer_name)
+        customer_name = self._camelcase_name(
+            billing.get('first_name', ''),
+            billing.get('last_name', ''),
+        )
 
         # Build folder name based on format
         naming_format = self.config.config['folder_structure']['naming_format']
@@ -549,9 +548,10 @@ class DocumentManager:
             customer_name=customer_name
         )
 
-        # Add date if configured
+        # Add date if configured — prefer the order's date_created so backlog
+        # imports retain the actual order date instead of "today".
         if self.config.config['folder_structure'].get('include_date'):
-            date_str = datetime.now().strftime('%Y%m%d')
+            date_str = self._order_date(order)
             folder_name = f"{date_str}_{folder_name}"
 
         # Create folder
@@ -564,6 +564,31 @@ class DocumentManager:
             docs_folder.mkdir(exist_ok=True)
 
         return order_folder
+
+    def _camelcase_name(self, first: str, last: str) -> str:
+        """Combine first + last name into PascalCase, stripping non-alphanumerics.
+
+        Splits on whitespace, hyphens, and underscores so multi-part names
+        ("Anna-Marie", "Van Driessche") capitalize each segment.
+        """
+        parts = re.split(r'[\s\-_]+', f"{first} {last}".strip())
+        cleaned = []
+        for p in parts:
+            p = re.sub(r'[^A-Za-z0-9]', '', p)
+            if p:
+                cleaned.append(p[0].upper() + p[1:])
+        return "".join(cleaned) or "Guest"
+
+    def _order_date(self, order: Dict) -> str:
+        """Return YYYY-MM-DD for the order's date_created, falling back to today."""
+        raw = order.get('date_created') or order.get('date_created_gmt') or ''
+        if raw:
+            # WooCommerce returns ISO 8601 like "2025-10-15T14:30:00"
+            try:
+                return datetime.fromisoformat(raw.replace('Z', '+00:00')).strftime('%Y-%m-%d')
+            except (ValueError, TypeError):
+                pass
+        return datetime.now().strftime('%Y-%m-%d')
 
     def _sanitize_filename(self, name: str) -> str:
         """Remove invalid filesystem characters"""

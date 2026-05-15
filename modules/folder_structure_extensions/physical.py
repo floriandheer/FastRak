@@ -1,10 +1,12 @@
 """
 Physical (3D printing) extension for GenericFolderStructureCreator.
 
-Replaces the standard Personal/Sandbox checkboxes with a 3-way mutually
-exclusive radio (Personal / Product / Project) and adds slicer + printer
-combos plus optional preproduction/_LIBRARY folder toggles. Folder name
-omits the client when the project is Personal or Product.
+Replaces the standard Personal/Sandbox checkboxes with a 4-way mutually
+exclusive radio (Personal / Order / Product / Project) and adds slicer +
+printer combos plus optional preproduction/_LIBRARY folder toggles. Folder
+name omits the client when the project is Personal or Product.
+
+Shortcut letters: P=Personal (pipeline-wide), O=Order, D=proDuct, J=Project.
 """
 
 import os
@@ -21,9 +23,11 @@ class PhysicalExtension(FolderStructureExtension):
     def __init__(self, creator):
         super().__init__(creator)
         self.personal_var = None
+        self.order_var = None
         self.product_var = None
         self.project_var = None
         self.personal_check = None
+        self.order_check = None
         self.product_check = None
         self.project_check = None
         self.slicer_var = None
@@ -48,9 +52,16 @@ class PhysicalExtension(FolderStructureExtension):
         )
         self.personal_check.pack(side=tk.LEFT, padx=(0, 10))
 
+        self.order_var = tk.BooleanVar(value=False)
+        self.order_check = create_styled_checkbox(
+            type_frame, text="Order (O)", variable=self.order_var,
+            command=lambda: self._toggle_type('order'),
+        )
+        self.order_check.pack(side=tk.LEFT, padx=(0, 10))
+
         self.product_var = tk.BooleanVar(value=False)
         self.product_check = create_styled_checkbox(
-            type_frame, text="Product (O)", variable=self.product_var,
+            type_frame, text="Product (D)", variable=self.product_var,
             command=lambda: self._toggle_type('product'),
         )
         self.product_check.pack(side=tk.LEFT, padx=(0, 10))
@@ -93,7 +104,7 @@ class PhysicalExtension(FolderStructureExtension):
         ).pack(side=tk.LEFT)
 
         # Wire previews
-        for var in (self.personal_var, self.product_var, self.project_var,
+        for var in (self.personal_var, self.order_var, self.product_var, self.project_var,
                     self.slicer_var, self.printer_var,
                     self.preproduction_var, self.library_var):
             var.trace_add("write", lambda *a: c.update_preview())
@@ -102,19 +113,28 @@ class PhysicalExtension(FolderStructureExtension):
         c.personal_var = self.personal_var
         c.personal_check = self.personal_check
         self.personal_check.bind("<Return>", lambda e: self._enter_toggle('personal'))
+        self.order_check.bind("<Return>", lambda e: self._enter_toggle('order'))
         self.product_check.bind("<Return>", lambda e: self._enter_toggle('product'))
         self.project_check.bind("<Return>", lambda e: self._enter_toggle('project'))
 
-        return [self.personal_check, self.product_check, self.project_check]
+        return [self.personal_check, self.order_check, self.product_check, self.project_check]
 
     def setup_extra_keyboard_shortcuts(self):
         root = self.creator.parent.winfo_toplevel()
         root.bind("<o>", self._on_o)
         root.bind("<O>", self._on_o)
+        root.bind("<d>", self._on_d)
+        root.bind("<D>", self._on_d)
         root.bind("<j>", self._on_j)
         root.bind("<J>", self._on_j)
 
     def _on_o(self, event):
+        if getattr(self.creator, '_in_text_field', False):
+            return
+        self._toggle_type('order')
+        return "break"
+
+    def _on_d(self, event):
         if getattr(self.creator, '_in_text_field', False):
             return
         self._toggle_type('product')
@@ -139,6 +159,7 @@ class PhysicalExtension(FolderStructureExtension):
         c = self.creator
         targets = {
             'personal': self.personal_var,
+            'order': self.order_var,
             'product': self.product_var,
             'project': self.project_var,
         }
@@ -150,7 +171,8 @@ class PhysicalExtension(FolderStructureExtension):
                 v.set(False)
 
         # Snapshot client + base_dir on first switch into a special mode
-        any_special = self.personal_var.get() or self.product_var.get() or self.project_var.get()
+        any_special = (self.personal_var.get() or self.order_var.get()
+                       or self.product_var.get() or self.project_var.get())
         if any_special and not self._client_backup:
             self._client_backup = c.client_name_var.get() if c.client_name_var else ""
             self._base_dir_backup = c.base_dir_var.get()
@@ -159,6 +181,10 @@ class PhysicalExtension(FolderStructureExtension):
         if self.personal_var.get():
             if c.client_name_var: c.client_name_var.set("Personal")
             c.base_dir_var.set(physical_base + "/_personal")
+        elif self.order_var.get():
+            if c.client_name_var:
+                c.client_name_var.set(self._client_backup)
+            c.base_dir_var.set(physical_base + "/Order")
         elif self.product_var.get():
             if c.client_name_var: c.client_name_var.set("alles3d")
             c.base_dir_var.set(physical_base + "/Product")
@@ -212,7 +238,9 @@ class PhysicalExtension(FolderStructureExtension):
 
     def build_metadata(self):
         subtype = ''
-        if self.product_var and self.product_var.get():
+        if self.order_var and self.order_var.get():
+            subtype = 'Order'
+        elif self.product_var and self.product_var.get():
             subtype = 'Product'
         elif self.project_var and self.project_var.get():
             subtype = 'Project'
@@ -223,6 +251,7 @@ class PhysicalExtension(FolderStructureExtension):
             "printer": self.printer_var.get() if self.printer_var else "",
             "is_personal": self.personal_var.get() if self.personal_var else False,
             "is_product": self.product_var.get() if self.product_var else False,
+            "is_order": self.order_var.get() if self.order_var else False,
             "physical_subtype": subtype,
         }
 

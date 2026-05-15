@@ -684,7 +684,18 @@ class ProjectImporter:
 
         # Physical: 3DPrint, Order, or Technical pattern
         elif base_category == "Physical":
-            # Order pattern: Order_{order_number}_{customer_name}
+            # New WC order pattern: YYYY-MM-DD_ClientCamel_OrderNumber
+            match = re.match(r'^(\d{4}-\d{2}-\d{2})_([A-Za-z][A-Za-z0-9]*)_(\d+)$', folder_name)
+            if match:
+                return {
+                    "date": match.group(1),
+                    "client": match.group(2),
+                    "project": f"Order_{match.group(3)}",
+                    "type": "Physical",
+                    "is_personal": False,
+                    "physical_subtype": physical_subtype or "Order"
+                }
+            # Legacy WC order pattern: Order_{order_number}_{customer_name}
             match = re.match(r'^Order_(\d+)_(.+)$', folder_name)
             if match:
                 return {
