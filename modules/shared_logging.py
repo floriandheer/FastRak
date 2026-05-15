@@ -166,6 +166,14 @@ def setup_logging(
 
     # Add console handler if requested
     if include_console:
+        # On Windows, sys.stdout defaults to cp1252 which can't encode emoji
+        # (e.g. 🚀, ⏹). Reconfigure to utf-8 with errors='replace' so log
+        # messages with Unicode characters don't raise UnicodeEncodeError.
+        if hasattr(sys.stdout, "reconfigure"):
+            try:
+                sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setFormatter(formatter)
         console_handler.setLevel(console_level)

@@ -60,13 +60,10 @@ class Config:
                 "check_orders_since_hours": 48,
                 "base_directory": get_rak_settings().get_work_path("Physical").replace('\\', '/') + "/Order",
                 "processed_orders_file": str(self.data_dir / "processed_orders.json"),
-                "download_invoices": True,
-                "download_labels": True
             },
             "folder_structure": {
                 "naming_format": "{customer_name}_{order_number}",  # Placeholders: order_number, order_id, customer_name
                 "include_date": True,  # Prepends YYYY-MM-DD_ (uses order's date_created, falls back to today)
-                "subfolder_documents": False  # Create Documents/ subfolder
             },
             "documents": {
                 "invoice_filename": "Invoice_{order_number}.pdf",
@@ -529,7 +526,13 @@ class DocumentManager:
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
     def create_order_folder(self, order: Dict) -> Path:
-        """Create folder for order based on naming format"""
+        """Ensure an order folder exists, named from server-side order data.
+
+        The WooCommerce order is the source of truth for both the customer
+        name and the date prefix. If a folder for this order already exists
+        with a stale name (e.g. date drifted on the server), rename it to
+        match instead of spawning a duplicate.
+        """
         order_id = order['id']
         order_number = order.get('number', order_id)
 
@@ -540,30 +543,74 @@ class DocumentManager:
             billing.get('last_name', ''),
         )
 
-        # Build folder name based on format
+        # Canonical folder name derived from server data
         naming_format = self.config.config['folder_structure']['naming_format']
         folder_name = naming_format.format(
             order_number=order_number,
             order_id=order_id,
             customer_name=customer_name
         )
-
-        # Add date if configured — prefer the order's date_created so backlog
-        # imports retain the actual order date instead of "today".
         if self.config.config['folder_structure'].get('include_date'):
-            date_str = self._order_date(order)
-            folder_name = f"{date_str}_{folder_name}"
+            folder_name = f"{self._order_date(order)}_{folder_name}"
 
-        # Create folder
-        order_folder = self.base_dir / folder_name
-        order_folder.mkdir(parents=True, exist_ok=True)
+        target = self.base_dir / folder_name
 
-        # Create subfolder for documents if configured
-        if self.config.config['folder_structure'].get('subfolder_documents'):
-            docs_folder = order_folder / "Documents"
-            docs_folder.mkdir(exist_ok=True)
+        # If the canonical folder isn't there yet, check for a stale-named
+        # folder for this same order and rename it.
+        if not target.exists():
+            stale = self._find_by_order_number(order_number)
+            if stale:
+                try:
+                    stale.rename(target)
+                    logger.info(
+                        f"Renamed order folder {stale.name} -> {target.name} "
+                        "to match server date"
+                    )
+                except OSError as e:
+                    logger.warning(
+                        f"Could not rename {stale.name} -> {target.name}: {e}; "
+                        "using existing folder"
+                    )
+                    target = stale
 
-        return order_folder
+        # Create canonical folder + standard subdirectories
+        target.mkdir(parents=True, exist_ok=True)
+        for sub in ("01_Incoming", "02_Production", "03_Outgoing", "_LIBRARY"):
+            (target / sub).mkdir(exist_ok=True)
+
+        # Flag any leftover duplicates (e.g. both stale and canonical exist)
+        for dup in self._find_all_by_order_number(order_number):
+            if dup != target:
+                logger.warning(
+                    f"Duplicate folder for order #{order_number}: {dup.name} "
+                    f"(canonical is {target.name}) — please merge/remove manually"
+                )
+
+        return target
+
+    def _find_by_order_number(self, order_number) -> Optional[Path]:
+        """Return the first folder ending in `_<order_number>`, or None.
+
+        Using an `_<num>` suffix (not a substring) avoids false positives
+        like order #66 matching any folder containing '66'.
+        """
+        for path in self._find_all_by_order_number(order_number):
+            return path
+        return None
+
+    def _find_all_by_order_number(self, order_number) -> List[Path]:
+        """Return every folder ending in `_<order_number>`."""
+        if not self.base_dir.exists():
+            return []
+        suffix = f"_{order_number}"
+        matches: List[Path] = []
+        try:
+            for item in self.base_dir.iterdir():
+                if item.is_dir() and item.name.endswith(suffix):
+                    matches.append(item)
+        except Exception:
+            pass
+        return matches
 
     def _camelcase_name(self, first: str, last: str) -> str:
         """Combine first + last name into PascalCase, stripping non-alphanumerics.
@@ -597,79 +644,6 @@ class DocumentManager:
             name = name.replace(char, '_')
         return name
 
-    def download_invoice(self, order: Dict, order_folder: Path) -> Optional[str]:
-        """Download invoice PDF from WooCommerce if available"""
-        try:
-            # Common meta keys used by WooCommerce invoice plugins
-            invoice_meta_keys = [
-                '_wcpdf_invoice_pdf',
-                'invoice_url',
-                '_invoice_pdf_url',
-                '_invoice_url',
-                'wcpdf_invoice_url',
-                '_wcpdf_invoice_link'
-            ]
-
-            # Try to get invoice URL from metadata
-            invoice_url = None
-            for meta in order.get('meta_data', []):
-                key = meta.get('key', '')
-                if key in invoice_meta_keys:
-                    invoice_url = meta.get('value')
-                    break
-
-            # If no direct URL in metadata, try to construct it from WooCommerce PDF Invoices plugin
-            if not invoice_url:
-                # Check if order has an invoice number
-                invoice_number = None
-                for meta in order.get('meta_data', []):
-                    key = meta.get('key', '')
-                    if key == '_wcpdf_invoice_number':
-                        invoice_number = meta.get('value')
-                        break
-
-                # Construct URL if we have invoice number
-                if invoice_number:
-                    wc_config = self.config.config['woocommerce']
-                    base_url = wc_config['url'].rstrip('/')
-                    # Try common WooCommerce PDF Invoices plugin endpoint
-                    invoice_url = f"{base_url}/?action=generate_wpo_wcpdf&template_type=invoice&order_ids={order['id']}&my-account"
-
-            if not invoice_url:
-                logger.debug(f"No invoice URL found for order {order['id']}")
-                return None
-
-            # Download invoice
-            doc_config = self.config.config['documents']
-            filename = doc_config['invoice_filename'].format(
-                order_number=order.get('number', order['id']),
-                order_id=order['id']
-            )
-
-            if self.config.config['folder_structure'].get('subfolder_documents'):
-                invoice_path = order_folder / "Documents" / filename
-            else:
-                invoice_path = order_folder / filename
-
-            # Download the PDF
-            response = requests.get(invoice_url, timeout=30)
-            response.raise_for_status()
-
-            # Verify it's a PDF
-            content_type = response.headers.get('content-type', '').lower()
-            if 'pdf' not in content_type and not invoice_url.endswith('.pdf'):
-                logger.warning(f"Downloaded file might not be a PDF: {content_type}")
-
-            with open(invoice_path, 'wb') as f:
-                f.write(response.content)
-
-            logger.info(f"Downloaded invoice: {invoice_path}")
-            return str(invoice_path)
-
-        except Exception as e:
-            logger.error(f"Failed to download invoice for order {order['id']}: {e}")
-            return None
-
     def download_shipping_label(self, order: Dict, order_folder: Path) -> Optional[str]:
         """Download shipping label if available"""
         try:
@@ -690,10 +664,9 @@ class DocumentManager:
                 order_id=order['id']
             )
 
-            if self.config.config['folder_structure'].get('subfolder_documents'):
-                label_path = order_folder / "Documents" / filename
-            else:
-                label_path = order_folder / filename
+            outgoing_dir = order_folder / "03_Outgoing"
+            outgoing_dir.mkdir(exist_ok=True)
+            label_path = outgoing_dir / filename
 
             response = requests.get(label_url, timeout=30)
             response.raise_for_status()
@@ -717,10 +690,9 @@ class DocumentManager:
                 order_id=order['id']
             )
 
-            if self.config.config['folder_structure'].get('subfolder_documents'):
-                details_path = order_folder / "Documents" / filename
-            else:
-                details_path = order_folder / filename
+            library_dir = order_folder / "_LIBRARY"
+            library_dir.mkdir(exist_ok=True)
+            details_path = library_dir / filename
 
             with open(details_path, 'w', encoding='utf-8') as f:
                 f.write("=" * 60 + "\n")
@@ -959,66 +931,6 @@ class InvoiceFiler:
             logger.error(f"Failed to file invoice for order #{order_number}: {e}")
             return None
 
-    def refile_invoice(self, order: Dict, project_folder: Path) -> Optional[Path]:
-        """
-        Re-download and re-file an invoice, removing the old PDF and shortcut first.
-
-        Useful after changing the invoice number or when the invoice content
-        has been updated on the server.
-        """
-        order_id = order['id']
-        order_number = order.get('number', order_id)
-
-        try:
-            # Remove old invoice PDF and shortcut from Boekhouding / project folder
-            self._cleanup_old_invoice(order, project_folder)
-
-            # File the (new) invoice
-            return self.file_invoice(order, project_folder)
-
-        except Exception as e:
-            logger.error(f"Failed to refile invoice for order #{order_number}: {e}")
-            return None
-
-    def _cleanup_old_invoice(self, order: Dict, project_folder: Path):
-        """Remove existing invoice PDF in Boekhouding and .lnk shortcut in project folder."""
-        order_number = order.get('number', order['id'])
-        try:
-            # Look for any invoice PDF matching this order in the Boekhouding tree
-            invoice_date = order.get('date_created', '')[:10]
-            if not invoice_date:
-                return
-            quarter_dir = self._get_quarter_dir(invoice_date)
-            if quarter_dir.exists():
-                for f in quarter_dir.iterdir():
-                    # Match by order number or old invoice number in filename
-                    if f.is_file() and f.suffix == '.pdf' and f.name.startswith('3D_'):
-                        # Check if this PDF belongs to the order — the filename
-                        # contains the client name which we can match
-                        billing = order.get('billing', {})
-                        client_name = (billing.get('last_name', '') or
-                                       billing.get('first_name', '') or '')
-                        clean_name = client_name.replace(" ", "").replace("_", "")
-                        if clean_name and clean_name in f.name:
-                            logger.info(f"Removing old invoice: {f}")
-                            f.unlink()
-
-            # Remove old .lnk shortcuts in outgoing folder
-            outgoing = self._find_outgoing_folder(project_folder)
-            if outgoing and outgoing.exists():
-                for f in outgoing.iterdir():
-                    if f.is_file() and f.suffix == '.lnk' and 'Factuur' in f.name:
-                        billing = order.get('billing', {})
-                        client_name = (billing.get('last_name', '') or
-                                       billing.get('first_name', '') or '')
-                        clean_name = client_name.replace(" ", "").replace("_", "")
-                        if clean_name and clean_name in f.name:
-                            logger.info(f"Removing old shortcut: {f}")
-                            f.unlink()
-
-        except Exception as e:
-            logger.warning(f"Cleanup of old invoice for order #{order_number} failed: {e}")
-
 
 # ====================================
 # ORDER MONITOR
@@ -1164,32 +1076,10 @@ class OrderMonitor:
 
             documents = {}
 
-            # Generate/download documents based on configuration
-            monitor_config = self.config.config['monitoring']
-
-            # Invoice — file to Boekhouding and create .lnk in order folder
-            if monitor_config.get('download_invoices', True):
-                filed_path = self.invoice_filer.file_invoice(order, order_folder)
-                if filed_path:
-                    documents['invoice'] = str(filed_path)
-                    self.log_status(f"✓ Invoice filed to {filed_path.parent.name}/", "success")
-                else:
-                    # Fallback: try legacy download directly to order folder
-                    invoice_path = self.doc_manager.download_invoice(order, order_folder)
-                    if invoice_path:
-                        documents['invoice'] = invoice_path
-                        self.log_status(f"✓ Invoice downloaded (legacy)", "success")
-                    else:
-                        self.log_status(f"⚠ No invoice available yet", "warning")
-
-            # Shipping label
-            if monitor_config.get('download_labels', True):
-                label_path = self.doc_manager.download_shipping_label(order, order_folder)
-                if label_path:
-                    documents['label'] = label_path
-                    self.log_status(f"✓ Shipping label downloaded", "success")
-                elif self.wc_client.has_bpost_shipping(order):
-                    self.log_status(f"⚠ No shipping label available yet", "warning")
+            # Invoices and shipping labels are intentionally NOT downloaded
+            # here — those happen via the "View Invoice" / "View Label"
+            # buttons (per-order) or "File Quarter Invoices" (bulk Boekhouding
+            # sweep). Only order details are generated automatically.
 
             # Order details
             details_path = self.doc_manager.create_order_details_file(order, order_folder)
@@ -1526,14 +1416,14 @@ class OrderMonitorGUI:
         ttk.Button(status_bar, text="View Invoice",
                   command=self.view_invoice, width=12).pack(side=tk.LEFT, padx=5)
 
-        ttk.Button(status_bar, text="Change Invoice #",
-                  command=self.change_invoice_number, width=14).pack(side=tk.LEFT, padx=5)
+        ttk.Button(status_bar, text="View Label",
+                  command=self.view_label, width=12).pack(side=tk.LEFT, padx=5)
 
-        ttk.Button(status_bar, text="Refile Invoice",
-                  command=self.refile_invoices, width=12).pack(side=tk.LEFT, padx=5)
+        ttk.Button(status_bar, text="Change Invoice Nr.",
+                  command=self.change_invoice_number, width=17).pack(side=tk.LEFT, padx=5)
 
-        ttk.Button(status_bar, text="Create Folder",
-                  command=self.create_order_folder, width=12).pack(side=tk.LEFT, padx=5)
+        ttk.Button(status_bar, text="Create Directory",
+                  command=self.create_order_folder, width=14).pack(side=tk.LEFT, padx=5)
 
         self.order_count_label = ttk.Label(status_bar, text="")
         self.order_count_label.pack(side=tk.RIGHT)
@@ -1701,21 +1591,56 @@ class OrderMonitorGUI:
         return None
 
     def view_invoice(self):
-        """Download and open invoice PDF for the selected order"""
+        """Download invoice PDF into the order's folder with the proper name and open it."""
         order = self._get_selected_order()
         if not order:
             return
 
         order_number = order.get('number', order['id'])
 
-        # Check if invoice already exists locally (in tracker)
-        tracker_data = self.monitor.tracker.processed_orders.get(str(order['id']))
-        if tracker_data and tracker_data.get('documents', {}).get('invoice'):
-            invoice_path = Path(tracker_data['documents']['invoice'])
-            if invoice_path.exists():
-                self.update_status(f"Opening local invoice for order #{order_number}", "info")
-                os.startfile(str(invoice_path))
+        # Find the order folder, or create one if it doesn't exist yet
+        order_folder = self.monitor._find_order_folder(order)
+        if not order_folder:
+            try:
+                order_folder = self.monitor.doc_manager.create_order_folder(order)
+            except Exception as e:
+                self.update_status(f"Failed to create order folder: {e}", "error")
                 return
+
+        # Invoices go in the 03_Outgoing subfolder, consistent with file_invoice
+        filer = self.monitor.invoice_filer
+        outgoing = filer._find_outgoing_folder(order_folder)
+        if not outgoing:
+            outgoing = order_folder / "03_Outgoing"
+            outgoing.mkdir(parents=True, exist_ok=True)
+
+        # Build the proper filename from the invoice metadata
+        invoice_info = filer._get_invoice_info_from_meta(order)
+        if invoice_info:
+            billing = order.get('billing', {})
+            client_name = (billing.get('last_name', '').strip() or
+                           billing.get('first_name', '').strip() or
+                           "Unknown")
+            try:
+                filename = filer._build_invoice_filename(
+                    invoice_info['invoice_number'],
+                    invoice_info['invoice_date'],
+                    client_name,
+                )
+            except Exception as e:
+                logger.warning(f"Falling back to generic invoice name for order #{order_number}: {e}")
+                filename = f"Invoice_{order_number}.pdf"
+        else:
+            # Invoice hasn't been generated on the server yet — use a placeholder name
+            filename = f"Invoice_{order_number}.pdf"
+
+        invoice_path = outgoing / filename
+
+        # If we've already downloaded it, just open it
+        if invoice_path.exists():
+            self.update_status(f"Opening invoice for order #{order_number}", "info")
+            os.startfile(str(invoice_path))
+            return
 
         # Check if monitor_secret_key is configured
         secret = self.config.config['woocommerce'].get('monitor_secret_key', '')
@@ -1725,19 +1650,74 @@ class OrderMonitorGUI:
                 "error")
             return
 
-        # Download to temp and open
         self.update_status(f"Downloading invoice for order #{order_number}...", "info")
 
         def do_download():
-            import tempfile
-            temp_path = Path(tempfile.gettempdir()) / f"Invoice_{order_number}.pdf"
-            if self.monitor.wc_client.download_invoice_pdf(order['id'], temp_path):
-                self.update_status(f"Invoice #{order_number} downloaded and opened", "success")
-                os.startfile(str(temp_path))
+            if self.monitor.wc_client.download_invoice_pdf(order['id'], invoice_path):
+                self.update_status(
+                    f"Invoice saved to {invoice_path.parent.name}/{invoice_path.name}",
+                    "success")
+                os.startfile(str(invoice_path))
             else:
                 self.update_status(
                     f"Failed to download invoice for order #{order_number} — "
                     "check that the pipeline_get_invoice PHP endpoint is set up on your server",
+                    "error")
+
+        threading.Thread(target=do_download, daemon=True).start()
+
+    def view_label(self):
+        """Download the shipping label into the order's 03_Outgoing/ and open it."""
+        order = self._get_selected_order()
+        if not order:
+            return
+
+        order_number = order.get('number', order['id'])
+
+        # Find or create the order folder
+        order_folder = self.monitor.doc_manager.create_order_folder(order)
+        outgoing = order_folder / "03_Outgoing"
+        outgoing.mkdir(exist_ok=True)
+
+        doc_config = self.config.config['documents']
+        filename = doc_config['label_filename'].format(
+            order_number=order_number,
+            order_id=order['id'],
+        )
+        label_path = outgoing / filename
+
+        # If we've already downloaded it, just open it
+        if label_path.exists():
+            self.update_status(f"Opening shipping label for order #{order_number}", "info")
+            os.startfile(str(label_path))
+            return
+
+        self.update_status(f"Fetching shipping label for order #{order_number}...", "info")
+
+        def do_download():
+            wc = self.monitor.wc_client
+            label_url = wc.get_bpost_label_url(order)
+            if not label_url and wc.has_bpost_shipping(order):
+                label_url = wc.get_bpost_label_from_db(order['id'])
+
+            if not label_url:
+                self.update_status(
+                    f"No shipping label available for order #{order_number} yet",
+                    "warning")
+                return
+
+            try:
+                response = requests.get(label_url, timeout=30)
+                response.raise_for_status()
+                with open(label_path, 'wb') as f:
+                    f.write(response.content)
+                self.update_status(
+                    f"Label saved to {label_path.parent.name}/{label_path.name}",
+                    "success")
+                os.startfile(str(label_path))
+            except Exception as e:
+                self.update_status(
+                    f"Failed to download label for order #{order_number}: {e}",
                     "error")
 
         threading.Thread(target=do_download, daemon=True).start()
@@ -1814,68 +1794,6 @@ class OrderMonitorGUI:
         ttk.Button(btn_frame, text="Apply", command=apply).pack(side=tk.RIGHT, padx=5)
         ttk.Button(btn_frame, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT)
 
-    def refile_invoices(self):
-        """Re-download and re-file invoices for selected order(s)."""
-        selection = self.order_tree.selection()
-        if not selection:
-            messagebox.showinfo("No Selection", "Please select one or more orders.")
-            return
-
-        order_numbers = []
-        for item in selection:
-            vals = self.order_tree.item(item, "values")
-            if vals:
-                order_numbers.append(vals[0])
-
-        count = len(order_numbers)
-        if not messagebox.askyesno("Confirm",
-                f"Re-download and refile invoice{'s' if count > 1 else ''} "
-                f"for {count} order{'s' if count > 1 else ''}?\n\n"
-                "This will fetch fresh data from WooCommerce,\n"
-                "remove the old PDF from Boekhouding, and file the new one."):
-            return
-
-        def do_refile():
-            success = 0
-            failed = 0
-            for order_num in order_numbers:
-                for cached_order in self.orders_cache:
-                    if str(cached_order.get('number', cached_order['id'])) == order_num:
-                        order_id = cached_order['id']
-
-                        # Re-fetch order from API to get current metadata
-                        self.update_status(f"Fetching order #{order_num} from WooCommerce...", "info")
-                        order = self.monitor.wc_client.get_order_details(order_id)
-                        if not order:
-                            self.update_status(f"Failed to fetch order #{order_num}", "error")
-                            failed += 1
-                            break
-
-                        # Find or create the order folder
-                        project_folder = self.monitor._find_order_folder(order)
-                        if not project_folder:
-                            project_folder = self.monitor.doc_manager.create_order_folder(order)
-                            self.update_status(f"Created folder for order #{order_num}", "info")
-                            self.monitor._register_order_in_db(order, project_folder)
-
-                        # Refile
-                        filed_path = self.monitor.invoice_filer.refile_invoice(order, project_folder)
-                        if filed_path:
-                            success += 1
-                            self.update_status(
-                                f"✓ Refiled invoice for order #{order_num}: {filed_path.name}",
-                                "success")
-                        else:
-                            failed += 1
-                            self.update_status(
-                                f"✗ Failed to refile invoice for order #{order_num}", "error")
-                        break
-
-            self.update_status(
-                f"Refile complete: {success} succeeded, {failed} failed", "success" if not failed else "warning")
-
-        threading.Thread(target=do_refile, daemon=True).start()
-
     def create_order_folder(self):
         """Create folder structure and download documents for selected order(s)"""
         selection = self.order_tree.selection()
@@ -1894,8 +1812,12 @@ class OrderMonitorGUI:
                 for order in self.orders_cache:
                     if str(order.get('number', order['id'])) == order_num:
                         order_id = str(order['id'])
+                        # Always (re)create the directory structure — idempotent
+                        order_folder = self.monitor.doc_manager.create_order_folder(order)
                         if self.monitor.tracker.is_processed(order_id):
-                            self.update_status(f"Order #{order_num} already processed", "info")
+                            self.update_status(
+                                f"Order #{order_num}: ensured directory at {order_folder.name}",
+                                "success")
                         else:
                             self.monitor.process_order(order)
                         break
@@ -2180,14 +2102,6 @@ class SettingsDialog:
         self.base_dir_var = tk.StringVar(value=monitor_config.get('base_directory', ''))
         ttk.Entry(monitor_frame, textvariable=self.base_dir_var, width=50).grid(row=1, column=1, sticky=tk.W, pady=5)
 
-        self.download_invoices_var = tk.BooleanVar(value=monitor_config.get('download_invoices', True))
-        ttk.Checkbutton(monitor_frame, text="Download/File Invoices",
-                       variable=self.download_invoices_var).grid(row=2, column=1, sticky=tk.W, pady=5)
-
-        self.download_labels_var = tk.BooleanVar(value=monitor_config.get('download_labels', True))
-        ttk.Checkbutton(monitor_frame, text="Download Shipping Labels",
-                       variable=self.download_labels_var).grid(row=3, column=1, sticky=tk.W, pady=5)
-
         # Filters tab
         filter_frame = ttk.Frame(notebook, padding="10")
         notebook.add(filter_frame, text="Filters")
@@ -2215,8 +2129,6 @@ class SettingsDialog:
             self.config.config['woocommerce']['monitor_secret_key'] = self.monitor_secret_var.get()
             self.config.config['monitoring']['poll_interval'] = int(self.poll_interval_var.get())
             self.config.config['monitoring']['base_directory'] = self.base_dir_var.get()
-            self.config.config['monitoring']['download_invoices'] = self.download_invoices_var.get()
-            self.config.config['monitoring']['download_labels'] = self.download_labels_var.get()
 
             statuses = [s.strip() for s in self.statuses_var.get().split(',') if s.strip()]
             self.config.config['filters']['order_statuses'] = statuses
