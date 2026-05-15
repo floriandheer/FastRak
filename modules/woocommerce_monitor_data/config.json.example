@@ -14,8 +14,8 @@
         "download_labels": true
     },
     "folder_structure": {
-        "naming_format": "Order_{order_number}_{customer_name}",
-        "include_date": false,
+        "naming_format": "{customer_name}_{order_number}",
+        "include_date": true,
         "subfolder_documents": false
     },
     "documents": {
