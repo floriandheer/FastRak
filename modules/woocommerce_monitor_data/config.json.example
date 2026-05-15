@@ -9,14 +9,11 @@
     "monitoring": {
         "poll_interval": 300,
         "check_orders_since_hours": 48,
-        "base_directory": "YOUR_WORK_DRIVE:/Physical/Orders",
-        "download_invoices": true,
-        "download_labels": true
+        "base_directory": "YOUR_WORK_DRIVE:/Physical/Orders"
     },
     "folder_structure": {
         "naming_format": "{customer_name}_{order_number}",
-        "include_date": true,
-        "subfolder_documents": false
+        "include_date": true
     },
     "documents": {
         "invoice_filename": "Invoice_{order_number}.pdf",
