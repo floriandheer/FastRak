@@ -150,7 +150,15 @@ CATEGORIES: Dict[str, Dict[str, Any]] = {
         "display_name": "RealTime",
         "description": "Real-time processing and performance tools",
         "work_path_key": "RealTime",
-        "category_scripts": [],
+        "category_scripts": [
+            {
+                "key": "resolume_sync",
+                "name": "Resolume Sync",
+                "module": "PipelineScript_RealTime_ResolumeSync",
+                "description": "Push/pull Resolume Avenue folder between local PC and NAS",
+                "icon": "🎛️",
+            },
+        ],
         "subtypes": {
             "Godot": {
                 "display_name": "Godot",
