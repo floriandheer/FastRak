@@ -953,6 +953,22 @@ class OrderMonitor:
         except Exception as e:
             logger.warning(f"Project DB unavailable; orders will not be registered: {e}")
             self.db = None
+        # Global invoice registry — soft optional. If the global_invoice
+        # module isn't configured we fall back to the WooCommerce PDF plugin's
+        # own numbering. Once configured, the registry is authoritative.
+        self.global_registry = None
+        try:
+            from global_invoice.config import load_config as _load_gi_config
+            from global_invoice.registry import InvoiceRegistry
+            gi_config = _load_gi_config()
+            self.global_registry = InvoiceRegistry(gi_config.resolve_db_path())
+            self._gi_config = gi_config
+            logger.info("Global invoice registry attached to WC monitor")
+        except Exception as e:
+            logger.info(
+                f"Global invoice registry not active (will use WC plugin numbering): {e}"
+            )
+            self._gi_config = None
         self.running = False
         self.callback = None
         self.order_list_callback = None
@@ -1049,6 +1065,71 @@ class OrderMonitor:
             # row up later.
             logger.error(f"Failed to register order in project DB: {e}")
 
+    def _assign_global_invoice_number(self, order: Dict) -> Optional[int]:
+        """Reserve a number from the global registry and push it to WC.
+
+        Idempotent on order id: if we already have a row for this WC order,
+        re-uses the existing number and just re-pushes it to WC in case the
+        order meta got out of sync.
+
+        Returns the assigned sequence, or None if the registry is inactive.
+        """
+        if not self.global_registry:
+            return None
+        try:
+            from global_invoice.wc_bridge import build_draft_from_wc_order
+        except Exception as e:
+            logger.warning(f"global_invoice.wc_bridge unavailable: {e}")
+            return None
+        try:
+            order_id = str(order.get("id"))
+            # Re-run guard: if we already have a row for this order, re-use it
+            existing = self.global_registry.get_by_source_ref("woocommerce", order_id)
+            if existing:
+                sequence = existing["sequence"]
+                logger.info(
+                    f"WC order {order_id} already has invoice "
+                    f"#{sequence:03d} ({existing['year']}); re-pushing to WC"
+                )
+            else:
+                # New row: reserve next number for the order's date year
+                date_str = (order.get("date_created") or "")[:10]
+                try:
+                    year = int(date_str[:4])
+                except (ValueError, TypeError):
+                    year = datetime.now().year
+                draft = build_draft_from_wc_order(order, company_key="3D")
+                if not draft.get("invoice_date"):
+                    draft["invoice_date"] = datetime.now().strftime("%Y-%m-%d")
+                row = self.global_registry.reserve_and_return_row(year, draft)
+                sequence = row["sequence"]
+                self.log_status(
+                    f"Reserved global invoice #{sequence:03d} for order #{order.get('number', order_id)}",
+                    "success",
+                )
+
+            # Push our number back into WC so the PDF plugin uses it
+            ok = self.wc_client.update_invoice_number(int(order_id), str(sequence)) is not None
+            if not ok:
+                # Track for retry; we still own the number in the registry
+                if existing:
+                    inv_id = existing["id"]
+                else:
+                    row2 = self.global_registry.get_by_source_ref("woocommerce", order_id)
+                    inv_id = row2["id"] if row2 else None
+                if inv_id is not None:
+                    self.global_registry.enqueue_wc_push(
+                        inv_id, order_id, "update_invoice_number returned failure"
+                    )
+            else:
+                # Clear any pending retry for this order
+                if existing:
+                    self.global_registry.clear_wc_push(existing["id"])
+            return sequence
+        except Exception as e:
+            logger.error(f"Failed to assign global invoice number: {e}")
+            return None
+
     def process_order(self, order: Dict) -> bool:
         """Process a single order"""
         order_id = str(order['id'])
@@ -1073,6 +1154,11 @@ class OrderMonitor:
             # Register in the project DB right away so the tracker sees it
             # without needing a folder rescan.
             self._register_order_in_db(order, order_folder)
+
+            # Assign a global invoice number and push it back to WC so the
+            # WooCommerce PDF-Invoices plugin generates the PDF with our
+            # number. No-op if the global registry isn't configured.
+            self._assign_global_invoice_number(order)
 
             documents = {}
 

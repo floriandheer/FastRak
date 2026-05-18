@@ -458,6 +458,13 @@ CATEGORIES: Dict[str, Dict[str, Any]] = {
                 "description": "Check of alle verwachte kwartaalfacturen aanwezig zijn",
                 "icon": "🔍",
             },
+            {
+                "key": "global_invoice",
+                "name": "Global Invoice",
+                "module": "PipelineScript_Business_GlobalInvoice",
+                "description": "Centralised invoice numbering & generation across FD / HV / 3D",
+                "icon": "🧾",
+            },
         ],
         "subtypes": {},
     },
