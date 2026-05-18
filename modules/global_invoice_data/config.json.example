@@ -1,0 +1,78 @@
+{
+    "companies": [
+        {
+            "key": "FD",
+            "display_name": "Florian D'heer",
+            "legal_name": "Florian D'heer",
+            "vat": "BE0XXX.XXX.XXX",
+            "address_lines": [
+                "Streetname 123",
+                "1000 Brussels",
+                "Belgium"
+            ],
+            "email": "floriandheer@outlook.com",
+            "iban": "BE00 0000 0000 0000",
+            "bic": "BBRUBEBB",
+            "template_path": "templates/invoice_templates_ott/florian_dheer.ott",
+            "output_prefix": "FD",
+            "default_vat_rate": 21.0,
+            "wc_binding": null
+        },
+        {
+            "key": "HV",
+            "display_name": "Hyphen-V",
+            "legal_name": "Hyphen-V",
+            "vat": "BE0XXX.XXX.XXX",
+            "address_lines": [
+                "Streetname 123",
+                "1000 Brussels",
+                "Belgium"
+            ],
+            "email": "",
+            "iban": "BE00 0000 0000 0000",
+            "bic": "BBRUBEBB",
+            "template_path": "templates/invoice_templates_ott/hyphen_v.ott",
+            "output_prefix": "HV",
+            "default_vat_rate": 21.0,
+            "wc_binding": null
+        },
+        {
+            "key": "3D",
+            "display_name": "Alles3D",
+            "legal_name": "Alles3D",
+            "vat": "BE0XXX.XXX.XXX",
+            "address_lines": [
+                "Streetname 123",
+                "1000 Brussels",
+                "Belgium"
+            ],
+            "email": "",
+            "iban": "BE00 0000 0000 0000",
+            "bic": "BBRUBEBB",
+            "template_path": null,
+            "output_prefix": "3D",
+            "default_vat_rate": 21.0,
+            "wc_binding": {
+                "use_monitor_config": true,
+                "url": "",
+                "consumer_key": "",
+                "consumer_secret": "",
+                "api_version": "wc/v3"
+            }
+        }
+    ],
+    "paths": {
+        "db_path": null,
+        "boekhouding_base": null,
+        "soffice_path": null
+    },
+    "behavior": {
+        "currency": "EUR",
+        "year_change_confirm_threshold": 1,
+        "auto_open_pdf_after_generate": true
+    },
+    "logging": {
+        "enabled": true,
+        "log_level": "INFO"
+    }
+}
