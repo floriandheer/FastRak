@@ -42,6 +42,8 @@ from global_invoice.models import (
 from global_invoice.pdf_export import PdfExportError, odt_to_pdf
 from global_invoice.registry import InvoiceRegistry
 from global_invoice.template_engine import TemplateError, render_odt
+from global_invoice.wc_bridge import WCBridgeError, WooCommerceBridge
+from global_invoice.wc_sync import sync_woocommerce_invoices
 
 logger = get_logger("global_invoice")
 
@@ -205,6 +207,9 @@ class GlobalInvoiceGUI:
         self._mk_button(ctrl, "Apply", self._refresh_dashboard).pack(side="left")
         self._mk_button(ctrl, "↻ Reload", self._refresh_dashboard).pack(side="left", padx=(8, 0))
         self._mk_button(ctrl, "Health check", self._run_health_check).pack(side="left", padx=(8, 0))
+        self._mk_button(ctrl, "🔄  Sync from WooCommerce",
+                        self._sync_from_woocommerce
+                        ).pack(side="left", padx=(8, 0))
 
         # Treeview
         tree_frame = tk.Frame(tab, bg=C["bg"])
@@ -341,6 +346,82 @@ class GlobalInvoiceGUI:
                 "Health check — warnings",
                 "\n\n".join(warnings),
             )
+
+    def _sync_from_woocommerce(self):
+        """Import invoices that already exist in WooCommerce into the registry.
+
+        Safe to re-run: the import is keyed on (source='woocommerce',
+        source_ref=order_id), so already-imported orders are skipped.
+        """
+        creds = self.config.get_wc_credentials_for_alles3d()
+        if not creds:
+            messagebox.showerror(
+                "Sync from WooCommerce",
+                "No WooCommerce credentials configured.\n\n"
+                "Company '3D' must have a wc_binding in config.json "
+                "(set use_monitor_config=true to share credentials with "
+                "the WooCommerce monitor).",
+            )
+            return
+
+        ok = messagebox.askyesno(
+            "Sync from WooCommerce",
+            "This will fetch every WooCommerce order and import any that "
+            "already have a WCPDF invoice number into the registry, using "
+            "the original WC number.\n\n"
+            "It is idempotent — already-imported invoices are skipped.\n\n"
+            "Continue?",
+        )
+        if not ok:
+            return
+
+        try:
+            bridge = WooCommerceBridge(creds)
+        except WCBridgeError as e:
+            messagebox.showerror("Sync from WooCommerce", str(e))
+            return
+
+        try:
+            default_vat_rate = self.config.get_company("3D").default_vat_rate
+        except KeyError:
+            default_vat_rate = 21.0
+
+        self._set_busy(True)
+        threading.Thread(
+            target=self._sync_worker,
+            args=(bridge, default_vat_rate),
+            daemon=True,
+        ).start()
+
+    def _sync_worker(self, bridge: WooCommerceBridge, default_vat_rate: float):
+        try:
+            report = sync_woocommerce_invoices(
+                self.registry, bridge,
+                company_key="3D",
+                default_vat_rate=default_vat_rate,
+                progress=lambda msg: logger.info(msg),
+            )
+            self.root.after(0, self._on_sync_done, report, None)
+        except Exception as e:
+            logger.exception("WooCommerce sync failed")
+            self.root.after(0, self._on_sync_done, None, str(e))
+        finally:
+            self.root.after(0, self._set_busy, False)
+
+    def _on_sync_done(self, report, error: Optional[str]):
+        if error:
+            messagebox.showerror(
+                "Sync from WooCommerce",
+                f"Sync failed:\n\n{error}",
+            )
+            return
+        self._refresh_dashboard()
+        self._refresh_preview()
+        title = "Sync from WooCommerce — done"
+        if report.conflicts or report.errors:
+            messagebox.showwarning(title, report.as_text())
+        else:
+            messagebox.showinfo(title, report.as_text())
 
     # =====================================================================
     # New Invoice tab

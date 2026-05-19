@@ -1068,23 +1068,30 @@ class OrderMonitor:
     def _assign_global_invoice_number(self, order: Dict) -> Optional[int]:
         """Reserve a number from the global registry and push it to WC.
 
-        Idempotent on order id: if we already have a row for this WC order,
-        re-uses the existing number and just re-pushes it to WC in case the
-        order meta got out of sync.
+        Precedence (avoids overwriting numbers WC already issued):
+          1. Registry already has a row for this order → reuse + re-push.
+          2. WC order already carries a WCPDF invoice number → import it
+             into the registry at its original (year, sequence). Don't
+             touch WC.
+          3. No number anywhere → reserve a fresh one and push to WC.
 
         Returns the assigned sequence, or None if the registry is inactive.
         """
         if not self.global_registry:
             return None
         try:
-            from global_invoice.wc_bridge import build_draft_from_wc_order
+            from global_invoice.wc_bridge import (
+                build_draft_from_wc_order, extract_wc_invoice_info,
+            )
+            from global_invoice.registry import RegistryConflictError
         except Exception as e:
             logger.warning(f"global_invoice.wc_bridge unavailable: {e}")
             return None
         try:
             order_id = str(order.get("id"))
-            # Re-run guard: if we already have a row for this order, re-use it
             existing = self.global_registry.get_by_source_ref("woocommerce", order_id)
+            pushed_already = False
+
             if existing:
                 sequence = existing["sequence"]
                 logger.info(
@@ -1092,26 +1099,52 @@ class OrderMonitor:
                     f"#{sequence:03d} ({existing['year']}); re-pushing to WC"
                 )
             else:
-                # New row: reserve next number for the order's date year
-                date_str = (order.get("date_created") or "")[:10]
-                try:
-                    year = int(date_str[:4])
-                except (ValueError, TypeError):
-                    year = datetime.now().year
+                wc_info = extract_wc_invoice_info(order)
                 draft = build_draft_from_wc_order(order, company_key="3D")
-                if not draft.get("invoice_date"):
-                    draft["invoice_date"] = datetime.now().strftime("%Y-%m-%d")
-                row = self.global_registry.reserve_and_return_row(year, draft)
-                sequence = row["sequence"]
-                self.log_status(
-                    f"Reserved global invoice #{sequence:03d} for order #{order.get('number', order_id)}",
-                    "success",
-                )
 
-            # Push our number back into WC so the PDF plugin uses it
+                if wc_info:
+                    draft["invoice_date"] = wc_info["invoice_date"]
+                    try:
+                        row = self.global_registry.import_existing_invoice(
+                            year=wc_info["year"], sequence=wc_info["sequence"],
+                            draft=draft,
+                        )
+                        sequence = row["sequence"]
+                        self.log_status(
+                            f"Imported existing WC invoice "
+                            f"#{sequence:03d} for order #{order.get('number', order_id)}",
+                            "success",
+                        )
+                        pushed_already = True
+                    except RegistryConflictError as e:
+                        logger.error(
+                            f"WC order {order_id}: cannot adopt existing "
+                            f"WC number #{wc_info['sequence']:03d} "
+                            f"({wc_info['year']}) — {e}. Reserving a fresh "
+                            f"number instead."
+                        )
+                        wc_info = None
+
+                if not wc_info:
+                    date_str = (order.get("date_created") or "")[:10]
+                    try:
+                        year = int(date_str[:4])
+                    except (ValueError, TypeError):
+                        year = datetime.now().year
+                    if not draft.get("invoice_date"):
+                        draft["invoice_date"] = datetime.now().strftime("%Y-%m-%d")
+                    row = self.global_registry.reserve_and_return_row(year, draft)
+                    sequence = row["sequence"]
+                    self.log_status(
+                        f"Reserved global invoice #{sequence:03d} for order #{order.get('number', order_id)}",
+                        "success",
+                    )
+
+            if pushed_already:
+                return sequence
+
             ok = self.wc_client.update_invoice_number(int(order_id), str(sequence)) is not None
             if not ok:
-                # Track for retry; we still own the number in the registry
                 if existing:
                     inv_id = existing["id"]
                 else:
@@ -1122,7 +1155,6 @@ class OrderMonitor:
                         inv_id, order_id, "update_invoice_number returned failure"
                     )
             else:
-                # Clear any pending retry for this order
                 if existing:
                     self.global_registry.clear_wc_push(existing["id"])
             return sequence

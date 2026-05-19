@@ -23,6 +23,10 @@ from .models import Invoice, LineItem
 logger = get_logger(__name__)
 
 
+class RegistryConflictError(Exception):
+    """Raised when an import would clash with an existing row."""
+
+
 SCHEMA_VERSION = 1
 
 SCHEMA_SQL = """
@@ -289,6 +293,93 @@ class InvoiceRegistry:
         """Convenience: reserve and return the full inserted row."""
         seq = self.reserve_next_number(year, draft)
         return self.get_invoice(year, seq)
+
+    def import_existing_invoice(
+        self,
+        year: int,
+        sequence: int,
+        draft: Dict[str, Any],
+        pdf_path: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Insert a row at a specific (year, sequence) — used to import
+        invoices that were issued elsewhere (e.g. WooCommerce PDF plugin)
+        before the registry existed.
+
+        Idempotent on (source, source_ref): if a row already exists for the
+        same external identifier, it is returned unchanged. If a different
+        invoice already occupies the slot, raises RegistryConflictError so
+        the caller can surface it for manual resolution.
+
+        Inserts with status='issued' (the invoice has already been delivered).
+        """
+        source = draft.get("source", "manual")
+        source_ref = draft.get("source_ref")
+
+        if source_ref:
+            existing_by_ref = self.get_by_source_ref(source, str(source_ref))
+            if existing_by_ref:
+                if (existing_by_ref["year"] != year
+                        or existing_by_ref["sequence"] != sequence):
+                    raise RegistryConflictError(
+                        f"{source} ref {source_ref!r} is already registered as "
+                        f"#{existing_by_ref['sequence']:03d} ({existing_by_ref['year']}), "
+                        f"but the import requested #{sequence:03d} ({year})."
+                    )
+                return existing_by_ref
+
+        existing_at_slot = self.get_invoice(year, sequence)
+        if existing_at_slot:
+            raise RegistryConflictError(
+                f"Slot #{sequence:03d} ({year}) is already occupied by "
+                f"{existing_at_slot['source']} ref "
+                f"{existing_at_slot.get('source_ref')!r} "
+                f"(customer: {existing_at_slot['customer_name']!r})."
+            )
+
+        payload = _draft_to_row(draft, year=year, sequence=sequence)
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE;")
+            conn.execute(
+                """
+                INSERT INTO invoices
+                  (year, sequence, company_key, invoice_date,
+                   customer_name, customer_vat, customer_address, customer_email,
+                   line_items_json, subtotal_cents, vat_cents, total_cents,
+                   currency, status, pdf_path, source, source_ref, notes,
+                   created_at, updated_at)
+                VALUES
+                  (:year, :sequence, :company_key, :invoice_date,
+                   :customer_name, :customer_vat, :customer_address, :customer_email,
+                   :line_items_json, :subtotal_cents, :vat_cents, :total_cents,
+                   :currency, 'issued', :pdf_path, :source, :source_ref, :notes,
+                   :created_at, :updated_at)
+                """,
+                {**payload, "pdf_path": pdf_path},
+            )
+            conn.execute("COMMIT;")
+        except sqlite3.IntegrityError as e:
+            try:
+                conn.execute("ROLLBACK;")
+            except sqlite3.OperationalError:
+                pass
+            raise RegistryConflictError(
+                f"UNIQUE conflict importing #{sequence:03d} ({year}): {e}"
+            ) from e
+        except Exception:
+            try:
+                conn.execute("ROLLBACK;")
+            except sqlite3.OperationalError:
+                pass
+            raise
+        finally:
+            conn.close()
+
+        logger.info(
+            f"Imported invoice #{sequence:03d} ({year}) "
+            f"from {source} ref={source_ref}"
+        )
+        return self.get_invoice(year, sequence)
 
     def finalize_invoice(self, invoice_id: int, pdf_path: str) -> None:
         """Mark a draft invoice as issued, with the rendered PDF location."""

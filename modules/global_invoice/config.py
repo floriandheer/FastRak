@@ -1,8 +1,10 @@
 """Configuration loader for the Global Invoice module.
 
-Reads modules/global_invoice_data/config.json and resolves paths against
-the repo root (one level up from modules/). Falls back to sensible
-defaults for db_path / boekhouding_base / soffice_path.
+User-private data (config.json, invoices.sqlite) lives outside the repo
+in the per-user PipelineManager AppData folder so it isn't synced to git.
+Templates and the example config are bundled inside the package itself.
+
+Falls back to sensible defaults for db_path / boekhouding_base / soffice_path.
 """
 
 from __future__ import annotations
@@ -21,17 +23,78 @@ from .models import Company
 logger = get_logger(__name__)
 
 
-# Path layout:
-#   <repo>/modules/global_invoice/config.py    ← this file
-#   <repo>/modules/global_invoice_data/config.json
-#   <repo>/templates/invoice_templates_ott/
+# Path layout (post-migration):
+#   <repo>/modules/global_invoice/config.py            ← this file
+#   <repo>/modules/global_invoice/config.json.example  ← template (committed)
+#   <repo>/modules/global_invoice/README.txt           ← docs (committed)
+#   <appdata>/PipelineManager/global_invoice/config.json     ← user data
+#   <appdata>/PipelineManager/global_invoice/invoices.sqlite ← user data
 _PKG_DIR = Path(__file__).resolve().parent
 _MODULES_DIR = _PKG_DIR.parent
 REPO_ROOT = _MODULES_DIR.parent
-DATA_DIR = _MODULES_DIR / "global_invoice_data"
+CONFIG_EXAMPLE_PATH = _PKG_DIR / "config.json.example"
+
+# Legacy (pre-migration) location — files here get moved to DATA_DIR on first run.
+_LEGACY_DATA_DIR = _MODULES_DIR / "global_invoice_data"
+
+_MIGRATABLE_FILENAMES = (
+    "config.json",
+    "invoices.sqlite",
+    "invoices.sqlite-wal",
+    "invoices.sqlite-shm",
+)
+
+
+def _get_user_data_dir() -> Path:
+    """Per-user PipelineManager AppData dir, matching rak_settings convention."""
+    if sys.platform == "win32":
+        return Path.home() / "AppData" / "Local" / "PipelineManager" / "global_invoice"
+    # WSL: prefer the Windows user's AppData so it stays in sync with native runs
+    windows_users = Path("/mnt/c/Users")
+    if windows_users.exists():
+        username = os.environ.get("USER", "")
+        user_path = windows_users / username
+        if user_path.exists():
+            return user_path / "AppData" / "Local" / "PipelineManager" / "global_invoice"
+    return Path.home() / ".local" / "share" / "PipelineManager" / "global_invoice"
+
+
+DATA_DIR = _get_user_data_dir()
 CONFIG_PATH = DATA_DIR / "config.json"
-CONFIG_EXAMPLE_PATH = DATA_DIR / "config.json.example"
 DEFAULT_DB_PATH = DATA_DIR / "invoices.sqlite"
+
+
+def _migrate_legacy_data() -> None:
+    """One-shot migration: move legacy in-repo data files into the user data dir.
+
+    Runs on every load_config() but is a no-op once the legacy files are gone.
+    Never overwrites a file that already exists at the new location.
+    """
+    if not _LEGACY_DATA_DIR.exists():
+        return
+    moved: List[str] = []
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    for filename in _MIGRATABLE_FILENAMES:
+        src = _LEGACY_DATA_DIR / filename
+        dst = DATA_DIR / filename
+        if not src.exists():
+            continue
+        if dst.exists():
+            logger.warning(
+                f"Legacy file {src} exists but {dst} already does too — "
+                f"leaving legacy in place; resolve manually."
+            )
+            continue
+        try:
+            shutil.move(str(src), str(dst))
+            moved.append(filename)
+        except Exception as e:
+            logger.error(f"Failed to migrate {src} → {dst}: {e}")
+    if moved:
+        logger.info(
+            f"Migrated global_invoice data files to {DATA_DIR}: {moved}. "
+            f"Legacy folder {_LEGACY_DATA_DIR} can be removed."
+        )
 
 
 class ConfigError(Exception):
@@ -176,11 +239,18 @@ class GlobalInvoiceConfig:
 
 def load_config(path: Optional[Path] = None) -> GlobalInvoiceConfig:
     """Load and parse config.json. Raises ConfigError if missing or invalid."""
+    if path is None:
+        _migrate_legacy_data()
     cfg_path = Path(path) if path else CONFIG_PATH
     if not cfg_path.exists():
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
         raise ConfigError(
-            f"Config not found: {cfg_path}\n"
-            f"Copy {CONFIG_EXAMPLE_PATH.name} to {cfg_path.name} and edit it."
+            f"Config not found: {cfg_path}\n\n"
+            f"Copy the template into place:\n"
+            f"    {CONFIG_EXAMPLE_PATH}\n"
+            f"  → {cfg_path}\n\n"
+            f"Then edit the company entries with your real legal name, VAT, "
+            f"address, and bank details."
         )
     try:
         with open(cfg_path, "r", encoding="utf-8") as f:

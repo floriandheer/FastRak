@@ -7,6 +7,8 @@ WooCommerceClient methods we need.
 
 from __future__ import annotations
 
+import re
+from datetime import datetime
 from typing import Dict, List, Optional
 
 from shared_logging import get_logger
@@ -49,6 +51,45 @@ class WooCommerceBridge:
             return False, f"HTTP {r.status_code}: {r.text[:200]}"
         except Exception as e:
             return False, str(e)
+
+    def list_orders(
+        self,
+        after_iso: Optional[str] = None,
+        before_iso: Optional[str] = None,
+        statuses: Optional[List[str]] = None,
+        per_page: int = 100,
+    ) -> List[Dict]:
+        """Paginate the WC orders endpoint, yielding the union across pages.
+
+        Dates are passed straight through as ISO-8601 strings (e.g.
+        '2024-01-01T00:00:00'). Pagination stops on an empty page.
+        """
+        all_orders: List[Dict] = []
+        page = 1
+        base_params: Dict[str, object] = {
+            "per_page": per_page,
+            "orderby": "date",
+            "order": "asc",
+        }
+        if after_iso:
+            base_params["after"] = after_iso
+        if before_iso:
+            base_params["before"] = before_iso
+        if statuses:
+            base_params["status"] = ",".join(statuses)
+
+        while True:
+            params = dict(base_params, page=page)
+            r = self.session.get(f"{self.api_url}/orders", params=params, timeout=60)
+            r.raise_for_status()
+            batch = r.json() or []
+            if not batch:
+                break
+            all_orders.extend(batch)
+            if len(batch) < per_page:
+                break
+            page += 1
+        return all_orders
 
     def update_invoice_number(self, order_id: int, new_number: str) -> bool:
         """Push our number into the WC PDF-Invoices plugin meta keys."""
@@ -144,4 +185,94 @@ def _extract_meta(order: Dict, keys: List[str]) -> Optional[str]:
             value = meta.get("value")
             if value:
                 return str(value)
+    return None
+
+
+_NUMBER_RE = re.compile(r"(\d+)")
+
+
+def extract_wc_invoice_info(order: Dict) -> Optional[Dict]:
+    """Pull the WCPDF invoice number/date out of an order's meta.
+
+    Returns None if no invoice number is present (the order has not been
+    invoiced yet by the WC PDF plugin).
+
+    Output keys:
+      - sequence  (int)            — the numeric part of the WC number
+      - raw_number (str)            — the original string for audit / display
+      - invoice_date (str)          — 'YYYY-MM-DD'
+      - year (int)                  — derived from invoice_date
+    """
+    raw_number = None
+    raw_date = None
+    raw_date_formatted = None
+    raw_data = None
+
+    for meta in order.get("meta_data") or []:
+        key = (meta.get("key") or "").lower()
+        if key == "_wcpdf_invoice_number":
+            raw_number = meta.get("value")
+        elif key == "_wcpdf_invoice_number_data":
+            raw_data = meta.get("value")
+        elif key == "_wcpdf_invoice_date":
+            raw_date = meta.get("value")
+        elif key == "_wcpdf_invoice_date_formatted":
+            raw_date_formatted = meta.get("value")
+
+    if raw_number in (None, "") and isinstance(raw_data, dict):
+        raw_number = raw_data.get("formatted_number") or raw_data.get("number")
+
+    if raw_number in (None, ""):
+        return None
+
+    raw_number_str = str(raw_number).strip()
+    matches = _NUMBER_RE.findall(raw_number_str)
+    if not matches:
+        logger.warning(
+            f"Order {order.get('id')}: invoice number {raw_number_str!r} "
+            f"contains no digits — skipping"
+        )
+        return None
+    sequence = int(matches[-1])
+
+    invoice_date = _coerce_date(raw_date_formatted) or _coerce_date(raw_date)
+    if not invoice_date:
+        for key in ("date_paid", "date_completed", "date_created"):
+            v = order.get(key)
+            if v:
+                invoice_date = str(v)[:10]
+                break
+    if not invoice_date:
+        invoice_date = datetime.now().strftime("%Y-%m-%d")
+
+    try:
+        year = int(invoice_date[:4])
+    except (TypeError, ValueError):
+        year = datetime.now().year
+
+    return {
+        "sequence": sequence,
+        "raw_number": raw_number_str,
+        "invoice_date": invoice_date,
+        "year": year,
+    }
+
+
+def _coerce_date(value) -> Optional[str]:
+    """Normalise a WC date meta value (unix ts or string) to 'YYYY-MM-DD'."""
+    if value in (None, ""):
+        return None
+    s = str(value).strip()
+    if s.isdigit():
+        try:
+            return datetime.fromtimestamp(int(s)).strftime("%Y-%m-%d")
+        except (OverflowError, OSError, ValueError):
+            return None
+    if len(s) >= 10 and s[4] == "-" and s[7] == "-":
+        return s[:10]
+    for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
     return None
