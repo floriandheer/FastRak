@@ -52,6 +52,10 @@ logger = get_logger(MODULE_NAME)
 # and returns True iff the corresponding action button should be shown.
 PROJECT_ACTION_PREDICATES = {
     "wordpress": lambda project, folder: is_wordpress_project(folder),
+    "physical_product": lambda project, folder: (
+        project.get("metadata", {}).get("physical_subtype", "") == "Product"
+        or bool(project.get("metadata", {}).get("is_product"))
+    ),
 }
 
 
