@@ -164,6 +164,18 @@ class GlobalInvoiceConfig:
             p = REPO_ROOT / p
         return p
 
+    def resolve_templates_dir(self) -> Path:
+        """Best-effort path to the folder holding .ott invoice templates.
+
+        Uses the parent of the first configured template; falls back to the
+        repo's canonical templates/invoice_templates_ott directory.
+        """
+        for c in self.companies:
+            p = self.resolve_template_path(c)
+            if p is not None:
+                return p.parent
+        return REPO_ROOT / "templates" / "invoice_templates_ott"
+
     def resolve_db_path(self) -> Path:
         raw = (self._raw.get("paths") or {}).get("db_path")
         if raw:

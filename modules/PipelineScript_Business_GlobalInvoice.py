@@ -33,7 +33,13 @@ from shared_form_keyboard import FORM_COLORS
 from shared_logging import get_logger, setup_logging as setup_shared_logging
 from shared_window_icon import apply_category_icon
 
-from global_invoice.config import ConfigError, load_config
+from global_invoice.config import ConfigError, DATA_DIR, load_config
+from global_invoice.debug_mode import (
+    DEBUG_SUBFOLDER_NAME,
+    DebugSession,
+    cleanup_debug_pdfs,
+    debug_boekhouding_base,
+)
 from global_invoice.filer import file_pdf
 from global_invoice.models import (
     Company, Invoice, LineItem,
@@ -71,10 +77,13 @@ class GlobalInvoiceGUI:
             return
 
         self.registry = InvoiceRegistry(self.config.resolve_db_path())
+        self.debug_session = DebugSession(DATA_DIR / "debug_session.json")
 
         self._build_styles()
         self._build_ui()
         self._refresh_dashboard()
+        self._refresh_debug_ui()
+        self.root.after(50, self._check_orphaned_debug_session)
 
     # --- styling -------------------------------------------------------------
 
@@ -142,6 +151,24 @@ class GlobalInvoiceGUI:
             font=("Arial", 9),
             fg="#cfe2ff", bg=C["accent_dark"],
         ).pack(side="right", padx=16)
+
+        # Debug-mode banner (shown only while a debug session is active).
+        self._debug_banner = tk.Frame(self.root, bg="#b91c1c", height=32)
+        self._debug_banner_label = tk.Label(
+            self._debug_banner,
+            text="",
+            font=("Arial", 11, "bold"),
+            fg="white", bg="#b91c1c",
+        )
+        self._debug_banner_label.pack(side="left", padx=16, pady=4)
+        tk.Button(
+            self._debug_banner, text="Exit debug mode",
+            command=self._exit_debug_mode,
+            bg="white", fg="#b91c1c",
+            activebackground="#fee2e2", activeforeground="#b91c1c",
+            relief=tk.FLAT, font=("Arial", 10, "bold"),
+            cursor="hand2", padx=10, pady=2,
+        ).pack(side="right", padx=12, pady=4)
 
         # Notebook
         self.notebook = ttk.Notebook(self.root, style="Invoice.TNotebook")
@@ -734,10 +761,12 @@ class GlobalInvoiceGUI:
 
         # Disable the button to prevent re-entry while soffice runs
         # (use threading; the registry write is fast but the conversion is slow)
+        debug_mode = self.debug_session.is_active()
         self._set_busy(True)
         threading.Thread(
             target=self._generate_invoice_worker,
-            args=(company, year, invoice_date_str, customer, template_path),
+            args=(company, year, invoice_date_str, customer, template_path,
+                  debug_mode),
             daemon=True,
         ).start()
 
@@ -748,6 +777,7 @@ class GlobalInvoiceGUI:
         invoice_date_str: str,
         customer: str,
         template_path: Path,
+        debug_mode: bool = False,
     ):
         try:
             draft = {
@@ -793,8 +823,10 @@ class GlobalInvoiceGUI:
                 soffice = self.config.resolve_soffice_path()
                 pdf_tmp = odt_to_pdf(tmp_odt, Path(td), soffice_path=soffice)
 
-                # 4) File into Boekhouding
+                # 4) File into Boekhouding (or its _DEBUG sibling in debug mode)
                 boekhouding_base = self.config.resolve_boekhouding_base()
+                if debug_mode:
+                    boekhouding_base = debug_boekhouding_base(boekhouding_base)
                 final_pdf = file_pdf(
                     pdf_tmp, boekhouding_base, company.output_prefix,
                     invoice_date_str, sequence, customer, move=True,
@@ -804,7 +836,7 @@ class GlobalInvoiceGUI:
             self.registry.finalize_invoice(invoice_id, str(final_pdf))
 
             # 6) Notify on the UI thread
-            self.root.after(0, self._on_generate_success, final_pdf)
+            self.root.after(0, self._on_generate_success, final_pdf, debug_mode)
         except (TemplateError, PdfExportError) as e:
             logger.exception("Render failed")
             self.root.after(0, self._on_generate_failure,
@@ -841,7 +873,12 @@ class GlobalInvoiceGUI:
             "notes": row.get("notes", ""),
         }
 
-    def _on_generate_success(self, final_pdf: Path):
+    def _on_generate_success(self, final_pdf: Path, debug_mode: bool = False):
+        if debug_mode and self.debug_session.is_active():
+            try:
+                self.debug_session.record_pdf(final_pdf)
+            except Exception as e:
+                logger.warning(f"Could not record debug PDF {final_pdf}: {e}")
         self._refresh_dashboard()
         self._refresh_preview()
         if self.config.auto_open_pdf_after_generate:
@@ -942,8 +979,214 @@ class GlobalInvoiceGUI:
         self._mk_button(wrap, "Open data folder",
                         lambda: _open_path(self.config.source_path.parent)
                         ).pack(anchor="w", pady=4)
+        self._mk_button(wrap, "Open templates folder",
+                        self._open_templates_folder).pack(anchor="w", pady=4)
         self._mk_button(wrap, "Run health check",
                         self._run_health_check).pack(anchor="w", pady=4)
+
+        # --- Debug mode section ----------------------------------------
+        sep = tk.Frame(wrap, bg=C["border"], height=1)
+        sep.pack(fill="x", pady=(20, 12))
+
+        tk.Label(wrap, text="Debug mode",
+                 fg=C["text"], bg=C["bg"], font=("Arial", 12, "bold")
+                 ).pack(anchor="w")
+        tk.Label(
+            wrap,
+            text=("Snapshots the invoice DB and files test invoices into "
+                  f"Boekhouding/{DEBUG_SUBFOLDER_NAME}/. Exit restores the DB "
+                  "and deletes the test PDFs, returning everything to the "
+                  "pre-debug state."),
+            fg=C["text_dim"], bg=C["bg"], wraplength=720, justify="left",
+        ).pack(anchor="w", pady=(2, 8))
+
+        self._debug_status_var = tk.StringVar(value="")
+        tk.Label(wrap, textvariable=self._debug_status_var,
+                 fg=C["text"], bg=C["bg"], font=("Arial", 10)
+                 ).pack(anchor="w", pady=(0, 6))
+
+        debug_btns = tk.Frame(wrap, bg=C["bg"])
+        debug_btns.pack(anchor="w")
+        self._enter_debug_btn = self._mk_button(
+            debug_btns, "🐛  Enter debug mode", self._enter_debug_mode,
+        )
+        self._enter_debug_btn.pack(side="left")
+        self._exit_debug_btn = self._mk_button(
+            debug_btns, "Exit debug mode", self._exit_debug_mode,
+        )
+        self._exit_debug_btn.pack(side="left", padx=(8, 0))
+
+    # =====================================================================
+    # Debug mode
+    # =====================================================================
+
+    def _open_templates_folder(self):
+        templates_dir = self.config.resolve_templates_dir()
+        if not templates_dir.exists():
+            messagebox.showinfo(
+                "Templates folder",
+                f"Folder does not exist yet:\n{templates_dir}",
+            )
+            return
+        _open_path(templates_dir)
+
+    def _refresh_debug_ui(self):
+        active = self.debug_session.is_active()
+        if active:
+            self._debug_banner_label.configure(
+                text=(f"🐛  DEBUG MODE ACTIVE — started "
+                      f"{self.debug_session.started_at or '?'} · "
+                      f"{len(self.debug_session.created_pdfs)} test PDF(s). "
+                      f"Exit restores the DB and deletes test PDFs."),
+            )
+            self._debug_banner.pack(fill="x", before=self.notebook)
+        else:
+            self._debug_banner.pack_forget()
+        # Settings-tab status + button enable/disable
+        if hasattr(self, "_debug_status_var"):
+            if active:
+                self._debug_status_var.set(
+                    f"Status: ACTIVE since {self.debug_session.started_at} · "
+                    f"{len(self.debug_session.created_pdfs)} test PDF(s) so far"
+                )
+            else:
+                self._debug_status_var.set("Status: inactive")
+        if hasattr(self, "_enter_debug_btn"):
+            self._enter_debug_btn.configure(
+                state=("disabled" if active else "normal"),
+            )
+            self._exit_debug_btn.configure(
+                state=("normal" if active else "disabled"),
+            )
+
+    def _enter_debug_mode(self):
+        if self.debug_session.is_active():
+            return
+        ok = messagebox.askyesno(
+            "Enter debug mode",
+            "Snapshot the invoice DB and switch to debug mode?\n\n"
+            "While active:\n"
+            f"  • Test invoices are filed into Boekhouding/{DEBUG_SUBFOLDER_NAME}/\n"
+            "  • The DB still records each invoice as if it were real\n"
+            "  • Exiting restores the DB snapshot and deletes the test PDFs\n\n"
+            "Continue?",
+        )
+        if not ok:
+            return
+        try:
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_path = DATA_DIR / f"invoices.sqlite.debug_{ts}.bak"
+            self.registry.backup_db(backup_path)
+            self.debug_session.start(backup_path)
+        except Exception as e:
+            logger.exception("Failed to start debug session")
+            messagebox.showerror(
+                "Enter debug mode", f"Could not start debug session:\n\n{e}",
+            )
+            return
+        self._refresh_debug_ui()
+        messagebox.showinfo(
+            "Debug mode",
+            "Debug mode is now ACTIVE.\n\n"
+            "Generate as many test invoices as you like — they will not "
+            "permanently change numbering or your Boekhouding tree.",
+        )
+
+    def _exit_debug_mode(self):
+        if not self.debug_session.is_active():
+            return
+        pdf_count = len(self.debug_session.created_pdfs)
+        ok = messagebox.askyesno(
+            "Exit debug mode",
+            f"Exit debug mode and roll back everything?\n\n"
+            f"This will:\n"
+            f"  • Restore the invoice DB from the snapshot\n"
+            f"  • Delete {pdf_count} test PDF(s) from "
+            f"Boekhouding/{DEBUG_SUBFOLDER_NAME}/\n\n"
+            f"Continue?",
+        )
+        if not ok:
+            return
+        report = self._perform_debug_rollback()
+        self._refresh_debug_ui()
+        self._refresh_dashboard()
+        self._refresh_preview()
+        messagebox.showinfo("Exit debug mode", report)
+
+    def _perform_debug_rollback(self) -> str:
+        """Restore the DB snapshot, delete tracked PDFs, clear the session.
+
+        Returns a human-readable summary suitable for a messagebox.
+        """
+        backup = self.debug_session.db_backup_path
+        pdfs = self.debug_session.created_pdfs
+        lines: List[str] = []
+
+        # 1) Restore DB
+        if backup and backup.exists():
+            try:
+                self.registry.restore_db(backup)
+                lines.append(f"✅  DB restored from {backup.name}")
+            except Exception as e:
+                logger.exception("DB restore failed")
+                lines.append(f"⚠️  DB restore FAILED: {e}")
+        else:
+            lines.append("⚠️  DB backup missing — could not restore.")
+
+        # 2) Delete tracked PDFs
+        result = cleanup_debug_pdfs(pdfs)
+        if result["deleted"]:
+            lines.append(f"✅  Deleted {len(result['deleted'])} test PDF(s)")
+        if result["missing"]:
+            lines.append(f"ℹ️  {len(result['missing'])} PDF(s) already gone")
+        if result["failed"]:
+            lines.append(
+                f"⚠️  {len(result['failed'])} PDF(s) could not be deleted "
+                f"(may be open in a viewer):\n  - "
+                + "\n  - ".join(result["failed"][:5])
+            )
+
+        # 3) Remove DB backup file
+        if backup and backup.exists():
+            try:
+                backup.unlink()
+            except OSError as e:
+                logger.warning(f"Could not remove DB backup {backup}: {e}")
+
+        # 4) Clear the session marker
+        self.debug_session.clear()
+        return "\n".join(lines) if lines else "Nothing to do."
+
+    def _check_orphaned_debug_session(self):
+        """If the marker file says we were mid-session at shutdown, ask the user."""
+        if not self.debug_session.is_active():
+            return
+        backup = self.debug_session.db_backup_path
+        if not backup or not backup.exists():
+            # Stale marker pointing at a missing backup — just clear it.
+            logger.warning("Stale debug marker with missing backup; clearing.")
+            self.debug_session.clear()
+            self._refresh_debug_ui()
+            return
+        started = self.debug_session.started_at or "(unknown time)"
+        pdf_count = len(self.debug_session.created_pdfs)
+        choice = messagebox.askyesnocancel(
+            "Debug session was interrupted",
+            f"A debug session from {started} was still active when the "
+            f"app last closed.\n\n"
+            f"  Snapshot: {backup.name}\n"
+            f"  Tracked test PDFs: {pdf_count}\n\n"
+            f"YES   — roll back now (restore DB + delete test PDFs)\n"
+            f"NO    — keep debug mode active and continue testing\n"
+            f"CANCEL — leave things as-is for now",
+        )
+        if choice is True:
+            report = self._perform_debug_rollback()
+            messagebox.showinfo("Debug rollback", report)
+        # Either way, refresh so the banner/state reflects reality.
+        self._refresh_debug_ui()
+        self._refresh_dashboard()
+        self._refresh_preview()
 
     # =====================================================================
     # Helpers

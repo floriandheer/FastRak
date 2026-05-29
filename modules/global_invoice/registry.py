@@ -9,6 +9,7 @@ Guarantees:
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
 import threading
 import time
@@ -496,6 +497,52 @@ class InvoiceRegistry:
             return [dict(r) for r in rows]
         finally:
             conn.close()
+
+    # ---------- backup / restore (debug mode) ----------
+
+    _SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
+
+    def checkpoint(self) -> None:
+        """Flush WAL into the main DB file so a plain file copy is a complete snapshot."""
+        conn = self._connect()
+        try:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+        finally:
+            conn.close()
+
+    def backup_db(self, dest: Path) -> Path:
+        """Copy the DB file (and any WAL/SHM sidecars) to `dest`. Returns `dest`."""
+        dest = Path(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        self.checkpoint()
+        shutil.copy2(str(self.db_path), str(dest))
+        for suffix in self._SIDECAR_SUFFIXES:
+            sidecar = Path(str(self.db_path) + suffix)
+            if sidecar.exists():
+                shutil.copy2(str(sidecar), str(dest) + suffix)
+        logger.info(f"Backed up DB {self.db_path} -> {dest}")
+        return dest
+
+    def restore_db(self, src: Path) -> None:
+        """Replace the DB file (and sidecars) with the backup at `src`.
+
+        Safe because connections are opened per call — there are no long-lived
+        handles to invalidate. Removes existing sidecars first so a clean copy
+        of the snapshot is restored.
+        """
+        src = Path(src)
+        if not src.exists():
+            raise FileNotFoundError(f"DB backup not found: {src}")
+        for suffix in ("",) + self._SIDECAR_SUFFIXES:
+            target = Path(str(self.db_path) + suffix)
+            if suffix and target.exists():
+                target.unlink()
+        shutil.copy2(str(src), str(self.db_path))
+        for suffix in self._SIDECAR_SUFFIXES:
+            sidecar = Path(str(src) + suffix)
+            if sidecar.exists():
+                shutil.copy2(str(sidecar), str(self.db_path) + suffix)
+        logger.info(f"Restored DB {self.db_path} from {src}")
 
     # ---------- diagnostics ----------
 
