@@ -19,7 +19,7 @@ import re
 import shutil
 import zipfile
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 from xml.etree import ElementTree as ET
 
 from shared_logging import get_logger
@@ -53,7 +53,9 @@ for prefix, uri in {
 
 
 TABLE_ROW_TAG = f"{{{NS['table']}}}table-row"
-ROW_MARKER = "{{line_item_row}}"
+ROW_MARKER          = "{{line_item_row}}"
+EXPENSE_ROW_MARKER  = "{{expense_item_row}}"
+EXPENSE_SEC_MARKER  = "{{expense_section_row}}"
 PLACEHOLDER_RE = re.compile(r"\{\{(\w+)\}\}")
 
 
@@ -66,6 +68,7 @@ def render_odt(
     output_path: Path,
     context: Dict[str, str],
     line_items: List[Dict[str, str]],
+    expense_items: Optional[List[Dict[str, str]]] = None,
 ) -> Path:
     """Render `template_path` to `output_path` with the given context.
 
@@ -73,9 +76,10 @@ def render_odt(
         template_path: A .ott or .odt file containing placeholders.
         output_path: Destination .odt file (parent dir must exist).
         context: Scalar {{key}} replacements. Values are stringified.
-        line_items: List of dicts with per-row keys (e.g. {desc, qty, ...}).
-                    A row containing {{line_item_row}} in the template will
-                    be cloned once per item.
+        line_items: Per-row dicts for rows tagged {{line_item_row}}.
+        expense_items: Per-row dicts for rows tagged {{expense_item_row}}.
+            Rows tagged {{expense_section_row}} are kept (once) when this
+            list is non-empty, removed when it is empty or None.
 
     Returns:
         output_path on success.
@@ -104,7 +108,7 @@ def render_odt(
         raise TemplateError(f"content.xml is not valid XML: {e}") from e
 
     root = tree.getroot()
-    _expand_line_item_rows(root, line_items)
+    _expand_row_groups(root, line_items, expense_items or [])
     _substitute_scalars(root, {k: str(v) for k, v in context.items()})
     new_content = ET.tostring(root, xml_declaration=True, encoding="UTF-8")
 
@@ -124,58 +128,111 @@ def render_odt(
 
 # ---------- internals ----------
 
-def _expand_line_item_rows(root: ET.Element, items: List[Dict[str, str]]) -> None:
-    """Find table rows containing {{line_item_row}} and clone them per item."""
-    # Walk every table-row in the document, identify markers, clone in place.
-    marker_rows: List[ET.Element] = []
+def _expand_row_groups(
+    root: ET.Element,
+    work_items: List[Dict[str, str]],
+    expense_items: List[Dict[str, str]],
+) -> None:
+    """Process all special row markers in document order.
+
+    - {{line_item_row}}      → cloned once per work item, marker stripped
+    - {{expense_item_row}}   → cloned once per expense item, marker stripped
+    - {{expense_section_row}}→ kept once (marker stripped) if expense_items
+                               is non-empty; entire row removed if empty
+    """
+    work_rows: List[ET.Element] = []
+    expense_rows: List[ET.Element] = []
+    section_rows: List[ET.Element] = []
+
     for row in root.iter(TABLE_ROW_TAG):
-        if _row_contains_marker(row):
-            marker_rows.append(row)
+        if _row_contains_text(row, ROW_MARKER):
+            work_rows.append(row)
+        elif _row_contains_text(row, EXPENSE_ROW_MARKER):
+            expense_rows.append(row)
+        elif _row_contains_text(row, EXPENSE_SEC_MARKER):
+            section_rows.append(row)
 
-    if not marker_rows:
-        if items:
-            logger.warning(
-                f"Template has no {{line_item_row}} marker but {len(items)} "
-                f"line items were provided — line items will be omitted from PDF"
-            )
+    if not work_rows and work_items:
+        logger.warning(
+            f"Template has no {{line_item_row}} marker but {len(work_items)} "
+            f"work items provided — they will be omitted from the PDF"
+        )
+
+    for marker_row in work_rows:
+        _expand_repeating_row(root, marker_row, work_items, ROW_MARKER)
+
+    for marker_row in expense_rows:
+        _expand_repeating_row(root, marker_row, expense_items, EXPENSE_ROW_MARKER)
+
+    for sec_row in section_rows:
+        _handle_section_row(root, sec_row, bool(expense_items), EXPENSE_SEC_MARKER)
+
+
+def _expand_repeating_row(
+    root: ET.Element,
+    marker_row: ET.Element,
+    items: List[Dict[str, str]],
+    marker_text: str,
+) -> None:
+    parent = _find_parent(root, marker_row)
+    if parent is None:
+        logger.warning("Marker row has no parent — skipping")
         return
-
-    for marker_row in marker_rows:
-        parent = _find_parent(root, marker_row)
-        if parent is None:
-            logger.warning("Marker row has no parent — skipping")
-            continue
-        idx = list(parent).index(marker_row)
-
-        # Build the clones first so we don't mutate during iteration
-        clones: List[ET.Element] = []
-        for item in items:
-            cloned = _deep_clone(marker_row)
-            _strip_marker(cloned)
-            _substitute_scalars(cloned, {k: str(v) for k, v in item.items()})
-            clones.append(cloned)
-
-        # Replace the marker row with the clones in document order
-        parent.remove(marker_row)
-        for offset, c in enumerate(clones):
-            parent.insert(idx + offset, c)
+    idx = list(parent).index(marker_row)
+    clones: List[ET.Element] = []
+    for item in items:
+        cloned = _deep_clone(marker_row)
+        _strip_text(cloned, marker_text)
+        _substitute_scalars(cloned, {k: str(v) for k, v in item.items()})
+        clones.append(cloned)
+    parent.remove(marker_row)
+    for offset, c in enumerate(clones):
+        parent.insert(idx + offset, c)
 
 
-def _row_contains_marker(row: ET.Element) -> bool:
+def _handle_section_row(
+    root: ET.Element,
+    sec_row: ET.Element,
+    keep: bool,
+    marker_text: str,
+) -> None:
+    if keep:
+        _strip_text(sec_row, marker_text)
+    else:
+        parent = _find_parent(root, sec_row)
+        if parent is not None:
+            parent.remove(sec_row)
+
+
+# Keep old name as alias so external callers aren't broken.
+def _expand_line_item_rows(root: ET.Element, items: List[Dict[str, str]]) -> None:
+    _expand_row_groups(root, items, [])
+
+
+def _row_contains_text(row: ET.Element, text: str) -> bool:
     for el in row.iter():
-        if el.text and ROW_MARKER in el.text:
+        if el.text and text in el.text:
             return True
-        if el.tail and ROW_MARKER in el.tail:
+        if el.tail and text in el.tail:
             return True
     return False
 
 
+# Keep old names as aliases for external callers.
+def _row_contains_marker(row: ET.Element) -> bool:
+    return _row_contains_text(row, ROW_MARKER)
+
+
 def _strip_marker(row: ET.Element) -> None:
-    for el in row.iter():
-        if el.text and ROW_MARKER in el.text:
-            el.text = el.text.replace(ROW_MARKER, "")
-        if el.tail and ROW_MARKER in el.tail:
-            el.tail = el.tail.replace(ROW_MARKER, "")
+    _strip_text(row, ROW_MARKER)
+
+
+def _strip_text(el: ET.Element, text: str) -> None:
+    for node in el.iter():
+        if node.text and text in node.text:
+            node.text = node.text.replace(text, "")
+        if node.tail and text in node.tail:
+            node.tail = node.tail.replace(text, "")
 
 
 def _deep_clone(el: ET.Element) -> ET.Element:

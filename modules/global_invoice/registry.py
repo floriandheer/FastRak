@@ -117,6 +117,14 @@ class InvoiceRegistry:
                 if row is None:
                     conn.execute("INSERT INTO schema_version (version) VALUES (?)",
                                  (SCHEMA_VERSION,))
+                # Idempotent migrations — add columns that may not exist yet.
+                try:
+                    conn.execute(
+                        "ALTER TABLE invoices ADD COLUMN "
+                        "expense_items_json TEXT NOT NULL DEFAULT '[]'"
+                    )
+                except Exception:
+                    pass  # column already exists
                 self._initialised = True
             finally:
                 conn.close()
@@ -250,13 +258,15 @@ class InvoiceRegistry:
                     INSERT INTO invoices
                       (year, sequence, company_key, invoice_date,
                        customer_name, customer_vat, customer_address, customer_email,
-                       line_items_json, subtotal_cents, vat_cents, total_cents,
+                       line_items_json, expense_items_json,
+                       subtotal_cents, vat_cents, total_cents,
                        currency, status, source, source_ref, notes,
                        created_at, updated_at)
                     VALUES
                       (:year, :sequence, :company_key, :invoice_date,
                        :customer_name, :customer_vat, :customer_address, :customer_email,
-                       :line_items_json, :subtotal_cents, :vat_cents, :total_cents,
+                       :line_items_json, :expense_items_json,
+                       :subtotal_cents, :vat_cents, :total_cents,
                        :currency, 'draft', :source, :source_ref, :notes,
                        :created_at, :updated_at)
                     """,
@@ -346,13 +356,15 @@ class InvoiceRegistry:
                 INSERT INTO invoices
                   (year, sequence, company_key, invoice_date,
                    customer_name, customer_vat, customer_address, customer_email,
-                   line_items_json, subtotal_cents, vat_cents, total_cents,
+                   line_items_json, expense_items_json,
+                   subtotal_cents, vat_cents, total_cents,
                    currency, status, pdf_path, source, source_ref, notes,
                    created_at, updated_at)
                 VALUES
                   (:year, :sequence, :company_key, :invoice_date,
                    :customer_name, :customer_vat, :customer_address, :customer_email,
-                   :line_items_json, :subtotal_cents, :vat_cents, :total_cents,
+                   :line_items_json, :expense_items_json,
+                   :subtotal_cents, :vat_cents, :total_cents,
                    :currency, 'issued', :pdf_path, :source, :source_ref, :notes,
                    :created_at, :updated_at)
                 """,
@@ -585,23 +597,24 @@ class InvoiceRegistry:
 
 def _row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
     d = dict(row)
-    if d.get("line_items_json"):
-        try:
-            d["line_items"] = json.loads(d["line_items_json"])
-        except json.JSONDecodeError:
-            d["line_items"] = []
-    else:
-        d["line_items"] = []
+    for key, dest in [("line_items_json", "line_items"),
+                      ("expense_items_json", "expense_items")]:
+        if d.get(key):
+            try:
+                d[dest] = json.loads(d[key])
+            except json.JSONDecodeError:
+                d[dest] = []
+        else:
+            d[dest] = []
     return d
 
 
-def _draft_to_row(draft: Dict[str, Any], year: int, sequence: int) -> Dict[str, Any]:
-    line_items = draft.get("line_items", [])
-    # Accept LineItem objects or plain dicts
+def _serialize_items(items) -> tuple[List[dict], int, int]:
+    """Serialize a list of LineItem or dict items; return (serialised, subtotal, vat)."""
     serialised: List[dict] = []
     subtotal = 0
     vat = 0
-    for li in line_items:
+    for li in items:
         if isinstance(li, LineItem):
             serialised.append(li.to_dict())
             subtotal += li.line_subtotal_cents
@@ -611,7 +624,15 @@ def _draft_to_row(draft: Dict[str, Any], year: int, sequence: int) -> Dict[str, 
             serialised.append(obj.to_dict())
             subtotal += obj.line_subtotal_cents
             vat += obj.line_vat_cents
-    total = subtotal + vat
+    return serialised, subtotal, vat
+
+
+def _draft_to_row(draft: Dict[str, Any], year: int, sequence: int) -> Dict[str, Any]:
+    work_ser, work_sub, work_vat = _serialize_items(draft.get("line_items", []))
+    exp_ser, exp_sub, exp_vat   = _serialize_items(draft.get("expense_items", []))
+    subtotal = work_sub + exp_sub
+    vat      = work_vat + exp_vat
+    total    = subtotal + vat
 
     inv_date = draft["invoice_date"]
     if isinstance(inv_date, (datetime, date)):
@@ -627,7 +648,8 @@ def _draft_to_row(draft: Dict[str, Any], year: int, sequence: int) -> Dict[str, 
         "customer_vat": draft.get("customer_vat", "") or "",
         "customer_address": draft.get("customer_address", "") or "",
         "customer_email": draft.get("customer_email", "") or "",
-        "line_items_json": json.dumps(serialised, ensure_ascii=False),
+        "line_items_json": json.dumps(work_ser, ensure_ascii=False),
+        "expense_items_json": json.dumps(exp_ser, ensure_ascii=False),
         "subtotal_cents": subtotal,
         "vat_cents": vat,
         "total_cents": total,

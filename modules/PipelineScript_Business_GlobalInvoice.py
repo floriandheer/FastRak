@@ -558,7 +558,7 @@ class GlobalInvoiceGUI:
         row += 1
 
         # --- right column: line items grid + totals ---
-        tk.Label(right, text="Line items",
+        tk.Label(right, text="Work items",
                  fg=C["text"], bg=C["bg"], font=("Arial", 11, "bold"),
                  ).pack(anchor="w")
 
@@ -568,7 +568,7 @@ class GlobalInvoiceGUI:
         li_cols = ("description", "qty", "unit_price", "vat_rate", "line_total")
         self.li_tree = ttk.Treeview(
             li_frame, columns=li_cols, show="headings",
-            style="Invoice.Treeview", height=10,
+            style="Invoice.Treeview", height=7,
         )
         for c, w, anchor in [
             ("description", 280, "w"),
@@ -590,12 +590,69 @@ class GlobalInvoiceGUI:
         self._line_items: List[LineItem] = []
 
         li_btns = tk.Frame(right, bg=C["bg"])
-        li_btns.pack(fill="x", pady=(4, 8))
-        self._mk_button(li_btns, "Add line", self._add_line_item).pack(side="left")
-        self._mk_button(li_btns, "Edit selected", self._edit_line_item
-                        ).pack(side="left", padx=(8, 0))
-        self._mk_button(li_btns, "Remove selected", self._remove_line_item
-                        ).pack(side="left", padx=(8, 0))
+        li_btns.pack(fill="x", pady=(4, 4))
+        self._mk_button(li_btns, "Add", self._add_line_item).pack(side="left")
+        self._mk_button(li_btns, "Edit", self._edit_line_item
+                        ).pack(side="left", padx=(6, 0))
+        self._mk_button(li_btns, "Remove", self._remove_line_item
+                        ).pack(side="left", padx=(6, 0))
+
+        # --- Onkosten (expenses) section ---
+        sep = tk.Frame(right, bg=C["text_dim"], height=1)
+        sep.pack(fill="x", pady=(6, 4))
+
+        self._show_onkosten = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            right, text="Include expenses (Onkosten)",
+            variable=self._show_onkosten,
+            command=self._toggle_onkosten,
+            fg=C["text"], bg=C["bg"],
+            activeforeground=C["text"], activebackground=C["bg"],
+            selectcolor=C["bg_input"],
+        ).pack(anchor="w")
+
+        # Container that is always packed; content is shown/hidden inside it.
+        self._exp_wrapper = tk.Frame(right, bg=C["bg"])
+        self._exp_wrapper.pack(fill="both", expand=False)
+
+        self._exp_items_frame = tk.Frame(self._exp_wrapper, bg=C["bg"])
+        tk.Label(self._exp_items_frame, text="Expense items",
+                 fg=C["text"], bg=C["bg"], font=("Arial", 11, "bold"),
+                 ).pack(anchor="w", pady=(4, 0))
+
+        exp_tree_frame = tk.Frame(self._exp_items_frame, bg=C["bg"])
+        exp_tree_frame.pack(fill="both", expand=True, pady=(4, 0))
+
+        self.exp_tree = ttk.Treeview(
+            exp_tree_frame, columns=li_cols, show="headings",
+            style="Invoice.Treeview", height=5,
+        )
+        for c, w, anchor in [
+            ("description", 280, "w"),
+            ("qty", 60, "e"),
+            ("unit_price", 110, "e"),
+            ("vat_rate", 70, "e"),
+            ("line_total", 110, "e"),
+        ]:
+            self.exp_tree.heading(c, text=c.replace("_", " ").capitalize())
+            self.exp_tree.column(c, width=w, anchor=anchor,
+                                 stretch=(c == "description"))
+        exp_sb = ttk.Scrollbar(exp_tree_frame, orient="vertical",
+                               command=self.exp_tree.yview)
+        self.exp_tree.configure(yscrollcommand=exp_sb.set)
+        self.exp_tree.pack(side="left", fill="both", expand=True)
+        exp_sb.pack(side="right", fill="y")
+        self.exp_tree.bind("<Double-1>", lambda _e: self._edit_expense_item())
+
+        self._expense_items: List[LineItem] = []
+
+        exp_btns = tk.Frame(self._exp_items_frame, bg=C["bg"])
+        exp_btns.pack(fill="x", pady=(4, 4))
+        self._mk_button(exp_btns, "Add", self._add_expense_item).pack(side="left")
+        self._mk_button(exp_btns, "Edit", self._edit_expense_item
+                        ).pack(side="left", padx=(6, 0))
+        self._mk_button(exp_btns, "Remove", self._remove_expense_item
+                        ).pack(side="left", padx=(6, 0))
 
         # Totals
         totals = tk.Frame(right, bg=C["bg"])
@@ -663,6 +720,62 @@ class GlobalInvoiceGUI:
         del self._line_items[idx]
         self._refresh_line_items()
 
+    # --- Onkosten toggle ---
+
+    def _toggle_onkosten(self):
+        if self._show_onkosten.get():
+            self._exp_items_frame.pack(fill="both", expand=True)
+        else:
+            self._exp_items_frame.pack_forget()
+            self._expense_items = []
+            self._refresh_expense_items()
+
+    # --- Expense item CRUD ---
+
+    def _add_expense_item(self):
+        company = self._current_company()
+        default_rate = company.default_vat_rate if company else 21.0
+        item = LineItemDialog(self.root, default_vat_rate=default_rate).result
+        if item is None:
+            return
+        self._expense_items.append(item)
+        self._refresh_expense_items()
+
+    def _edit_expense_item(self):
+        sel = self.exp_tree.selection()
+        if not sel:
+            return
+        idx = int(sel[0])
+        item = LineItemDialog(self.root, existing=self._expense_items[idx]).result
+        if item is None:
+            return
+        self._expense_items[idx] = item
+        self._refresh_expense_items()
+
+    def _remove_expense_item(self):
+        sel = self.exp_tree.selection()
+        if not sel:
+            return
+        idx = int(sel[0])
+        del self._expense_items[idx]
+        self._refresh_expense_items()
+
+    def _refresh_expense_items(self):
+        for iid in self.exp_tree.get_children():
+            self.exp_tree.delete(iid)
+        for idx, li in enumerate(self._expense_items):
+            self.exp_tree.insert(
+                "", "end", iid=str(idx),
+                values=(
+                    li.description,
+                    f"{li.quantity:g}",
+                    format_money_plain(li.unit_price_cents),
+                    f"{li.vat_rate:g}%",
+                    format_money_plain(li.line_total_cents),
+                ),
+            )
+        self._refresh_totals()
+
     def _refresh_line_items(self):
         for iid in self.li_tree.get_children():
             self.li_tree.delete(iid)
@@ -677,8 +790,12 @@ class GlobalInvoiceGUI:
                     format_money_plain(li.line_total_cents),
                 ),
             )
-        subtotal = sum(li.line_subtotal_cents for li in self._line_items)
-        vat = sum(li.line_vat_cents for li in self._line_items)
+        self._refresh_totals()
+
+    def _refresh_totals(self):
+        all_items = self._line_items + self._expense_items
+        subtotal = sum(li.line_subtotal_cents for li in all_items)
+        vat = sum(li.line_vat_cents for li in all_items)
         total = subtotal + vat
         self._tot_subtotal.set(format_money(subtotal))
         self._tot_vat.set(format_money(vat))
@@ -693,7 +810,11 @@ class GlobalInvoiceGUI:
         self._new_date.set(date.today().isoformat())
         self._new_year.set(str(datetime.now().year))
         self._line_items = []
+        self._expense_items = []
+        self._show_onkosten.set(False)
+        self._exp_items_frame.pack_forget()
         self._refresh_line_items()
+        self._refresh_expense_items()
         self._refresh_preview()
 
     def _current_company(self) -> Optional[Company]:
@@ -788,6 +909,7 @@ class GlobalInvoiceGUI:
                 "customer_email": self._new_customer_email.get().strip(),
                 "customer_address": self._new_addr.get("1.0", "end").strip(),
                 "line_items": self._line_items,
+                "expense_items": self._expense_items,
                 "currency": self.config.currency,
                 "source": "manual",
                 "source_ref": None,
@@ -804,20 +926,26 @@ class GlobalInvoiceGUI:
 
             # 2) Build template context + render to ODT in temp dir
             ctx = self._build_template_context(company, row)
-            line_item_ctx = [
-                {
-                    "desc": li.description,
-                    "qty": f"{li.quantity:g}",
-                    "unit_price": format_money_plain(li.unit_price_cents),
-                    "vat_rate": f"{li.vat_rate:g}%",
-                    "line_total": format_money_plain(li.line_total_cents),
-                }
-                for li in self._line_items
-            ]
+
+            def _li_ctx(items):
+                return [
+                    {
+                        "desc": li.description,
+                        "qty": f"{li.quantity:g}",
+                        "unit_price": format_money_plain(li.unit_price_cents),
+                        "vat_rate": f"{li.vat_rate:g}%",
+                        "line_total": format_money_plain(li.line_total_cents),
+                    }
+                    for li in items
+                ]
 
             with tempfile.TemporaryDirectory(prefix="gi_render_") as td:
                 tmp_odt = Path(td) / f"{template_path.stem}_{sequence:03d}.odt"
-                render_odt(template_path, tmp_odt, ctx, line_item_ctx)
+                render_odt(
+                    template_path, tmp_odt, ctx,
+                    _li_ctx(self._line_items),
+                    expense_items=_li_ctx(self._expense_items),
+                )
 
                 # 3) Convert to PDF
                 soffice = self.config.resolve_soffice_path()
@@ -852,10 +980,20 @@ class GlobalInvoiceGUI:
 
     def _build_template_context(self, company: Company, row: Dict[str, Any]
                                 ) -> Dict[str, str]:
+        addr_lines = [l for l in (row["customer_address"] or "").splitlines() if l.strip()]
+        addr1 = addr_lines[0] if len(addr_lines) > 0 else ""
+        addr2 = addr_lines[1] if len(addr_lines) > 1 else ""
+        addr3 = addr_lines[2] if len(addr_lines) > 2 else ""
+
+        inv_date = datetime.strptime(row["invoice_date"], "%Y-%m-%d").date()
+        from datetime import timedelta
+        due_date = (inv_date + timedelta(days=30)).strftime("%d/%m/%Y")
+
         return {
             "invoice_number": f"{row['sequence']:03d}",
             "invoice_year": str(row["year"]),
-            "invoice_date": row["invoice_date"],
+            "invoice_date": inv_date.strftime("%d/%m/%Y"),
+            "due_date": due_date,
             "company_legal_name": company.legal_name,
             "company_vat": company.vat,
             "company_address": company.address_block,
@@ -865,6 +1003,9 @@ class GlobalInvoiceGUI:
             "customer_name": row["customer_name"],
             "customer_vat": row["customer_vat"] or "",
             "customer_address": row["customer_address"] or "",
+            "customer_address_1": addr1,
+            "customer_address_2": addr2,
+            "customer_address_3": addr3,
             "customer_email": row["customer_email"] or "",
             "subtotal": format_money(row["subtotal_cents"], row["currency"]),
             "vat": format_money(row["vat_cents"], row["currency"]),
