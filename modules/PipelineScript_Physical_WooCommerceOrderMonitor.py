@@ -5,6 +5,16 @@ WooCommerce Order Monitor & Auto-Organizer
 Author: Florian Dheer
 Version: 2.1.0
 Description: Automatically monitor WooCommerce orders and organize order folders by downloading invoices, labels, and documents
+
+⚠ DEPRECATED GUI — the Tk window built by `main()` is superseded by
+   PipelineScript_Business_InvoicesApp.py (Orders section).
+
+   The backend classes in this file (Config, OrderMonitor,
+   WooCommerceClient, DocumentManager, InvoiceFiler,
+   ProcessedOrdersTracker) are still imported by the new app — DO NOT
+   delete this file outright. See DELETE_AFTER_VERIFICATION.md for the
+   migration plan: either keep this file as a backend-only library, or
+   relocate its classes into invoices_app/wc_monitor/ before deletion.
 """
 
 import os

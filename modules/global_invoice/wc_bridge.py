@@ -42,6 +42,7 @@ class WooCommerceBridge:
         self.session.auth = HTTPBasicAuth(
             credentials["consumer_key"], credentials["consumer_secret"]
         )
+        self.monitor_secret_key: str = credentials.get("monitor_secret_key", "") or ""
 
     def test_connection(self) -> tuple[bool, str]:
         try:
@@ -115,6 +116,72 @@ class WooCommerceBridge:
             return True
         except Exception as e:
             logger.error(f"WC order {order_id}: failed to set invoice number: {e}")
+            return False
+
+
+    def create_order(
+        self,
+        customer: Dict,
+        line_items: List[Dict],
+        status: str = "completed",
+    ) -> Optional[Dict]:
+        """Create a manual WooCommerce order and return the order dict, or None on failure.
+
+        customer  — billing dict: first_name, last_name, email, address_1, postcode, city, country
+        line_items — list of dicts: name, quantity, total (string price excl. tax)
+        """
+        try:
+            r = self.session.post(
+                f"{self.api_url}/orders",
+                json={"status": status, "billing": customer, "line_items": line_items, "set_paid": True},
+                timeout=30,
+            )
+            r.raise_for_status()
+            order = r.json()
+            logger.info(f"Created WC order #{order.get('number', order['id'])}")
+            return order
+        except Exception as e:
+            logger.error(f"Failed to create WC order: {e}")
+            return None
+
+    def download_invoice_pdf(self, order_id: int, save_path: "Path") -> bool:
+        """Download invoice PDF via the pipeline_get_invoice WordPress AJAX endpoint.
+
+        Requires monitor_secret_key to be set in the credentials dict passed to __init__.
+        """
+        if not self.monitor_secret_key:
+            logger.warning("monitor_secret_key not set — cannot download invoice PDF")
+            return False
+        try:
+            endpoint = f"{self.base_url}/wp-admin/admin-ajax.php"
+            r = self.session.get(
+                endpoint,
+                params={"action": "pipeline_get_invoice", "order_id": order_id, "secret": self.monitor_secret_key},
+                timeout=30,
+                allow_redirects=False,
+            )
+            if r.status_code in (301, 302, 303, 307, 308):
+                logger.error(f"Invoice endpoint redirected for order {order_id} — check server config")
+                return False
+            if r.status_code != 200:
+                logger.error(f"Invoice endpoint returned HTTP {r.status_code} for order {order_id}")
+                return False
+            content_type = r.headers.get("content-type", "")
+            if "pdf" not in content_type:
+                try:
+                    msg = r.json().get("data") or r.json().get("message") or "unknown error"
+                except ValueError:
+                    msg = f"unexpected content-type '{content_type}'"
+                logger.error(f"Invoice download failed for order {order_id}: {msg}")
+                return False
+            from pathlib import Path as _Path
+            _Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+            with open(save_path, "wb") as f:
+                f.write(r.content)
+            logger.info(f"Downloaded invoice PDF for order {order_id}: {save_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to download invoice PDF for order {order_id}: {e}")
             return False
 
 
