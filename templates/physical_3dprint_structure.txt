@@ -10,7 +10,8 @@
 |   |   \---Affinity [CONDITIONAL:affinity]
 |   +---Documentation
 |   |   +---Product_Photo
-|   |   |   \---RAW
+|   |   |   +---RAW
+|   |   |   \---Publish
 |   |   \---Product_Video
 |   |       \---Footage
 +---03_Outgoing

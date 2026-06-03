@@ -63,6 +63,9 @@ logger = get_logger("pipeline")
 
 # Import Project Tracker for embedded use (from top-level file)
 from fastrak_project_explorer import ProjectTrackerApp
+# Invoice Manager is embedded in the right panel when the Business
+# category is selected (in place of the project tracker).
+from invoice_manager.app import InvoiceManager
 
 
 def event_has_shift(event) -> bool:
@@ -669,8 +672,13 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
         self.left_scroll.rebind_mousewheel()
 
         # ═══════════════════════════════════════════════════════════
-        # RIGHT PANEL: Project Tracker
+        # RIGHT PANEL: Project Tracker (creative categories) OR
+        #              Invoice Manager (Business category)
         # ═══════════════════════════════════════════════════════════
+        # Both share the same slot — only one is packed at a time;
+        # `_apply_categories` swaps based on the active selection.
+        self._right_panel_parent = main_container
+
         self.tracker_panel = tk.Frame(main_container, bg=COLORS["bg_primary"])
         self.tracker_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
@@ -687,8 +695,51 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
             session=self.session,
         )
 
+        # Invoice Manager panel — created here but built lazily on
+        # first Business selection so launch stays fast for users who
+        # never visit Business.
+        self.invoice_manager_panel = tk.Frame(
+            main_container, bg=COLORS["bg_primary"]
+        )
+        self.invoice_manager = None  # populated by _ensure_invoice_manager
+
         # Restore state from last session (run once at startup)
         self._restore_session_state()
+
+    # ----- right-panel swap helpers ---------------------------------
+
+    def _ensure_invoice_manager(self):
+        """Lazy-create the embedded InvoiceManager on first Business select."""
+        if self.invoice_manager is None:
+            self.invoice_manager = InvoiceManager(
+                self.invoice_manager_panel, embedded=True,
+            )
+
+    def _show_invoice_manager_panel(self):
+        """Swap the right-hand slot to the Invoice Manager."""
+        if hasattr(self, 'tracker_panel'):
+            self.tracker_panel.pack_forget()
+        self._ensure_invoice_manager()
+        if not self.invoice_manager_panel.winfo_ismapped():
+            self.invoice_manager_panel.pack(
+                side=tk.RIGHT, fill=tk.BOTH, expand=True,
+            )
+
+    def _show_tracker_panel(self):
+        """Swap the right-hand slot back to the Project Tracker."""
+        if hasattr(self, 'invoice_manager_panel'):
+            self.invoice_manager_panel.pack_forget()
+        if not self.tracker_panel.winfo_ismapped():
+            self.tracker_panel.pack(
+                side=tk.RIGHT, fill=tk.BOTH, expand=True,
+            )
+
+    def _hide_right_panels(self):
+        """Hide both right-hand slots (operations-only selection)."""
+        if hasattr(self, 'tracker_panel'):
+            self.tracker_panel.pack_forget()
+        if hasattr(self, 'invoice_manager_panel'):
+            self.invoice_manager_panel.pack_forget()
 
     def _restore_session_state(self):
         """Restore saved state from last session (category, scope, etc.).
@@ -873,21 +924,27 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
         self.config_manager.config["last_selected_categories"] = list(self.selected_categories)
         self.config_manager._save_config()
 
-        # Show/hide project tracker and push the selection down to it.
+        # Swap the right panel between Project Tracker (creative
+        # categories) and Invoice Manager (Business). When the
+        # selection is operations-only with no Business, both hide.
         if hasattr(self, 'project_tracker') and self.project_tracker:
             creative_selected = [k for k in self.selected_categories if k in CREATIVE_CATEGORIES]
+            business_selected = "BUSINESS" in self.selected_categories
             if creative_selected:
-                if hasattr(self, 'tracker_panel'):
-                    self.tracker_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+                # Creative wins when both creative + business are picked —
+                # the tracker is the everyday view; users can still hit
+                # the Business button alone to flip to invoices.
+                self._show_tracker_panel()
                 category_names = [
                     CREATIVE_CATEGORIES.get(k, {}).get("name", k) for k in creative_selected
                 ]
                 if hasattr(self.project_tracker, 'set_categories'):
                     self.project_tracker.set_categories(category_names)
+            elif business_selected:
+                self._show_invoice_manager_panel()
             else:
-                # Operations-only (or empty) selection — hide tracker.
-                if hasattr(self, 'tracker_panel'):
-                    self.tracker_panel.pack_forget()
+                # Operations-only (e.g. Global) or empty — hide both.
+                self._hide_right_panels()
 
     def _clear_category_selection(self):
         """Clear category selection to show all projects.
@@ -898,11 +955,12 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
         """
         self.session.clear_categories()
 
-        # Hide the category panel; re-show the project tracker unconditionally.
+        # Hide the category panel; re-show the project tracker
+        # unconditionally (clear = "show me all projects", which is a
+        # tracker view, not a Business view).
         if hasattr(self, 'category_panel_outer'):
             self.category_panel_outer.pack_forget()
-        if hasattr(self, 'tracker_panel'):
-            self.tracker_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        self._show_tracker_panel()
 
     def _set_scope(self, scope: str):
         """Keyboard/shortcut entry point: select a single scope."""
@@ -2114,6 +2172,14 @@ def main():
 
     # Create main application
     app = ProfessionalPipelineGUI(root)
+
+    # Pin the hub to the bottom of the Windows z-order so it behaves
+    # like a launcher pane — other apps and standalone module windows
+    # always appear above, even when the user clicks on the hub.
+    # Toggleable via rak_settings (ui.always_on_bottom).
+    if get_rak_settings().get_always_on_bottom():
+        from shared_window_zorder import install_keep_on_bottom
+        install_keep_on_bottom(root)
 
     # Bind keyboard shortcuts - existing
     root.bind('<Control-comma>', lambda e: app.open_settings())

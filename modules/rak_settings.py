@@ -138,7 +138,13 @@ class RakSettings:
         },
         # UI preferences
         "ui": {
-            "start_fullscreen": False
+            "start_fullscreen": False,
+            # When True, the FastRak hub window stays at the bottom of
+            # the Windows z-order — clicking it does not bring it to
+            # the foreground, other apps always appear on top.
+            # Standalone module windows (Tk Toplevels from subprocess
+            # launchers) are unaffected and float above as usual.
+            "always_on_bottom": True
         },
         # Global software version defaults (one version per software, used everywhere)
         "software_defaults": {
@@ -166,6 +172,16 @@ class RakSettings:
             "nas_software_path": "D:\\_work\\_PIPELINE\\Software",
             "mapped_software_path": "P:\\Software",
             "launchers_base_path": "P:\\Launchers"
+        },
+        # Business / invoices — authoritative paths for InvoiceManager.
+        # Empty strings mean "auto-derive" (see getters): boekhouding_base
+        # falls back to <active_base>/_LIBRARY/Boekhouding, invoice_db_path
+        # to AppData/PipelineManager/global_invoice/invoices.sqlite, and
+        # soffice_path to PATH lookup + common install locations.
+        "business": {
+            "boekhouding_base": "",
+            "invoice_db_path": "",
+            "soffice_path": ""
         }
     }
 
@@ -266,6 +282,10 @@ class RakSettings:
         if "software_sync" in loaded:
             result["software_sync"].update(loaded["software_sync"])
 
+        # Update business / invoices paths (preserve user customizations)
+        if "business" in loaded:
+            result["business"].update(loaded["business"])
+
         # Preserve version from loaded if newer
         if "version" in loaded:
             result["version"] = loaded["version"]
@@ -303,6 +323,17 @@ class RakSettings:
         self.config["ui"]["start_fullscreen"] = value
         self._save()
 
+    def get_always_on_bottom(self) -> bool:
+        """Whether the FastRak hub stays beneath all other windows."""
+        return self.config.get("ui", {}).get("always_on_bottom", True)
+
+    def set_always_on_bottom(self, value: bool):
+        """Set whether the FastRak hub stays beneath all other windows."""
+        if "ui" not in self.config:
+            self.config["ui"] = {}
+        self.config["ui"]["always_on_bottom"] = value
+        self._save()
+
     def get_work_drive(self) -> str:
         """Get the work drive letter (e.g., 'I:')."""
         return self.config["drives"]["work"]
@@ -324,6 +355,39 @@ class RakSettings:
         """Get the base path for software launchers (e.g., 'D:\\_work\\_PIPELINE\\Launchers')."""
         return self.config.get("software_sync", {}).get(
             "launchers_base_path", "D:\\_work\\_PIPELINE\\Launchers")
+
+    # ----- Business / invoices paths --------------------------------
+
+    def get_boekhouding_base_explicit(self) -> str:
+        """Raw user-set value from rak_config.json — empty if unset."""
+        return (self.config.get("business") or {}).get("boekhouding_base", "")
+
+    def get_boekhouding_base(self) -> str:
+        """Authoritative bookkeeping root used by InvoiceManager.
+
+        Returns the explicit override if configured, otherwise derives
+        ``<active_base>/_LIBRARY/Boekhouding`` so a fresh machine works
+        out of the box.
+        """
+        explicit = self.get_boekhouding_base_explicit()
+        if explicit:
+            return explicit
+        return f"{self.get_active_base()}\\_LIBRARY\\Boekhouding"
+
+    def get_invoice_db_path(self) -> str:
+        """Override path for the invoice registry SQLite DB.
+
+        Empty string means "use the global_invoice default", which lives
+        in AppData under PipelineManager/global_invoice/invoices.sqlite.
+        """
+        return (self.config.get("business") or {}).get("invoice_db_path", "")
+
+    def get_soffice_path(self) -> str:
+        """Explicit LibreOffice ``soffice`` binary path.
+
+        Empty string means "auto-detect from PATH + common locations".
+        """
+        return (self.config.get("business") or {}).get("soffice_path", "")
 
     def get_work_path(self, category: str) -> str:
         """
@@ -459,6 +523,34 @@ class RakSettings:
         self.config["software_sync"]["launchers_base_path"] = path
         self._save()
         logger.info(f"Launchers base path set to: {path}")
+
+    def set_boekhouding_base(self, path: str):
+        """Set the bookkeeping root path. Empty string restores the
+        derived default (<active_base>/_LIBRARY/Boekhouding)."""
+        path = (path or "").replace('/', '\\')
+        if "business" not in self.config:
+            self.config["business"] = {}
+        self.config["business"]["boekhouding_base"] = path
+        self._save()
+        logger.info(f"Boekhouding base set to: {path or '(derived from active_base)'}")
+
+    def set_invoice_db_path(self, path: str):
+        """Set the invoice registry DB override. Empty restores default."""
+        path = (path or "").replace('/', '\\')
+        if "business" not in self.config:
+            self.config["business"] = {}
+        self.config["business"]["invoice_db_path"] = path
+        self._save()
+        logger.info(f"Invoice DB path set to: {path or '(default)'}")
+
+    def set_soffice_path(self, path: str):
+        """Set the LibreOffice soffice path. Empty restores autodetect."""
+        path = (path or "").replace('/', '\\')
+        if "business" not in self.config:
+            self.config["business"] = {}
+        self.config["business"]["soffice_path"] = path
+        self._save()
+        logger.info(f"soffice path set to: {path or '(autodetect)'}")
 
     def set_category_paths(self, category: str, work_subpath: str = None,
                           archive_subpath: str = None):
