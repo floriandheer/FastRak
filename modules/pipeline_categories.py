@@ -328,13 +328,6 @@ CATEGORIES: Dict[str, Dict[str, Any]] = {
                 "extension": "folder_structure_extensions.physical:PhysicalExtension",
                 "scripts": [
                     {
-                        "key": "woocommerce_monitor",
-                        "name": "WooCommerce Order Monitor",
-                        "module": "PipelineScript_Physical_WooCommerceOrderMonitor",
-                        "description": "Automatically monitor WooCommerce orders and organize folders with invoices, labels, and details",
-                        "icon": "📦",
-                    },
-                    {
                         "key": "publish_photos_to_webshop",
                         "name": "Publish Photos to Webshop",
                         "module": "PipelineScript_Physical_PublishToWebshop",
@@ -455,32 +448,11 @@ CATEGORIES: Dict[str, Dict[str, Any]] = {
         "work_path_key": None,
         "category_scripts": [
             {
-                "key": "invoices_app",
-                "name": "Invoices",
-                "module": "PipelineScript_Business_InvoicesApp",
-                "description": "Unified invoicing & orders — compose, browse outgoing/incoming, file legacy, manage WooCommerce orders",
-                "icon": "🧾",
-            },
-            {
-                "key": "bookkeeping_structure",
-                "name": "Create Bookkeeping Folder Structure",
-                "module": "PipelineScript_Bookkeeping_FolderStructure",
-                "description": "Create folder structure for bookkeeping and financial records",
-                "icon": "📋",
-            },
-            {
                 "key": "invoice_manager",
-                "name": "Invoice Manager (legacy)",
+                "name": "Invoice Manager",
                 "module": "PipelineScript_Business_InvoiceManager",
-                "description": "Superseded by Invoices. Still ships for cross-checking.",
+                "description": "Unified invoicing & orders — compose, browse outgoing/incoming, manage WooCommerce orders, bookkeeping folder structure",
                 "icon": "🧾",
-            },
-            {
-                "key": "invoice_checker",
-                "name": "Invoice Checker (legacy)",
-                "module": "PipelineScript_Business_InvoiceChecker",
-                "description": "Superseded by Invoices → Incoming. Still ships for cross-checking.",
-                "icon": "🔍",
             },
         ],
         "subtypes": {},

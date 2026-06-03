@@ -1,6 +1,7 @@
 """Incoming invoice scanner — filesystem scanning and PDF extraction logic.
 
-Contains no UI code; everything here is pure logic imported by incoming_tab.py.
+Contains no UI code; everything here is pure logic imported by
+``invoice_manager/sections/incoming.py``.
 """
 
 import os
@@ -12,7 +13,7 @@ import yaml
 
 from shared_logging import get_logger
 
-logger = get_logger("invoice_manager.incoming")
+logger = get_logger("invoice_manager.incoming_scanner")
 
 # --- invoice2data optional dependency ----------------------------------------
 
@@ -307,7 +308,7 @@ def _resolve_boekhouding_root() -> Path:
     available or hasn't been configured.
     """
     try:
-        from global_invoice.config import load_config
+        from invoice_manager.core.config import load_config
         return load_config().resolve_boekhouding_base()
     except Exception:
         return Path(r"D:\_work\Active\_LIBRARY\Boekhouding")
