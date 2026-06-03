@@ -138,7 +138,13 @@ class RakSettings:
         },
         # UI preferences
         "ui": {
-            "start_fullscreen": False
+            "start_fullscreen": False,
+            # When True, the FastRak hub window stays at the bottom of
+            # the Windows z-order — clicking it does not bring it to
+            # the foreground, other apps always appear on top.
+            # Standalone module windows (Tk Toplevels from subprocess
+            # launchers) are unaffected and float above as usual.
+            "always_on_bottom": True
         },
         # Global software version defaults (one version per software, used everywhere)
         "software_defaults": {
@@ -315,6 +321,17 @@ class RakSettings:
         if "ui" not in self.config:
             self.config["ui"] = {}
         self.config["ui"]["start_fullscreen"] = value
+        self._save()
+
+    def get_always_on_bottom(self) -> bool:
+        """Whether the FastRak hub stays beneath all other windows."""
+        return self.config.get("ui", {}).get("always_on_bottom", True)
+
+    def set_always_on_bottom(self, value: bool):
+        """Set whether the FastRak hub stays beneath all other windows."""
+        if "ui" not in self.config:
+            self.config["ui"] = {}
+        self.config["ui"]["always_on_bottom"] = value
         self._save()
 
     def get_work_drive(self) -> str:

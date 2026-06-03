@@ -71,17 +71,22 @@ FONTS = {
 }
 
 
-def install_styles(root: tk.Misc) -> None:
+def install_styles(root: tk.Misc, *, set_theme: bool = True) -> None:
     """Register every ttk style the shell + sections rely on.
 
-    Called once at app startup, after the root window exists.
+    Called once at app startup, after the root window exists. When
+    InvoiceManager is embedded inside another app (e.g. fastrak_hub),
+    pass ``set_theme=False`` so we don't override the host's chosen
+    ttk theme — only the named ``InvApp.*`` styles get registered,
+    which the host doesn't use.
     """
     C = PALETTE
     style = ttk.Style(root)
-    try:
-        style.theme_use("clam")
-    except tk.TclError:
-        pass
+    if set_theme:
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
 
     # Notebook used inside Compose for Items / Expenses
     style.configure("InvApp.TNotebook", background=C["bg"], borderwidth=0)

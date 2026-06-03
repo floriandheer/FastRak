@@ -41,28 +41,54 @@ from invoice_manager.sections.settings import SettingsSection
 
 
 class InvoiceManager:
-    """Wires the shell + every section together. Owns the AppState."""
+    """Wires the shell + every section together. Owns the AppState.
 
-    def __init__(self, root: tk.Tk):
-        self.root = root
-        root.title("Invoice Manager")
-        root.geometry("1280x820")
-        root.minsize(1100, 700)
-        root.configure(bg=PALETTE["bg"])
-        apply_category_icon(root, "Business")
+    Can run as a standalone window OR be embedded inside another
+    Tk app's frame (fastrak_hub mounts it inside the Business panel).
+    """
 
-        install_styles(root)
+    def __init__(self, parent, *, embedded: bool = False):
+        """
+        Args:
+            parent: Tk root (standalone) or a Frame (embedded).
+            embedded: If True, skip window-level configuration
+                (title, geometry, icon, ttk theme) so the app renders
+                inside the caller's parent frame without taking over
+                window state.
+        """
+        self.embedded = embedded
+        if embedded:
+            # parent is a Frame inside the host app — derive the real
+            # root for after()-marshalling but draw everything into
+            # `container`, a Frame we own.
+            self.root = parent.winfo_toplevel()
+            self.container = tk.Frame(parent, bg=PALETTE["bg"])
+            self.container.pack(fill="both", expand=True)
+        else:
+            self.root = parent
+            self.root.title("Invoice Manager")
+            self.root.geometry("1280x820")
+            self.root.minsize(1100, 700)
+            self.root.configure(bg=PALETTE["bg"])
+            apply_category_icon(self.root, "Business")
+            self.container = self.root
+
+        # Only switch the global ttk theme when standalone — the host
+        # picks its own. Named ``InvApp.*`` styles get registered
+        # either way and don't conflict with the host's widgets.
+        install_styles(self.root, set_theme=not embedded)
 
         self.state = AppState()
         self.state.on_year_change(self._broadcast_year)
         self.state.on_company_change(self._broadcast_company)
 
         # ----- chrome -----
-        self.debug_banner = DebugBanner(root, self.state, self._on_debug_toggle)
-        self.topbar = TopBar(root, self.state, self._reload_active)
+        self.debug_banner = DebugBanner(self.container, self.state,
+                                        self._on_debug_toggle)
+        self.topbar = TopBar(self.container, self.state, self._reload_active)
         self.topbar.pack(side="top", fill="x")
 
-        body = tk.Frame(root, bg=PALETTE["bg"])
+        body = tk.Frame(self.container, bg=PALETTE["bg"])
         body.pack(side="top", fill="both", expand=True)
 
         self.sidebar = Sidebar(body, on_select=self.navigate)
@@ -71,7 +97,7 @@ class InvoiceManager:
         self.content = tk.Frame(body, bg=PALETTE["bg"])
         self.content.pack(side="left", fill="both", expand=True)
 
-        self.statusbar = StatusBar(root)
+        self.statusbar = StatusBar(self.container)
         self.statusbar.pack(side="bottom", fill="x")
 
         # ----- sections -----
@@ -89,8 +115,8 @@ class InvoiceManager:
         # When the legacy scan finishes it usually expands the set of
         # years the user can pick from — refresh the top-bar dropdown.
         self.state.on_legacy_scan(self.topbar.refresh_years)
-        self.state.start_wc_monitor(root)
-        self.state.start_legacy_scan(root)
+        self.state.start_wc_monitor(self.root)
+        self.state.start_legacy_scan(self.root)
 
         self.navigate("dashboard")
 
