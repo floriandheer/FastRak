@@ -18,8 +18,9 @@ from typing import Callable, Dict, List
 
 from invoice_manager.core.config import DATA_DIR
 from invoice_manager.core.debug_mode import (
-    DEBUG_SUBFOLDER_NAME, cleanup_debug_pdfs,
+    DEBUG_SUBFOLDER_NAME, perform_rollback,
 )
+from invoice_manager.dialogs import ask_yes_no, show_error, show_info
 from shared_logging import get_logger
 
 from invoice_manager.bookkeeping import (
@@ -578,7 +579,8 @@ class SettingsSection(Section):
     def _enter_debug(self):
         if self.state.debug_session.is_active():
             return
-        if not messagebox.askyesno(
+        if not ask_yes_no(
+            self.parent,
             "Enter debug mode",
             f"Snapshot the invoice DB and switch to debug mode?\n\n"
             f"While active:\n"
@@ -594,11 +596,12 @@ class SettingsSection(Section):
             self.state.debug_session.start(backup_path)
         except Exception as e:
             logger.exception("Failed to start debug session")
-            messagebox.showerror("Enter debug mode", f"Could not start: {e}")
+            show_error(self.parent, "Enter debug mode", f"Could not start: {e}")
             return
         self._refresh_debug_status()
         self._on_debug_toggle()
-        messagebox.showinfo(
+        show_info(
+            self.parent,
             "Debug mode",
             "Debug mode ACTIVE. Test invoices will not affect production numbering.",
         )
@@ -608,7 +611,8 @@ class SettingsSection(Section):
         if not ds.is_active():
             return
         pdf_count = len(ds.created_pdfs)
-        if not messagebox.askyesno(
+        if not ask_yes_no(
+            self.parent,
             "Exit debug mode",
             f"Roll back debug mode?\n\n"
             f"  • Restore the invoice DB from snapshot\n"
@@ -618,38 +622,10 @@ class SettingsSection(Section):
         report = self._rollback()
         self._refresh_debug_status()
         self._on_debug_toggle()
-        messagebox.showinfo("Exit debug mode", report)
+        show_info(self.parent, "Exit debug mode", report)
 
     def _rollback(self) -> str:
-        ds = self.state.debug_session
-        backup = ds.db_backup_path
-        pdfs = ds.created_pdfs
-        lines: List[str] = []
-        if backup and backup.exists():
-            try:
-                self.state.registry.restore_db(backup)
-                lines.append(f"✓ DB restored from {backup.name}")
-            except Exception as e:
-                logger.exception("DB restore failed")
-                lines.append(f"⚠ DB restore FAILED: {e}")
-        else:
-            lines.append("⚠ DB backup missing — could not restore.")
-
-        result = cleanup_debug_pdfs(pdfs)
-        if result["deleted"]:
-            lines.append(f"✓ Deleted {len(result['deleted'])} test PDF(s)")
-        if result["missing"]:
-            lines.append(f"ℹ {len(result['missing'])} PDF(s) already gone")
-        if result["failed"]:
-            lines.append(f"⚠ {len(result['failed'])} PDF(s) could not be deleted")
-
-        if backup and backup.exists():
-            try:
-                backup.unlink()
-            except OSError:
-                pass
-        ds.clear()
-        return "\n".join(lines)
+        return perform_rollback(self.state.debug_session, self.state.registry)
 
     def summary(self) -> str:
         return "Settings"

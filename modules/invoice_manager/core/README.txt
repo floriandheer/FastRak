@@ -45,7 +45,9 @@ folder above. The old folder can then be deleted.
 
 Numbering
 ---------
-- One shared sequence across all three companies, resets every calendar year.
+- One shared sequence across all three companies. It does NOT reset on
+  Jan 1 — the count started at 1 with the first non-legacy invoice (2025)
+  and continues uninterrupted across years.
 - Voided invoices keep their number (Belgian gapless-numbering requirement).
 - Test invoices: never delete — void with reason "test" instead.
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import tkinter as tk
 from tkinter import ttk
-from typing import Callable
+from typing import Callable, Optional
 
 from invoice_manager.state import AppState
 from invoice_manager.theme import PALETTE, FONTS
@@ -19,7 +19,8 @@ class TopBar(tk.Frame):
     HEIGHT = 56
 
     def __init__(self, parent: tk.Widget, state: AppState,
-                 on_section_reload: Callable[[], None]):
+                 on_section_reload: Callable[[], None],
+                 on_detach: Optional[Callable[[], None]] = None):
         C = PALETTE
         super().__init__(parent, bg=C["topbar_bg"], height=self.HEIGHT)
         self.pack_propagate(False)
@@ -75,6 +76,14 @@ class TopBar(tk.Frame):
         )
 
         secondary_button(right, "↻", on_section_reload, padx=10, pady=3).pack(side="left")
+
+        if on_detach is not None:
+            # ⧉ = "pop out into its own window" — only shown when the
+            # host (fastrak_hub) embedded us and provided a detach hook.
+            detach_btn = secondary_button(
+                right, "⧉", on_detach, padx=10, pady=3,
+            )
+            detach_btn.pack(side="left", padx=(6, 0))
 
     # ----- API ---------------------------------------------------------
 

@@ -32,6 +32,7 @@ from invoice_manager.core.wc_bridge import WCBridgeError, WooCommerceBridge
 from shared_logging import get_logger
 
 from invoice_manager.sections.base import Section
+from invoice_manager.sections.contacts import ContactsSection
 from invoice_manager.theme import PALETTE, FONTS
 from invoice_manager.widgets.buttons import primary_button, secondary_button
 from invoice_manager.widgets.card import Card
@@ -159,8 +160,22 @@ class ComposeSection(Section):
                  ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(0, 8))
         row += 1
 
+        # Name field is a Combobox seeded from the contacts table —
+        # selecting a contact auto-fills VAT/Email/Address. Editable so
+        # the user can also type a one-off customer name.
+        self._customer_cb = ttk.Combobox(
+            parent, textvariable=self._m_customer, width=32,
+            style="InvApp.TCombobox",
+        )
+        add_row(row, "Name", self._customer_cb); row += 1
+        self._customer_cb.bind("<<ComboboxSelected>>", self._on_contact_pick)
+        # Also react when the user types a value that exactly matches a
+        # known contact (e.g. paste / quick-type) so the other fields fill.
+        self._m_customer.trace_add(
+            "write", lambda *_: self._maybe_fill_from_contact(),
+        )
+
         for label, var in [
-            ("Name",  self._m_customer),
             ("VAT",   self._m_vat),
             ("Email", self._m_email),
         ]:
@@ -171,6 +186,11 @@ class ComposeSection(Section):
         self._m_address = make_text(parent, height=4, width=32)
         self._m_address.grid(row=row, column=1, sticky="we", pady=(0, 6))
         row += 1
+
+        # Initial population + subscribe to live changes from ContactsSection.
+        self._contacts_by_name: Dict[str, Dict] = {}
+        self._reload_contact_suggestions()
+        ContactsSection.on_change(self._reload_contact_suggestions)
 
         add_row(row, "Notes", make_entry(parent, self._m_notes, width=32)); row += 1
 
@@ -354,6 +374,49 @@ class ComposeSection(Section):
             return
         nxt = self.state.registry.get_next_preview(year)
         self._m_next_var.set(f"#{nxt:03d}    ({year})")
+
+    # ----- Contact autocomplete ---------------------------------------
+
+    def _reload_contact_suggestions(self) -> None:
+        """Refresh the Name combobox's value list from the contacts table."""
+        try:
+            contacts = self.state.registry.list_contacts()
+        except Exception:
+            logger.exception("Could not load contacts for autocomplete")
+            contacts = []
+        self._contacts_by_name = {c["display_name"]: c for c in contacts}
+        try:
+            self._customer_cb.configure(
+                values=[c["display_name"] for c in contacts],
+            )
+        except (AttributeError, tk.TclError):
+            pass
+
+    def _on_contact_pick(self, _e=None) -> None:
+        """User picked a contact from the dropdown — fill the other fields."""
+        self._fill_from_contact(self._m_customer.get())
+
+    def _maybe_fill_from_contact(self) -> None:
+        """Trace handler: only fill when the typed value EXACTLY matches a
+        known contact, so partial typing doesn't clobber the user's edits.
+        """
+        name = self._m_customer.get()
+        if name in self._contacts_by_name:
+            self._fill_from_contact(name)
+
+    def _fill_from_contact(self, name: str) -> None:
+        contact = self._contacts_by_name.get(name)
+        if not contact:
+            return
+        # Only overwrite empty fields so a user who has already started
+        # tweaking customer data doesn't lose their edits.
+        if not self._m_vat.get().strip():
+            self._m_vat.set(contact.get("vat", "") or "")
+        if not self._m_email.get().strip():
+            self._m_email.set(contact.get("email", "") or "")
+        address = contact.get("address", "") or ""
+        if address and not self._m_address.get("1.0", "end").strip():
+            self._m_address.insert("1.0", address)
 
     # ----- Manual mode generation -------------------------------------
 

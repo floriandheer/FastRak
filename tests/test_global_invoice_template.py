@@ -12,7 +12,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "modules"))
 
-from global_invoice.template_engine import (  # noqa: E402
+from invoice_manager.core.template_engine import (  # noqa: E402
     NS, TABLE_ROW_TAG, render_odt,
 )
 

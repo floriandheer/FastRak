@@ -116,6 +116,43 @@ class DebugSession:
         os.replace(tmp, self.marker_path)
 
 
+def perform_rollback(session: "DebugSession", registry) -> str:
+    """Restore the DB snapshot, delete tracked test PDFs, clear the session.
+
+    Returns a multi-line report suitable for a messagebox. Shared by the
+    Settings panel's Exit button and the red debug-banner's Exit button
+    so both paths produce identical results.
+    """
+    backup = session.db_backup_path
+    pdfs = session.created_pdfs
+    lines: List[str] = []
+    if backup and backup.exists():
+        try:
+            registry.restore_db(backup)
+            lines.append(f"✓ DB restored from {backup.name}")
+        except Exception as e:
+            logger.exception("DB restore failed")
+            lines.append(f"⚠ DB restore FAILED: {e}")
+    else:
+        lines.append("⚠ DB backup missing — could not restore.")
+
+    result = cleanup_debug_pdfs(pdfs)
+    if result["deleted"]:
+        lines.append(f"✓ Deleted {len(result['deleted'])} test PDF(s)")
+    if result["missing"]:
+        lines.append(f"ℹ {len(result['missing'])} PDF(s) already gone")
+    if result["failed"]:
+        lines.append(f"⚠ {len(result['failed'])} PDF(s) could not be deleted")
+
+    if backup and backup.exists():
+        try:
+            backup.unlink()
+        except OSError:
+            pass
+    session.clear()
+    return "\n".join(lines)
+
+
 def cleanup_debug_pdfs(pdfs: List[Path]) -> Dict[str, List[str]]:
     """Delete each PDF; return {'deleted': [...], 'missing': [...], 'failed': [...]}.
 

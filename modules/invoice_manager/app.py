@@ -20,10 +20,16 @@ there are orders in `processing` status that need shipping.
 from __future__ import annotations
 
 import tkinter as tk
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from shared_window_icon import apply_category_icon
 
+from pathlib import Path
+
+from invoice_manager.core.debug_mode import (
+    debug_boekhouding_base, perform_rollback,
+)
+from invoice_manager.dialogs import ask_yes_no, show_error, show_info
 from invoice_manager.shell.debug_banner import DebugBanner
 from invoice_manager.shell.sidebar import Sidebar
 from invoice_manager.shell.statusbar import StatusBar
@@ -33,6 +39,7 @@ from invoice_manager.theme import PALETTE, install_styles
 from invoice_manager.sections.base import Section
 from invoice_manager.sections.companies import CompaniesSection
 from invoice_manager.sections.compose import ComposeSection
+from invoice_manager.sections.contacts import ContactsSection
 from invoice_manager.sections.dashboard import DashboardSection
 from invoice_manager.sections.incoming import IncomingSection
 from invoice_manager.sections.orders import OrdersSection
@@ -47,7 +54,8 @@ class InvoiceManager:
     Tk app's frame (fastrak_hub mounts it inside the Business panel).
     """
 
-    def __init__(self, parent, *, embedded: bool = False):
+    def __init__(self, parent, *, embedded: bool = False,
+                 on_detach: Optional[Callable[[], None]] = None):
         """
         Args:
             parent: Tk root (standalone) or a Frame (embedded).
@@ -55,6 +63,8 @@ class InvoiceManager:
                 (title, geometry, icon, ttk theme) so the app renders
                 inside the caller's parent frame without taking over
                 window state.
+            on_detach: Optional callback the host can pass when embedded
+                to surface a "pop out into a window" button in the top bar.
         """
         self.embedded = embedded
         if embedded:
@@ -83,9 +93,13 @@ class InvoiceManager:
         self.state.on_company_change(self._broadcast_company)
 
         # ----- chrome -----
-        self.debug_banner = DebugBanner(self.container, self.state,
-                                        self._on_debug_toggle)
-        self.topbar = TopBar(self.container, self.state, self._reload_active)
+        self.debug_banner = DebugBanner(
+            self.container, self.state,
+            on_exit_debug=self._request_exit_debug,
+            on_open_folder=self._open_debug_folder,
+        )
+        self.topbar = TopBar(self.container, self.state, self._reload_active,
+                             on_detach=on_detach)
         self.topbar.pack(side="top", fill="x")
 
         body = tk.Frame(self.container, bg=PALETTE["bg"])
@@ -130,6 +144,7 @@ class InvoiceManager:
         self.sections["outgoing"]  = OutgoingSection(self.content, self.state)
         self.sections["incoming"]  = IncomingSection(self.content, self.state)
         self.sections["orders"]    = OrdersSection(self.content, self.state)
+        self.sections["contacts"]  = ContactsSection(self.content, self.state)
         self.sections["companies"] = CompaniesSection(self.content, self.state)
         self.sections["settings"]  = SettingsSection(
             self.content, self.state, on_debug_toggle=self._refresh_debug_banner,
@@ -141,7 +156,7 @@ class InvoiceManager:
             sec = self.sections[key]
             self.sidebar.add(sec.sidebar_key, sec.title, sec.sidebar_icon)
         self.sidebar.add_separator()
-        for key in ("companies", "settings"):
+        for key in ("contacts", "companies", "settings"):
             sec = self.sections[key]
             self.sidebar.add(sec.sidebar_key, sec.title, sec.sidebar_icon)
 
@@ -211,7 +226,55 @@ class InvoiceManager:
             self.debug_banner.pack(side="top", fill="x", before=self.topbar)
 
     def _on_debug_toggle(self) -> None:
+        """Called by the Settings panel after it enters or exits debug
+        mode (its own button paths). The banner has its own exit path.
+        """
         self._refresh_debug_banner()
+
+    def _open_debug_folder(self) -> None:
+        """Banner "Open _DEBUG folder" button.
+
+        Resolves Boekhouding/_DEBUG/ for the current config, creates it
+        if it doesn't exist yet (so the user can open it even before any
+        test PDFs have been generated), and hands it to the OS.
+        """
+        if not self.state.debug_session.is_active():
+            return
+        try:
+            real = self.state.config.resolve_boekhouding_base()
+            debug_dir = debug_boekhouding_base(Path(real))
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            self.state.resolve_pdf_open(debug_dir)
+        except Exception as e:
+            show_error(self.container, "Open _DEBUG folder",
+                       f"Could not open folder:\n{e}")
+
+    def _request_exit_debug(self) -> None:
+        """Banner Exit button: confirm, roll back DB + test PDFs, refresh
+        both the banner and the Settings panel so they agree on state.
+        """
+        ds = self.state.debug_session
+        if not ds.is_active():
+            self._refresh_debug_banner()
+            return
+        pdf_count = len(ds.created_pdfs)
+        if not ask_yes_no(
+            self.container,
+            "Exit debug mode",
+            f"Roll back debug mode?\n\n"
+            f"  • Restore the invoice DB from snapshot\n"
+            f"  • Delete {pdf_count} test PDF(s)\n\nContinue?",
+        ):
+            return
+        report = perform_rollback(ds, self.state.registry)
+        self._refresh_debug_banner()
+        settings = self.sections.get("settings")
+        if settings is not None and getattr(settings, "_built", False):
+            try:
+                settings._refresh_debug_status()
+            except Exception:
+                pass
+        show_info(self.container, "Exit debug mode", report)
 
 
 def main():

@@ -1,4 +1,4 @@
-"""Tests for global_invoice.registry — focused on the atomic numbering
+"""Tests for invoice_manager.core.registry — focused on the atomic numbering
 contract and the gapless / void-preserving invariants."""
 
 import os
@@ -13,8 +13,8 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "modules"))
 
-from global_invoice.models import LineItem  # noqa: E402
-from global_invoice.registry import InvoiceRegistry  # noqa: E402
+from invoice_manager.core.models import LineItem  # noqa: E402
+from invoice_manager.core.registry import InvoiceRegistry  # noqa: E402
 
 
 @pytest.fixture
@@ -38,23 +38,24 @@ def _draft(company="FD", date_str="2026-05-18", customer="Test Customer"):
     }
 
 
-def test_first_invoice_of_year_is_one(registry):
+def test_first_invoice_is_one(registry):
     seq = registry.reserve_next_number(2026, _draft())
     assert seq == 1
 
 
-def test_reserve_increments_within_year(registry):
+def test_reserve_increments(registry):
     assert registry.reserve_next_number(2026, _draft()) == 1
     assert registry.reserve_next_number(2026, _draft()) == 2
     assert registry.reserve_next_number(2026, _draft()) == 3
 
 
-def test_yearly_reset(registry):
+def test_sequence_does_not_reset_across_years(registry):
+    """Sequence is globally continuous — year boundaries don't reset it."""
     assert registry.reserve_next_number(2026, _draft(date_str="2026-12-31")) == 1
     assert registry.reserve_next_number(2026, _draft(date_str="2026-12-31")) == 2
-    assert registry.reserve_next_number(2027, _draft(date_str="2027-01-02")) == 1
-    assert registry.reserve_next_number(2027, _draft(date_str="2027-01-02")) == 2
-    assert registry.reserve_next_number(2026, _draft(date_str="2026-12-31")) == 3
+    assert registry.reserve_next_number(2027, _draft(date_str="2027-01-02")) == 3
+    assert registry.reserve_next_number(2027, _draft(date_str="2027-01-02")) == 4
+    assert registry.reserve_next_number(2026, _draft(date_str="2026-12-31")) == 5
 
 
 def test_void_preserves_number(registry):
@@ -149,6 +150,25 @@ def test_health_check_passes_when_gapless(registry):
     assert registry.health_check() == []
 
 
+def test_health_check_passes_across_year_boundary(registry):
+    """A continuous run that crosses Jan 1 must not be flagged as a gap."""
+    registry.reserve_next_number(2026, _draft(date_str="2026-12-30"))
+    registry.reserve_next_number(2026, _draft(date_str="2026-12-31"))
+    registry.reserve_next_number(2027, _draft(date_str="2027-01-02"))
+    registry.reserve_next_number(2027, _draft(date_str="2027-01-03"))
+    assert registry.health_check() == []
+
+
+def test_health_check_flags_real_gap(registry):
+    """A missing number anywhere in the global sequence should warn."""
+    registry.import_existing_invoice(2026, 1, _draft())
+    registry.import_existing_invoice(2026, 2, _draft())
+    # Skip 3 — leave a real gap.
+    registry.import_existing_invoice(2027, 4, _draft(date_str="2027-01-05"))
+    warnings = registry.health_check()
+    assert any("missing=[3]" in w for w in warnings), warnings
+
+
 def test_list_invoices_filters(registry):
     registry.reserve_next_number(2026, _draft(company="FD"))
     registry.reserve_next_number(2026, _draft(company="HV"))
@@ -156,3 +176,44 @@ def test_list_invoices_filters(registry):
     fd_only = registry.list_invoices(company_key="FD")
     assert len(fd_only) == 1
     assert fd_only[0]["company_key"] == "FD"
+
+
+def test_contacts_crud_roundtrip(registry):
+    new_id = registry.create_contact({
+        "display_name": "ACME Corp",
+        "vat": "BE0123456789",
+        "email": "hello@acme.example",
+        "address": "Acme Street 1\n1000 Brussels",
+        "wc_customer_id": 42,
+    })
+    assert new_id > 0
+
+    fetched = registry.get_contact(new_id)
+    assert fetched["display_name"] == "ACME Corp"
+    assert fetched["vat"] == "BE0123456789"
+    assert fetched["wc_customer_id"] == 42
+
+    by_wc = registry.get_contact_by_wc_customer(42)
+    assert by_wc is not None and by_wc["id"] == new_id
+
+    registry.update_contact(new_id, {"email": "billing@acme.example"})
+    assert registry.get_contact(new_id)["email"] == "billing@acme.example"
+    # Other fields untouched
+    assert registry.get_contact(new_id)["vat"] == "BE0123456789"
+
+    listed = registry.list_contacts()
+    assert any(c["id"] == new_id for c in listed)
+
+    registry.delete_contact(new_id)
+    assert registry.get_contact(new_id) is None
+
+
+def test_contacts_reject_blank_name(registry):
+    with pytest.raises(ValueError):
+        registry.create_contact({"display_name": "  "})
+
+
+def test_contacts_wc_id_unique(registry):
+    registry.create_contact({"display_name": "First", "wc_customer_id": 99})
+    with pytest.raises(sqlite3.IntegrityError):
+        registry.create_contact({"display_name": "Second", "wc_customer_id": 99})

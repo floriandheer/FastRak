@@ -702,6 +702,12 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
             main_container, bg=COLORS["bg_primary"]
         )
         self.invoice_manager = None  # populated by _ensure_invoice_manager
+        # When the user pops the Invoice Manager out via its topbar
+        # button, we destroy the embedded instance and reopen it in
+        # this Toplevel; re-clicking Business raises it instead of
+        # creating a duplicate embedded copy.
+        self._detached_invoice_window = None
+        self._detached_invoice_manager = None
 
         # Restore state from last session (run once at startup)
         self._restore_session_state()
@@ -713,17 +719,84 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
         if self.invoice_manager is None:
             self.invoice_manager = InvoiceManager(
                 self.invoice_manager_panel, embedded=True,
+                on_detach=self._detach_invoice_manager,
             )
 
     def _show_invoice_manager_panel(self):
-        """Swap the right-hand slot to the Invoice Manager."""
+        """Swap the right-hand slot to the Invoice Manager.
+
+        If the user has popped the Invoice Manager into its own
+        floating window, raise that instead of re-embedding — we never
+        want two copies running with separate AppState/monitors.
+        """
         if hasattr(self, 'tracker_panel'):
             self.tracker_panel.pack_forget()
+        if self._detached_invoice_window is not None \
+                and self._detached_invoice_window.winfo_exists():
+            self.invoice_manager_panel.pack_forget()
+            self._detached_invoice_window.deiconify()
+            self._detached_invoice_window.lift()
+            self._detached_invoice_window.focus_set()
+            return
         self._ensure_invoice_manager()
         if not self.invoice_manager_panel.winfo_ismapped():
             self.invoice_manager_panel.pack(
                 side=tk.RIGHT, fill=tk.BOTH, expand=True,
             )
+
+    def _detach_invoice_manager(self):
+        """Pop the embedded Invoice Manager out into its own Toplevel.
+
+        Tears down the embedded instance (stopping its WC monitor
+        thread) so the floating copy is the sole owner of the
+        AppState — otherwise both would poll WooCommerce in parallel.
+        """
+        # Stop the embedded WC monitor before we drop the reference.
+        if self.invoice_manager is not None:
+            try:
+                monitor = self.invoice_manager.state.wc_monitor()
+                if monitor is not None:
+                    monitor.stop_monitoring()
+            except Exception:
+                logger.exception("Failed to stop embedded WC monitor")
+
+        # Destroy embedded widgets and hide the slot.
+        for w in self.invoice_manager_panel.winfo_children():
+            w.destroy()
+        self.invoice_manager_panel.pack_forget()
+        self.invoice_manager = None
+
+        # Reopen as a floating Toplevel — standalone path applies its
+        # own title/geometry/icon.
+        win = tk.Toplevel(self.root)
+        self._detached_invoice_window = win
+        win.protocol("WM_DELETE_WINDOW", self._on_detached_invoice_closed)
+        self._detached_invoice_manager = InvoiceManager(win)
+        win.lift()
+        win.focus_set()
+
+    def _on_detached_invoice_closed(self):
+        """Clean up after the floating Invoice Manager window is closed.
+
+        Stops the WC monitor so its polling thread doesn't outlive
+        the window. Next Business click will lazy-create a fresh
+        embedded instance via `_ensure_invoice_manager`.
+        """
+        if self._detached_invoice_manager is not None:
+            try:
+                monitor = self._detached_invoice_manager.state.wc_monitor()
+                if monitor is not None:
+                    monitor.stop_monitoring()
+            except Exception:
+                logger.exception("Failed to stop detached WC monitor")
+        win = self._detached_invoice_window
+        self._detached_invoice_window = None
+        self._detached_invoice_manager = None
+        if win is not None:
+            try:
+                win.destroy()
+            except tk.TclError:
+                pass
 
     def _show_tracker_panel(self):
         """Swap the right-hand slot back to the Project Tracker."""

@@ -9,7 +9,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "modules"))
 
-from global_invoice.filer import (  # noqa: E402
+from invoice_manager.core.filer import (  # noqa: E402
     build_invoice_filename, clean_client_name, file_pdf, quarter_dir_for, quarter_for,
 )
 
@@ -66,6 +66,6 @@ def test_file_pdf_refuses_overwrite(tmp_path):
     # Second invocation with the same numbers should error
     src2 = tmp_path / "rendered2.pdf"
     src2.write_bytes(b"fake2")
-    from global_invoice.filer import FilerError
+    from invoice_manager.core.filer import FilerError
     with pytest.raises(FilerError):
         file_pdf(src2, boek, "FD", "2026-05-18", 1, "Test", move=True)

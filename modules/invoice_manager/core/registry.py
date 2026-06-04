@@ -1,8 +1,10 @@
 """SQLite-backed invoice registry — single source of truth for invoice numbers.
 
 Guarantees:
-  - Per-year sequential numbering (resets each calendar year).
-  - Atomic reservation under concurrent access (BEGIN IMMEDIATE + UNIQUE).
+  - Globally continuous sequential numbering (does NOT reset on Jan 1 —
+    sequence 1 was the first non-legacy invoice and it counts up forever).
+  - Atomic reservation under concurrent access (BEGIN IMMEDIATE serializes
+    writers so the global MAX read inside the txn stays valid).
   - Gapless: voided invoices keep their number; rows are never deleted.
 """
 
@@ -71,6 +73,21 @@ CREATE TABLE IF NOT EXISTS wc_push_queue (
     FOREIGN KEY(invoice_id) REFERENCES invoices(id)
 );
 
+CREATE TABLE IF NOT EXISTS contacts (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    display_name    TEXT    NOT NULL,
+    vat             TEXT    NOT NULL DEFAULT '',
+    address         TEXT    NOT NULL DEFAULT '',
+    email           TEXT    NOT NULL DEFAULT '',
+    notes           TEXT    NOT NULL DEFAULT '',
+    wc_customer_id  INTEGER,
+    created_at      TEXT    NOT NULL,
+    updated_at      TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_contacts_name ON contacts(display_name);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_wc_customer
+    ON contacts(wc_customer_id) WHERE wc_customer_id IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY);
 """
 
@@ -132,12 +149,16 @@ class InvoiceRegistry:
     # ---------- read helpers ----------
 
     def get_next_preview(self, year: int) -> int:
-        """Read-only hint; NOT authoritative — may be stale by the time you reserve."""
+        """Read-only hint; NOT authoritative — may be stale by the time you reserve.
+
+        Numbering is globally continuous (does not reset per calendar year);
+        `year` is accepted for API symmetry with `reserve_next_number` but
+        does not affect the result.
+        """
         conn = self._connect()
         try:
             row = conn.execute(
-                "SELECT COALESCE(MAX(sequence), 0) + 1 FROM invoices WHERE year = ?",
-                (year,),
+                "SELECT COALESCE(MAX(sequence), 0) + 1 FROM invoices",
             ).fetchone()
             return int(row[0])
         finally:
@@ -233,7 +254,11 @@ class InvoiceRegistry:
     # ---------- write operations ----------
 
     def reserve_next_number(self, year: int, draft: Dict[str, Any]) -> int:
-        """Atomically reserve the next sequence for `year` and persist a draft row.
+        """Atomically reserve the next sequence and persist a draft row.
+
+        Sequences are globally continuous — they do NOT reset on Jan 1.
+        `year` is recorded on the row (and pairs with sequence for the
+        UNIQUE constraint) but is NOT used to pick the next number.
 
         `draft` must contain: company_key, invoice_date (ISO YYYY-MM-DD),
         customer_name, line_items (list[LineItem] or list[dict]), source.
@@ -247,8 +272,7 @@ class InvoiceRegistry:
             try:
                 conn.execute("BEGIN IMMEDIATE;")
                 row = conn.execute(
-                    "SELECT COALESCE(MAX(sequence), 0) + 1 FROM invoices WHERE year=?",
-                    (year,),
+                    "SELECT COALESCE(MAX(sequence), 0) + 1 FROM invoices",
                 ).fetchone()
                 next_seq = int(row[0])
 
@@ -556,38 +580,148 @@ class InvoiceRegistry:
                 shutil.copy2(str(sidecar), str(self.db_path) + suffix)
         logger.info(f"Restored DB {self.db_path} from {src}")
 
+    # ---------- contacts ----------
+
+    def list_contacts(self) -> List[Dict[str, Any]]:
+        """All contacts, ordered alphabetically by display_name."""
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM contacts ORDER BY display_name COLLATE NOCASE"
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def get_contact(self, contact_id: int) -> Optional[Dict[str, Any]]:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT * FROM contacts WHERE id=?", (contact_id,),
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def get_contact_by_wc_customer(self, wc_customer_id: int) -> Optional[Dict[str, Any]]:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT * FROM contacts WHERE wc_customer_id=?",
+                (int(wc_customer_id),),
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def create_contact(self, data: Dict[str, Any]) -> int:
+        """Insert a contact. Returns the new row id.
+
+        `data` may contain: display_name (required), vat, address, email,
+        notes, wc_customer_id. Missing string fields default to ''.
+        """
+        if not data.get("display_name", "").strip():
+            raise ValueError("contact display_name is required")
+        now = _now_iso()
+        payload = {
+            "display_name": data["display_name"].strip(),
+            "vat": (data.get("vat") or "").strip(),
+            "address": (data.get("address") or "").strip(),
+            "email": (data.get("email") or "").strip(),
+            "notes": (data.get("notes") or "").strip(),
+            "wc_customer_id": data.get("wc_customer_id"),
+            "created_at": now,
+            "updated_at": now,
+        }
+        conn = self._connect()
+        try:
+            cur = conn.execute(
+                """
+                INSERT INTO contacts
+                  (display_name, vat, address, email, notes, wc_customer_id,
+                   created_at, updated_at)
+                VALUES
+                  (:display_name, :vat, :address, :email, :notes, :wc_customer_id,
+                   :created_at, :updated_at)
+                """,
+                payload,
+            )
+            new_id = int(cur.lastrowid)
+            logger.info(f"Created contact #{new_id}: {payload['display_name']!r}")
+            return new_id
+        finally:
+            conn.close()
+
+    def update_contact(self, contact_id: int, data: Dict[str, Any]) -> None:
+        """Patch a contact. Keys not present in `data` are left alone."""
+        allowed = {"display_name", "vat", "address", "email", "notes",
+                   "wc_customer_id"}
+        sets = []
+        values: List[Any] = []
+        for key in allowed:
+            if key in data:
+                value = data[key]
+                if isinstance(value, str):
+                    value = value.strip()
+                sets.append(f"{key}=?")
+                values.append(value)
+        if not sets:
+            return
+        sets.append("updated_at=?")
+        values.append(_now_iso())
+        values.append(int(contact_id))
+        conn = self._connect()
+        try:
+            conn.execute(
+                f"UPDATE contacts SET {', '.join(sets)} WHERE id=?",
+                tuple(values),
+            )
+        finally:
+            conn.close()
+
+    def delete_contact(self, contact_id: int) -> None:
+        conn = self._connect()
+        try:
+            conn.execute("DELETE FROM contacts WHERE id=?", (int(contact_id),))
+        finally:
+            conn.close()
+
     # ---------- diagnostics ----------
 
     def health_check(self) -> List[str]:
         """Return a list of warnings. Empty list = healthy.
 
-        Belgian law: gapless sequential numbering. We detect:
-          - gaps within a year
-          - duplicate (year, sequence) — should be impossible via UNIQUE but verify
+        Belgian law: gapless sequential numbering. Sequences run as a
+        single continuous series across years (not reset on Jan 1), so
+        we detect:
+          - any missing number in 1..MAX(sequence)
+          - the same sequence used by more than one row (regardless of year)
         """
         warnings: List[str] = []
         conn = self._connect()
         try:
-            years = [int(r[0]) for r in conn.execute(
-                "SELECT DISTINCT year FROM invoices ORDER BY year").fetchall()]
-            for year in years:
-                seqs = [int(r[0]) for r in conn.execute(
-                    "SELECT sequence FROM invoices WHERE year=? ORDER BY sequence",
-                    (year,)).fetchall()]
-                expected = list(range(1, len(seqs) + 1))
-                if seqs != expected:
-                    missing = set(expected) - set(seqs)
-                    extra = set(seqs) - set(expected)
-                    warnings.append(
-                        f"Year {year}: gap detected. "
-                        f"missing={sorted(missing)} extra={sorted(extra)}"
-                    )
+            seqs = [int(r[0]) for r in conn.execute(
+                "SELECT sequence FROM invoices ORDER BY sequence").fetchall()]
+            if seqs:
+                expected = set(range(1, max(seqs) + 1))
+                missing = sorted(expected - set(seqs))
+                # `extra` would be sequences outside 1..MAX, which the
+                # UNIQUE constraint and positive-int convention rule out;
+                # we surface them anyway so corruption is visible.
+                extra = sorted(s for s in seqs if s < 1)
+                if missing or extra:
+                    parts = []
+                    if missing:
+                        parts.append(f"missing={missing}")
+                    if extra:
+                        parts.append(f"extra={extra}")
+                    warnings.append("Gap in sequence: " + " ".join(parts))
             dupes = conn.execute(
-                "SELECT year, sequence, COUNT(*) FROM invoices "
-                "GROUP BY year, sequence HAVING COUNT(*) > 1"
+                "SELECT sequence, COUNT(*) FROM invoices "
+                "GROUP BY sequence HAVING COUNT(*) > 1"
             ).fetchall()
-            for y, s, c in dupes:
-                warnings.append(f"Duplicate (year={y}, sequence={s}) count={c}")
+            for s, c in dupes:
+                warnings.append(f"Duplicate sequence #{s:03d} used by {c} rows")
         finally:
             conn.close()
         return warnings
