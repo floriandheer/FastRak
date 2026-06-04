@@ -13,6 +13,8 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Dict, List, Optional
 
+from shared_logging import get_logger
+
 from invoice_manager.dialogs import ask_yes_no, show_error, show_info
 from invoice_manager.sections.base import Section
 from invoice_manager.theme import PALETTE, FONTS
@@ -21,6 +23,8 @@ from invoice_manager.widgets.buttons import (
 )
 from invoice_manager.widgets.card import Card
 from invoice_manager.widgets.inputs import form_label, make_entry, make_text
+
+logger = get_logger("invoice_manager.contacts")
 
 
 class ContactsSection(Section):
@@ -88,16 +92,16 @@ class ContactsSection(Section):
         tree_wrap = tk.Frame(parent, bg=C["card_bg"])
         tree_wrap.pack(fill="both", expand=True)
         self._tree = ttk.Treeview(
-            tree_wrap, columns=("name", "email", "wc"),
+            tree_wrap, columns=("name", "abbr", "email"),
             show="headings", style="InvApp.Treeview",
             selectmode="browse",
         )
         self._tree.heading("name", text="Name")
+        self._tree.heading("abbr", text="Abbreviation")
         self._tree.heading("email", text="Email")
-        self._tree.heading("wc", text="WC #")
         self._tree.column("name", width=180, anchor="w")
+        self._tree.column("abbr", width=120, anchor="w")
         self._tree.column("email", width=180, anchor="w")
-        self._tree.column("wc", width=60, anchor="e")
         sb = ttk.Scrollbar(tree_wrap, orient="vertical", command=self._tree.yview)
         self._tree.configure(yscrollcommand=sb.set)
         self._tree.pack(side="left", fill="both", expand=True)
@@ -107,16 +111,34 @@ class ContactsSection(Section):
         btns = tk.Frame(parent, bg=C["card_bg"])
         btns.pack(fill="x", pady=(8, 0))
         secondary_button(btns, "+ New", self._on_new).pack(side="left")
+        # Reads the project DB for clients that aren't yet a contact —
+        # one click opens a picker that pre-fills the form.
+        self._import_btn = secondary_button(
+            btns, "📥 Import from projects",
+            self._open_project_picker,
+        )
+        self._import_btn.pack(side="left", padx=(8, 0))
 
     # ----- form pane --------------------------------------------------
 
-    def _build_form(self, parent: tk.Frame) -> None:
+    def _build_form(self, card_body: tk.Frame) -> None:
         C = PALETTE
+        # Card.body already packs its title label, so we can't grid()
+        # directly into it — wrap in an intermediate Frame that we
+        # exclusively manage with grid.
+        parent = tk.Frame(card_body, bg=C["card_bg"])
+        parent.pack(fill="both", expand=True)
         self._f_name = tk.StringVar()
+        self._f_abbr = tk.StringVar()
         self._f_vat = tk.StringVar()
         self._f_email = tk.StringVar()
-        self._f_wc = tk.StringVar()
         self._f_notes = tk.StringVar()
+        # Project-client link is hidden state — set when the user imports
+        # from the project picker (or when loading a previously-linked
+        # contact) and persisted on save. The dim "From project: …" label
+        # below echoes it so the user knows what folder name we'll keep.
+        self._pending_project_link: Optional[str] = None
+        self._f_project_label = tk.StringVar(value="")
 
         parent.columnconfigure(1, weight=1)
 
@@ -126,21 +148,40 @@ class ContactsSection(Section):
             )
             widget.grid(row=r, column=1, sticky="we", pady=(0, 6))
 
-        row(0, "Name",  make_entry(parent, self._f_name, width=32))
-        row(1, "VAT",   make_entry(parent, self._f_vat, width=24))
-        row(2, "Email", make_entry(parent, self._f_email, width=32))
-        row(3, "WC #",  make_entry(parent, self._f_wc, width=12))
+        self._name_entry = make_entry(parent, self._f_name, width=32)
+        row(0, "Name",  self._name_entry)
+
+        # Abbreviation row + a small hint underneath about its purpose.
+        # Kept tightly grouped with the Name field since they often vary
+        # together (real name vs. folder-safe short form).
+        row(1, "Abbreviation", make_entry(parent, self._f_abbr, width=24))
+        tk.Label(
+            parent, text="Used for new project folder names.",
+            fg=C["text_dim"], bg=C["card_bg"], font=FONTS["small"], anchor="w",
+        ).grid(row=2, column=1, sticky="w", pady=(0, 6))
+
+        row(3, "VAT",   make_entry(parent, self._f_vat, width=24))
+        row(4, "Email", make_entry(parent, self._f_email, width=32))
 
         form_label(parent, "Address").grid(
-            row=4, column=0, sticky="nw", padx=(0, 10), pady=(2, 6),
+            row=5, column=0, sticky="nw", padx=(0, 10), pady=(2, 6),
         )
         self._f_address = make_text(parent, height=4, width=32)
-        self._f_address.grid(row=4, column=1, sticky="we", pady=(0, 6))
+        self._f_address.grid(row=5, column=1, sticky="we", pady=(0, 6))
 
-        row(5, "Notes", make_entry(parent, self._f_notes, width=32))
+        row(6, "Notes", make_entry(parent, self._f_notes, width=32))
+
+        # Dim "From project: <folder name>" line — shows the original
+        # one-string client identifier this contact was imported from so
+        # the user can verify the project folder mapping stays intact.
+        tk.Label(
+            parent, textvariable=self._f_project_label,
+            fg=C["text_dim"], bg=C["card_bg"], font=FONTS["small"],
+            anchor="w",
+        ).grid(row=7, column=0, columnspan=2, sticky="we", pady=(4, 0))
 
         btns = tk.Frame(parent, bg=C["card_bg"])
-        btns.grid(row=6, column=0, columnspan=2, sticky="we", pady=(12, 0))
+        btns.grid(row=8, column=0, columnspan=2, sticky="we", pady=(12, 0))
         self._save_btn = primary_button(btns, "Save", self._on_save)
         self._save_btn.pack(side="left")
         self._delete_btn = danger_button(btns, "Delete", self._on_delete)
@@ -151,6 +192,165 @@ class ContactsSection(Section):
     def _reload_list(self) -> None:
         self._all_contacts = self.state.registry.list_contacts()
         self._render_list()
+        self._refresh_import_button()
+
+    def _refresh_import_button(self) -> None:
+        """Update the toolbar button's label with the unlinked-project count."""
+        if not hasattr(self, "_import_btn"):
+            return
+        n = len(self._unlinked_project_clients())
+        if n:
+            label = f"📥 Import from projects ({n})"
+        else:
+            label = "📥 Import from projects"
+        try:
+            self._import_btn.configure(text=label)
+        except tk.TclError:
+            pass
+
+    def _unlinked_project_clients(self) -> List[Dict]:
+        """Project DB clients that don't yet have a linked contact.
+
+        Returns a list of dicts with keys: name (the one-string folder
+        name), project_count, is_personal. Sorted by project_count desc
+        so the most-used candidates surface first.
+        """
+        try:
+            from shared_project_db import ProjectDatabase
+            db = ProjectDatabase()
+            all_clients = db.get_all_clients(exclude_personal=True)
+        except Exception:
+            logger.exception("Could not read project DB for contact import")
+            return []
+        linked = {
+            (c.get("project_client_name") or "").strip()
+            for c in self._all_contacts
+            if c.get("project_client_name")
+        }
+        candidates = [
+            c for c in all_clients
+            if c.get("name", "").strip() and c.get("name") not in linked
+        ]
+        candidates.sort(key=lambda c: (-int(c.get("project_count") or 0),
+                                       c.get("name", "").lower()))
+        return candidates
+
+    def _open_project_picker(self) -> None:
+        """Modal Toplevel listing unlinked project clients. Multi-select
+        is enabled (Shift/Ctrl-click) so a whole batch can be imported in
+        one go. Each pick becomes a contact with ``display_name`` set to
+        the project's one-string folder name; the user can rename any of
+        them later from the main contacts list.
+        """
+        candidates = self._unlinked_project_clients()
+        if not candidates:
+            show_info(self.parent, "Import from projects",
+                      "Every project client is already a contact.")
+            return
+
+        C = PALETTE
+        win = tk.Toplevel(self.parent.winfo_toplevel())
+        win.title("Import from projects")
+        win.configure(bg=C["bg"])
+        win.transient(self.parent.winfo_toplevel())
+        win.grab_set()
+        win.geometry("460x460")
+
+        tk.Label(
+            win,
+            text=("Pick one or more project clients to promote to "
+                  "contacts.\nShift-click or Ctrl-click for multi-select."),
+            fg=C["text_dim"], bg=C["bg"], font=FONTS["small"],
+            anchor="w", justify="left", padx=14, pady=10,
+        ).pack(fill="x")
+
+        tree_wrap = tk.Frame(win, bg=C["bg"], padx=14)
+        tree_wrap.pack(fill="both", expand=True)
+        tree = ttk.Treeview(
+            tree_wrap, columns=("name", "n"), show="headings",
+            style="InvApp.Treeview", selectmode="extended",
+        )
+        tree.heading("name", text="Folder name")
+        tree.heading("n", text="Projects")
+        tree.column("name", width=260, anchor="w")
+        tree.column("n", width=80, anchor="e")
+        sb = ttk.Scrollbar(tree_wrap, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=sb.set)
+        tree.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+        for c in candidates:
+            tree.insert(
+                "", "end", iid=c["name"],
+                values=(c["name"], int(c.get("project_count") or 0)),
+            )
+
+        # Ctrl+A → select all (handy when the user wants every candidate)
+        def select_all(_e=None):
+            tree.selection_set(tree.get_children())
+            return "break"
+        tree.bind("<Control-a>", select_all)
+        tree.bind("<Control-A>", select_all)
+
+        def commit(_e=None):
+            picked = list(tree.selection())
+            if not picked:
+                return
+            win.destroy()
+            self._bulk_import_from_projects(picked)
+
+        tree.bind("<Double-Button-1>", commit)
+        tree.bind("<Return>", commit)
+
+        btns = tk.Frame(win, bg=C["bg"], padx=14, pady=10)
+        btns.pack(fill="x")
+        primary_button(btns, "Add selected as contacts", commit).pack(side="right")
+        secondary_button(btns, "Cancel", win.destroy).pack(
+            side="right", padx=(0, 8),
+        )
+
+    def _bulk_import_from_projects(self, project_client_names: List[str]) -> None:
+        """Insert one contact per project client name, using the folder
+        name as the display_name. Skips entries that already exist (the
+        unique partial index would have rejected them anyway).
+        """
+        added = 0
+        skipped: List[str] = []
+        errors: List[str] = []
+        for name in project_client_names:
+            try:
+                # The project folder name is the abbreviation. We leave
+                # display_name blank on purpose: the user fills in the
+                # real human name from the form, while the abbreviation
+                # stays as the on-disk folder identifier.
+                self.state.registry.create_contact({
+                    "display_name": "",
+                    "abbreviation": name,
+                    "project_client_name": name,
+                })
+                added += 1
+            except Exception as e:
+                # Most likely the unique partial index — someone added
+                # this contact from another window between picker open
+                # and commit. Treat as "already there" rather than fatal.
+                msg = str(e).lower()
+                if "unique" in msg or "constraint" in msg:
+                    skipped.append(name)
+                else:
+                    logger.exception(f"Could not import project client {name!r}")
+                    errors.append(f"{name}: {e}")
+
+        self._reload_list()
+        self._notify_change()
+        self._mark_status_dirty()
+
+        parts = [f"Added {added} contact(s)."]
+        if skipped:
+            parts.append(f"Skipped {len(skipped)} already linked.")
+        if errors:
+            parts.append("Errors:\n  " + "\n  ".join(errors[:5]))
+            if len(errors) > 5:
+                parts.append(f"  …and {len(errors) - 5} more (see log)")
+        show_info(self.parent, "Import from projects", "\n".join(parts))
 
     def _render_list(self) -> None:
         needle = (self._filter_var.get() or "").strip().lower()
@@ -159,15 +359,15 @@ class ContactsSection(Section):
         for c in self._all_contacts:
             if needle:
                 hay = " ".join(str(c.get(k, "")) for k in
-                               ("display_name", "email", "vat")).lower()
+                               ("display_name", "abbreviation", "email", "vat")).lower()
                 if needle not in hay:
                     continue
-            wc = c.get("wc_customer_id")
+            display = (c.get("display_name") or "").strip() or "(needs name)"
             self._tree.insert(
                 "", "end", iid=str(c["id"]),
-                values=(c.get("display_name", ""),
-                        c.get("email", "") or "—",
-                        str(wc) if wc else ""),
+                values=(display,
+                        c.get("abbreviation", "") or "",
+                        c.get("email", "") or "—"),
             )
         # Preserve selection if the row is still visible
         if self._selected_id is not None:
@@ -190,23 +390,20 @@ class ContactsSection(Section):
         self._clear_form(disable=False)
         # Hand focus to the name field so the user can just start typing.
         try:
-            self._f_name.set("")
-            # Find the Name entry to focus
-            for child in self._form_card.body.winfo_children():
-                if isinstance(child, tk.Entry):
-                    child.focus_set()
-                    break
-        except Exception:
+            self._name_entry.focus_set()
+        except (AttributeError, tk.TclError):
             pass
 
     # ----- form helpers -----------------------------------------------
 
     def _clear_form(self, *, disable: bool) -> None:
         self._selected_id = None
+        self._pending_project_link = None
+        self._f_project_label.set("")
         self._f_name.set("")
+        self._f_abbr.set("")
         self._f_vat.set("")
         self._f_email.set("")
-        self._f_wc.set("")
         self._f_notes.set("")
         self._f_address.delete("1.0", "end")
         state = "disabled" if disable else "normal"
@@ -216,38 +413,44 @@ class ContactsSection(Section):
     def _load_form(self, contact: Dict) -> None:
         self._selected_id = int(contact["id"])
         self._f_name.set(contact.get("display_name", ""))
+        self._f_abbr.set(contact.get("abbreviation") or "")
         self._f_vat.set(contact.get("vat", ""))
         self._f_email.set(contact.get("email", ""))
-        wc = contact.get("wc_customer_id")
-        self._f_wc.set("" if wc is None else str(wc))
         self._f_notes.set(contact.get("notes", ""))
         self._f_address.delete("1.0", "end")
         self._f_address.insert("1.0", contact.get("address", ""))
+        self._pending_project_link = contact.get("project_client_name") or None
+        self._set_project_label(self._pending_project_link)
         self._save_btn.configure(state="normal")
         self._delete_btn.configure(state="normal")
 
+    def _set_project_label(self, project_client: Optional[str]) -> None:
+        if project_client:
+            self._f_project_label.set(
+                f"From project: {project_client}  "
+                f"(project folder name kept as-is)"
+            )
+        else:
+            self._f_project_label.set("")
+
     def _read_form(self) -> Optional[Dict]:
         name = self._f_name.get().strip()
-        if not name:
+        abbreviation = self._f_abbr.get().strip() or None
+        # At least one of name or abbreviation needs content — otherwise
+        # the contact has nothing identifying it. (Imported rows always
+        # have an abbreviation, so this only blocks truly empty saves.)
+        if not name and not abbreviation:
             show_error(self.parent, "Save contact",
-                       "Name is required.")
+                       "Enter at least a name or an abbreviation.")
             return None
-        wc_raw = self._f_wc.get().strip()
-        wc_id: Optional[int] = None
-        if wc_raw:
-            try:
-                wc_id = int(wc_raw)
-            except ValueError:
-                show_error(self.parent, "Save contact",
-                           "WC # must be a number (or empty).")
-                return None
         return {
             "display_name": name,
+            "abbreviation": abbreviation,
             "vat": self._f_vat.get().strip(),
             "email": self._f_email.get().strip(),
             "address": self._f_address.get("1.0", "end").strip(),
             "notes": self._f_notes.get().strip(),
-            "wc_customer_id": wc_id,
+            "project_client_name": self._pending_project_link,
         }
 
     def _on_save(self) -> None:

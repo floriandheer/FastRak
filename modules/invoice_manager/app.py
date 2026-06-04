@@ -39,7 +39,6 @@ from invoice_manager.theme import PALETTE, install_styles
 from invoice_manager.sections.base import Section
 from invoice_manager.sections.companies import CompaniesSection
 from invoice_manager.sections.compose import ComposeSection
-from invoice_manager.sections.contacts import ContactsSection
 from invoice_manager.sections.dashboard import DashboardSection
 from invoice_manager.sections.incoming import IncomingSection
 from invoice_manager.sections.orders import OrdersSection
@@ -137,6 +136,9 @@ class InvoiceManager:
     # ----- section setup ----------------------------------------------
 
     def _mount_sections(self) -> None:
+        # Contacts lives in its own Business Tools window (see
+        # PipelineScript_Business_Contacts.py) so it isn't mounted here —
+        # both apps write to the same SQLite contacts table.
         self.sections["dashboard"] = DashboardSection(
             self.content, self.state, nav_to=self.navigate,
         )
@@ -144,7 +146,6 @@ class InvoiceManager:
         self.sections["outgoing"]  = OutgoingSection(self.content, self.state)
         self.sections["incoming"]  = IncomingSection(self.content, self.state)
         self.sections["orders"]    = OrdersSection(self.content, self.state)
-        self.sections["contacts"]  = ContactsSection(self.content, self.state)
         self.sections["companies"] = CompaniesSection(self.content, self.state)
         self.sections["settings"]  = SettingsSection(
             self.content, self.state, on_debug_toggle=self._refresh_debug_banner,
@@ -156,7 +157,7 @@ class InvoiceManager:
             sec = self.sections[key]
             self.sidebar.add(sec.sidebar_key, sec.title, sec.sidebar_icon)
         self.sidebar.add_separator()
-        for key in ("contacts", "companies", "settings"):
+        for key in ("companies", "settings"):
             sec = self.sections[key]
             self.sidebar.add(sec.sidebar_key, sec.title, sec.sidebar_icon)
 

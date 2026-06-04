@@ -454,7 +454,15 @@ CATEGORIES: Dict[str, Dict[str, Any]] = {
         "display_name": "Business",
         "description": "Business and financial management tools",
         "work_path_key": None,
-        "category_scripts": [],
+        "category_scripts": [
+            {
+                "key": "contacts",
+                "name": "Contacts",
+                "module": "PipelineScript_Business_Contacts",
+                "description": "Customer directory — shares the contacts table with the Invoice Manager",
+                "icon": "👤",
+            },
+        ],
         "subtypes": {},
     },
     "Global": {

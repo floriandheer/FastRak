@@ -181,20 +181,20 @@ def test_list_invoices_filters(registry):
 def test_contacts_crud_roundtrip(registry):
     new_id = registry.create_contact({
         "display_name": "ACME Corp",
+        "abbreviation": "ACME",
         "vat": "BE0123456789",
         "email": "hello@acme.example",
         "address": "Acme Street 1\n1000 Brussels",
-        "wc_customer_id": 42,
     })
     assert new_id > 0
 
     fetched = registry.get_contact(new_id)
     assert fetched["display_name"] == "ACME Corp"
+    assert fetched["abbreviation"] == "ACME"
     assert fetched["vat"] == "BE0123456789"
-    assert fetched["wc_customer_id"] == 42
 
-    by_wc = registry.get_contact_by_wc_customer(42)
-    assert by_wc is not None and by_wc["id"] == new_id
+    by_abbr = registry.get_contact_by_abbreviation("ACME")
+    assert by_abbr is not None and by_abbr["id"] == new_id
 
     registry.update_contact(new_id, {"email": "billing@acme.example"})
     assert registry.get_contact(new_id)["email"] == "billing@acme.example"
@@ -208,12 +208,60 @@ def test_contacts_crud_roundtrip(registry):
     assert registry.get_contact(new_id) is None
 
 
-def test_contacts_reject_blank_name(registry):
-    with pytest.raises(ValueError):
-        registry.create_contact({"display_name": "  "})
+def test_contacts_allow_blank_name(registry):
+    """Bulk-imported contacts start with no display_name; the user fills
+    it in from the form later. The registry accepts the blank state.
+    """
+    cid = registry.create_contact({
+        "display_name": "",
+        "abbreviation": "MikeMorraye",
+        "project_client_name": "MikeMorraye",
+    })
+    row = registry.get_contact(cid)
+    assert row["display_name"] == ""
+    assert row["abbreviation"] == "MikeMorraye"
 
 
-def test_contacts_wc_id_unique(registry):
-    registry.create_contact({"display_name": "First", "wc_customer_id": 99})
+def test_contacts_abbreviation_unique(registry):
+    registry.create_contact({"display_name": "First", "abbreviation": "DUP"})
     with pytest.raises(sqlite3.IntegrityError):
-        registry.create_contact({"display_name": "Second", "wc_customer_id": 99})
+        registry.create_contact({"display_name": "Second", "abbreviation": "DUP"})
+
+
+def test_contacts_abbreviation_blank_becomes_null(registry):
+    """Two contacts with no abbreviation must not collide on the unique index."""
+    registry.create_contact({"display_name": "A", "abbreviation": ""})
+    registry.create_contact({"display_name": "B", "abbreviation": "   "})
+    # Both succeed; both normalise to NULL.
+    rows = registry.list_contacts()
+    assert all(r["abbreviation"] is None for r in rows)
+
+    # Updating an existing abbreviation to blank also nulls it (and frees
+    # the index slot for someone else to take that string later).
+    cid = registry.create_contact({"display_name": "C", "abbreviation": "TEMP"})
+    registry.update_contact(cid, {"abbreviation": "  "})
+    assert registry.get_contact(cid)["abbreviation"] is None
+    registry.create_contact({"display_name": "D", "abbreviation": "TEMP"})  # OK
+
+
+def test_contacts_project_link_roundtrip(registry):
+    cid = registry.create_contact({
+        "display_name": "Mike Morraye",
+        "project_client_name": "MikeMorraye",
+    })
+    by_proj = registry.get_contact_by_project_client("MikeMorraye")
+    assert by_proj is not None and by_proj["id"] == cid
+    # Re-link to a different project client
+    registry.update_contact(cid, {"project_client_name": "MorrayeMike"})
+    assert registry.get_contact_by_project_client("MikeMorraye") is None
+    assert registry.get_contact_by_project_client("MorrayeMike")["id"] == cid
+
+
+def test_contacts_project_link_unique(registry):
+    registry.create_contact({
+        "display_name": "A", "project_client_name": "ProjectFoo",
+    })
+    with pytest.raises(sqlite3.IntegrityError):
+        registry.create_contact({
+            "display_name": "B", "project_client_name": "ProjectFoo",
+        })

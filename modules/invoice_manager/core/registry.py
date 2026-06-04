@@ -74,19 +74,23 @@ CREATE TABLE IF NOT EXISTS wc_push_queue (
 );
 
 CREATE TABLE IF NOT EXISTS contacts (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    display_name    TEXT    NOT NULL,
-    vat             TEXT    NOT NULL DEFAULT '',
-    address         TEXT    NOT NULL DEFAULT '',
-    email           TEXT    NOT NULL DEFAULT '',
-    notes           TEXT    NOT NULL DEFAULT '',
-    wc_customer_id  INTEGER,
-    created_at      TEXT    NOT NULL,
-    updated_at      TEXT    NOT NULL
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    display_name         TEXT    NOT NULL,
+    abbreviation         TEXT,
+    vat                  TEXT    NOT NULL DEFAULT '',
+    address              TEXT    NOT NULL DEFAULT '',
+    email                TEXT    NOT NULL DEFAULT '',
+    notes                TEXT    NOT NULL DEFAULT '',
+    project_client_name  TEXT,
+    created_at           TEXT    NOT NULL,
+    updated_at           TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_contacts_name ON contacts(display_name);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_wc_customer
-    ON contacts(wc_customer_id) WHERE wc_customer_id IS NOT NULL;
+-- abbreviation / project_client_name indices are created after
+-- the migration block adds those columns on older DBs (see
+-- _ensure_schema). Keeping the index DDL out of SCHEMA_SQL means
+-- executescript() doesn't abort if an old DB has the contacts
+-- table without those columns yet.
 
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY);
 """
@@ -142,6 +146,52 @@ class InvoiceRegistry:
                     )
                 except Exception:
                     pass  # column already exists
+                try:
+                    conn.execute(
+                        "ALTER TABLE contacts ADD COLUMN project_client_name TEXT"
+                    )
+                except Exception:
+                    pass  # column already exists
+                # The partial index here is also covered by SCHEMA_SQL above
+                # for fresh DBs; the ALTER path needs it created explicitly.
+                try:
+                    conn.execute(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS "
+                        "idx_contacts_project_client "
+                        "ON contacts(project_client_name) "
+                        "WHERE project_client_name IS NOT NULL"
+                    )
+                except Exception:
+                    pass
+                try:
+                    conn.execute(
+                        "ALTER TABLE contacts ADD COLUMN abbreviation TEXT"
+                    )
+                except Exception:
+                    pass  # column already exists
+                try:
+                    conn.execute(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS "
+                        "idx_contacts_abbreviation "
+                        "ON contacts(abbreviation) "
+                        "WHERE abbreviation IS NOT NULL"
+                    )
+                except Exception:
+                    pass
+                # Retire the wc_customer_id column. SQLite 3.35+ supports
+                # DROP COLUMN; on older versions the ALTER silently fails
+                # and the column lingers as dead data — harmless because
+                # no code paths reference it anymore.
+                try:
+                    conn.execute("DROP INDEX IF EXISTS idx_contacts_wc_customer")
+                except Exception:
+                    pass
+                try:
+                    conn.execute(
+                        "ALTER TABLE contacts DROP COLUMN wc_customer_id"
+                    )
+                except Exception:
+                    pass  # old SQLite or column already absent
                 self._initialised = True
             finally:
                 conn.close()
@@ -603,33 +653,34 @@ class InvoiceRegistry:
         finally:
             conn.close()
 
-    def get_contact_by_wc_customer(self, wc_customer_id: int) -> Optional[Dict[str, Any]]:
-        conn = self._connect()
-        try:
-            row = conn.execute(
-                "SELECT * FROM contacts WHERE wc_customer_id=?",
-                (int(wc_customer_id),),
-            ).fetchone()
-            return dict(row) if row else None
-        finally:
-            conn.close()
-
     def create_contact(self, data: Dict[str, Any]) -> int:
         """Insert a contact. Returns the new row id.
 
-        `data` may contain: display_name (required), vat, address, email,
-        notes, wc_customer_id. Missing string fields default to ''.
+        `data` may contain: display_name, abbreviation, vat, address,
+        email, notes, project_client_name. Missing string fields default
+        to ''. Empty strings for `abbreviation` and `project_client_name`
+        are normalised to NULL so the partial unique indices don't
+        conflict.
+
+        ``display_name`` is allowed to be blank: bulk-importing from the
+        project list leaves it empty so the user can fill in real names
+        later from the form.
         """
-        if not data.get("display_name", "").strip():
-            raise ValueError("contact display_name is required")
         now = _now_iso()
+        project_client = data.get("project_client_name")
+        if isinstance(project_client, str):
+            project_client = project_client.strip() or None
+        abbreviation = data.get("abbreviation")
+        if isinstance(abbreviation, str):
+            abbreviation = abbreviation.strip() or None
         payload = {
-            "display_name": data["display_name"].strip(),
+            "display_name": (data.get("display_name") or "").strip(),
+            "abbreviation": abbreviation,
             "vat": (data.get("vat") or "").strip(),
             "address": (data.get("address") or "").strip(),
             "email": (data.get("email") or "").strip(),
             "notes": (data.get("notes") or "").strip(),
-            "wc_customer_id": data.get("wc_customer_id"),
+            "project_client_name": project_client,
             "created_at": now,
             "updated_at": now,
         }
@@ -638,11 +689,11 @@ class InvoiceRegistry:
             cur = conn.execute(
                 """
                 INSERT INTO contacts
-                  (display_name, vat, address, email, notes, wc_customer_id,
-                   created_at, updated_at)
+                  (display_name, abbreviation, vat, address, email, notes,
+                   project_client_name, created_at, updated_at)
                 VALUES
-                  (:display_name, :vat, :address, :email, :notes, :wc_customer_id,
-                   :created_at, :updated_at)
+                  (:display_name, :abbreviation, :vat, :address, :email, :notes,
+                   :project_client_name, :created_at, :updated_at)
                 """,
                 payload,
             )
@@ -652,10 +703,38 @@ class InvoiceRegistry:
         finally:
             conn.close()
 
+    def get_contact_by_project_client(self, project_client_name: str) -> Optional[Dict[str, Any]]:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT * FROM contacts WHERE project_client_name=?",
+                (project_client_name,),
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def get_contact_by_abbreviation(self, abbreviation: str) -> Optional[Dict[str, Any]]:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT * FROM contacts WHERE abbreviation=?",
+                (abbreviation,),
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
     def update_contact(self, contact_id: int, data: Dict[str, Any]) -> None:
-        """Patch a contact. Keys not present in `data` are left alone."""
-        allowed = {"display_name", "vat", "address", "email", "notes",
-                   "wc_customer_id"}
+        """Patch a contact. Keys not present in `data` are left alone.
+
+        `abbreviation` and `project_client_name` get the same blank-to-NULL
+        normalisation as ``create_contact`` so partial unique indices stay
+        consistent.
+        """
+        allowed = {"display_name", "abbreviation", "vat", "address", "email",
+                   "notes", "project_client_name"}
+        nullable_when_blank = {"abbreviation", "project_client_name"}
         sets = []
         values: List[Any] = []
         for key in allowed:
@@ -663,6 +742,8 @@ class InvoiceRegistry:
                 value = data[key]
                 if isinstance(value, str):
                     value = value.strip()
+                    if not value and key in nullable_when_blank:
+                        value = None
                 sets.append(f"{key}=?")
                 values.append(value)
         if not sets:

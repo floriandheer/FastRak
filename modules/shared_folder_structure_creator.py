@@ -25,6 +25,15 @@ sys.path.insert(0, str(MODULES_DIR))
 from shared_logging import get_logger
 from shared_project_db import ProjectDatabase
 from shared_autocomplete_widget import AutocompleteEntry
+# Best-effort import: the contacts table only exists if the user has
+# the Invoice Manager / Contacts app set up. If anything is missing
+# we fall back to a no-op resolver and the typed name passes through
+# unchanged.
+try:
+    from invoice_manager.contacts_resolver import resolve_client_folder_name
+except Exception:
+    def resolve_client_folder_name(typed_value):  # type: ignore[misc]
+        return typed_value
 from rak_settings import get_rak_settings
 from shared_form_keyboard import (
     FormKeyboardMixin, FORM_COLORS,
@@ -367,7 +376,17 @@ class GenericFolderStructureCreator(FormKeyboardMixin):
     # ---- naming / routing ----
 
     def _client_value(self):
+        """Raw, user-typed string. Use _resolved_client_value() when the
+        result will hit the filesystem or the project DB — that variant
+        substitutes the contact's abbreviation when one is registered."""
         return self.client_name_var.get() if self.client_name_var else ""
+
+    def _resolved_client_value(self):
+        """``_client_value`` rewritten to the contact's folder-safe
+        abbreviation when the typed name matches a known contact (either
+        by display_name or by the abbreviation itself, case-insensitive).
+        """
+        return resolve_client_folder_name(self._client_value())
 
     def _project_value(self):
         return self.project_name_var.get() if self.project_name_var else ""
@@ -378,7 +397,7 @@ class GenericFolderStructureCreator(FormKeyboardMixin):
             if override is not None:
                 return override
         date = self.date_var.get() or datetime.now().strftime('%Y-%m-%d')
-        client = self._client_value()
+        client = self._resolved_client_value()
         project = self._project_value()
         prefix = self.manifest.get("folder_prefix")
         parts = [date]
@@ -523,7 +542,11 @@ class GenericFolderStructureCreator(FormKeyboardMixin):
 
             software_specs = get_active_software(self.software_chips) if self.software_chips else {}
 
-            client_name = self._client_value() or "Personal"
+            # Use the same abbreviation-resolved value that ends up in
+            # the folder name so the project DB and the on-disk folder
+            # stay in sync (and so future projects for the same contact
+            # group together correctly under one key).
+            client_name = self._resolved_client_value() or "Personal"
             project_name = self._project_value()
 
             metadata = {}

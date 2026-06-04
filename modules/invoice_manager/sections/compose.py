@@ -32,7 +32,6 @@ from invoice_manager.core.wc_bridge import WCBridgeError, WooCommerceBridge
 from shared_logging import get_logger
 
 from invoice_manager.sections.base import Section
-from invoice_manager.sections.contacts import ContactsSection
 from invoice_manager.theme import PALETTE, FONTS
 from invoice_manager.widgets.buttons import primary_button, secondary_button
 from invoice_manager.widgets.card import Card
@@ -187,10 +186,12 @@ class ComposeSection(Section):
         self._m_address.grid(row=row, column=1, sticky="we", pady=(0, 6))
         row += 1
 
-        # Initial population + subscribe to live changes from ContactsSection.
+        # Initial population. Contacts now lives in its own window
+        # (Business Tools → Contacts), so we can't subscribe to an
+        # in-process change event — instead, on_show() re-reads the
+        # table every time the user returns to this section.
         self._contacts_by_name: Dict[str, Dict] = {}
         self._reload_contact_suggestions()
-        ContactsSection.on_change(self._reload_contact_suggestions)
 
         add_row(row, "Notes", make_entry(parent, self._m_notes, width=32)); row += 1
 
@@ -819,6 +820,9 @@ class ComposeSection(Section):
     def on_show(self) -> None:
         self._refresh_preview()
         self._refresh_items()
+        # Re-read contacts so edits made in the standalone Contacts
+        # window are reflected in the Name autocomplete dropdown.
+        self._reload_contact_suggestions()
 
     def on_year_change(self, year: int) -> None:
         self._m_year.set(str(year))
