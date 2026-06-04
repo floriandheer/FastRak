@@ -454,15 +454,7 @@ CATEGORIES: Dict[str, Dict[str, Any]] = {
         "display_name": "Business",
         "description": "Business and financial management tools",
         "work_path_key": None,
-        "category_scripts": [
-            {
-                "key": "invoice_manager",
-                "name": "Invoice Manager",
-                "module": "PipelineScript_Business_InvoiceManager",
-                "description": "Unified invoicing & orders — compose, browse outgoing/incoming, manage WooCommerce orders, bookkeeping folder structure",
-                "icon": "🧾",
-            },
-        ],
+        "category_scripts": [],
         "subtypes": {},
     },
     "Global": {
