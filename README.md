@@ -59,30 +59,45 @@ Some pipeline scripts require additional external software:
 
 ## Installation
 
-### Quick Start
-
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/floriandheer/FastRak.git
-   cd FastRak
-   ```
-
-2. **Install dependencies**
-   ```bash
-   python install_dependencies.py
-   ```
-
-### Environment Setup
-
-The `setup_environment.py` script automates provisioning the pipeline environment on a workstation: it creates the folder structure, maps `subst` drives with registry persistence (no admin rights needed), checks Synology Drive sync status, and generates the pipeline config file.
+### One command (recommended)
 
 ```bash
-copy setup_config.json.example setup_config.json   # 1. Copy template
-# 2. Edit setup_config.json with your drive letters and paths
-python setup_environment.py                         # 3. Run setup
+git clone https://github.com/floriandheer/FastRak.git
+cd FastRak
+python install.py
 ```
 
-Use `--dry-run` to preview changes without modifying anything. See [docs/INSTALLATION.md](docs/INSTALLATION.md) for a full walkthrough.
+`install.py` is a friendly first-run installer that walks you through six steps:
+
+1. **Prerequisites** — Python, pip, git
+2. **Python packages** — `pip install -r requirements.txt`
+3. **External tools** — FFmpeg, FLAC, rclone (offers a winget install on Windows)
+4. **Environment** — folders, `subst` drive mappings (with registry persistence, no admin needed), Synology checks, pipeline config
+5. **Desktop shortcut** — generates `Fastrak.lnk` you can pin to the taskbar
+6. **Doctor** — verifies the end state is healthy
+
+Every step asks before touching anything. Safe to re-run on the same machine, and gives a clean "all green" report when done.
+
+```bash
+python install.py --yes            # accept every prompt (CI / unattended)
+python install.py --dry-run        # show what would happen, change nothing
+python install.py --step deps      # run a single step
+python install.py --skip-externals # skip FFmpeg/FLAC/rclone checks
+```
+
+### Manual / piecemeal install
+
+If you'd rather drive it yourself, the building blocks are still available:
+
+```bash
+python install_dependencies.py             # just the Python packages
+copy setup_config.json.example setup_config.json
+# ...edit setup_config.json...
+python setup_environment.py                # folders + drives + config
+python make_shortcut.py                    # Fastrak.lnk
+```
+
+See [docs/INSTALLATION.md](docs/INSTALLATION.md) for the full walkthrough.
 
 ## Usage
 

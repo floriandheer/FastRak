@@ -1,210 +1,277 @@
 #!/usr/bin/env python
 """
-Florian Dheer Pipeline - Enhanced Dependency Installer
------------------------------------------------------
-This script installs all required dependencies for both the desktop and web versions
-of the Florian Dheer Pipeline application.
+Florian Dheer Pipeline - Python Dependency Installer
+----------------------------------------------------
+Installs the Python packages required by the desktop pipeline. Reads from
+requirements.txt if available; otherwise falls back to a built-in list.
 
 Usage:
-    python install_dependencies.py [--web-only] [--desktop-only]
+    python install_dependencies.py [--desktop-only] [--web-only] [--yes]
+
+For a guided end-to-end first-time setup (deps + folders + drives + shortcut),
+run `python install.py` instead.
 """
 
-import sys
-import subprocess
+import argparse
 import importlib.util
 import os
-import time
-import argparse
+import subprocess
+import sys
 from pathlib import Path
 
-# Core dependencies (always needed)
+
+# ============================================================
+# Pretty console output (stdlib-only, Windows-aware)
+# ============================================================
+
+def _supports_ansi() -> bool:
+    if os.environ.get("NO_COLOR"):
+        return False
+    if not sys.stdout.isatty():
+        return False
+    if sys.platform == "win32":
+        # Enable VT processing on Windows 10+; harmless if it fails.
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+        except Exception:
+            return False
+    return True
+
+
+_USE_COLOR = _supports_ansi()
+
+
+def _c(code: str, text: str) -> str:
+    return f"\033[{code}m{text}\033[0m" if _USE_COLOR else text
+
+
+def bold(t): return _c("1", t)
+def dim(t):  return _c("2", t)
+def red(t):  return _c("31", t)
+def grn(t):  return _c("32", t)
+def ylw(t):  return _c("33", t)
+def cyn(t):  return _c("36", t)
+
+
+CHECK = grn("ok") if _USE_COLOR else "[ok]"
+CROSS = red("xx") if _USE_COLOR else "[xx]"
+ARROW = cyn(">>") if _USE_COLOR else ">>"
+DOTS = dim("..")
+
+
+# ============================================================
+# Package definitions (fallback if requirements.txt missing)
+# ============================================================
+
 CORE_PACKAGES = [
-    {"name": "Pillow", "pip_name": "pillow>=10.0.0", "description": "Image processing and logo display"}
+    {"name": "Pillow", "pip_name": "pillow>=10.0.0", "description": "Image processing and logo display"},
 ]
 
-# Desktop-specific dependencies (tkinter app)
-# Note: tkinter is included with Python by default
 DESKTOP_PACKAGES = [
+    {"name": "pyexiv2", "pip_name": "pyexiv2>=2.8.0", "description": "EXIF metadata read/write for image scripts"},
     {"name": "setuptools", "pip_name": "setuptools<81", "description": "Required by invoice2data (pkg_resources)"},
     {"name": "pdfplumber", "pip_name": "pdfplumber>=0.9.0", "description": "PDF text extraction for invoice processing"},
     {"name": "invoice2data", "pip_name": "invoice2data>=0.4.0", "description": "Template-based invoice data extraction"},
 ]
 
-# Web-specific dependencies (not currently used)
-WEB_PACKAGES = []
+WEB_PACKAGES: list = []
 
-def is_package_installed(package_name):
-    """Check if a Python package is installed"""
-    # Handle packages with special characters
-    import_name = package_name.lower().replace("-", "_")
+
+# ============================================================
+# Helpers
+# ============================================================
+
+def is_package_installed(pip_name: str) -> bool:
+    """Check if a package is importable. Accepts the pip name with version pin."""
+    base = pip_name.split(">=")[0].split("==")[0].split("<")[0].split("[")[0].strip()
+    import_name = base.lower().replace("-", "_")
     return importlib.util.find_spec(import_name) is not None
 
-def install_package(package_name):
-    """Install a package using pip"""
-    print(f"Installing {package_name}...")
+
+def install_package(pip_name: str) -> bool:
+    """Install a single package via pip."""
+    print(f"  {ARROW} {pip_name} {DOTS}")
     try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", package_name])
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", pip_name],
+            stdout=subprocess.DEVNULL if _USE_COLOR else None,
+            stderr=subprocess.STDOUT,
+        )
         return True
     except subprocess.CalledProcessError as e:
-        print(f"Failed to install {package_name}. Error: {e}")
+        print(f"     {red('error:')} {e}")
         return False
 
-def check_requirements_txt():
-    """Check if requirements.txt exists and offer to use it"""
-    requirements_path = Path("requirements.txt")
-    if requirements_path.exists():
-        print(f"Found requirements.txt at: {requirements_path}")
-        use_requirements = input("Would you like to install from requirements.txt instead? (y/n): ")
-        if use_requirements.lower() in ('y', 'yes'):
-            try:
-                subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", str(requirements_path)])
-                print("Successfully installed all packages from requirements.txt!")
-                return True
-            except subprocess.CalledProcessError as e:
-                print(f"Failed to install from requirements.txt: {e}")
-                print("Falling back to individual package installation...")
-                return False
-    return False
+
+def install_from_requirements(path: Path) -> bool:
+    """Install everything from a requirements.txt."""
+    print(f"  {ARROW} pip install -r {path.name}")
+    try:
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "-r", str(path)]
+        )
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"     {red('error:')} {e}")
+        return False
+
+
+def confirm(prompt: str, auto_yes: bool) -> bool:
+    if auto_yes:
+        print(f"{prompt} {dim('(auto-confirmed via --yes)')}")
+        return True
+    return input(f"{prompt} (y/n): ").strip().lower() in ("y", "yes")
+
+
+def banner(title: str):
+    line = "=" * 60
+    print()
+    print(bold(line))
+    print(bold(f"  {title}"))
+    print(bold(line))
+
+
+# ============================================================
+# Main
+# ============================================================
 
 def main():
-    parser = argparse.ArgumentParser(description="Install Florian Dheer Pipeline dependencies")
-    parser.add_argument("--web-only", action="store_true", help="Install only web interface dependencies")
-    parser.add_argument("--desktop-only", action="store_true", help="Install only desktop application dependencies")
+    parser = argparse.ArgumentParser(
+        description="Install Florian Dheer Pipeline Python dependencies",
+    )
+    parser.add_argument("--web-only", action="store_true", help="Install only web-interface deps")
+    parser.add_argument("--desktop-only", action="store_true", help="Install only desktop-app deps")
     parser.add_argument("--skip-optional", action="store_true", help="Skip optional packages")
-    
+    parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompts")
+    parser.add_argument(
+        "--no-requirements", action="store_true",
+        help="Ignore requirements.txt and use the built-in package list",
+    )
     args = parser.parse_args()
-    
-    print("=" * 60)
-    print("Florian Dheer Pipeline - Enhanced Dependency Installer")
-    print("=" * 60)
-    print(f"Python version: {sys.version}")
-    print(f"Pip executable: {sys.executable} -m pip")
-    print("=" * 60)
-    
-    # Check if we should use requirements.txt
-    if not (args.web_only or args.desktop_only) and check_requirements_txt():
+
+    banner("Florian Dheer Pipeline - Python Dependencies")
+    print(f"  Python:    {sys.version.split()[0]}  ({sys.executable})")
+    print(f"  Platform:  {sys.platform}")
+
+    requirements = Path(__file__).resolve().parent / "requirements.txt"
+    use_requirements = (
+        not args.no_requirements
+        and not args.web_only
+        and not args.desktop_only
+        and requirements.exists()
+    )
+
+    if use_requirements:
+        print(f"  Source:    {requirements.name} ({len(requirements.read_text().splitlines())} lines)")
+        print()
+        if not confirm(f"  Install everything from {cyn(requirements.name)}?", args.yes):
+            print(dim("  Skipped."))
+            return
+        ok = install_from_requirements(requirements)
+        print()
+        if ok:
+            print(f"  {CHECK} All packages from {requirements.name} installed.")
+        else:
+            print(f"  {CROSS} Some packages failed. Re-run with --no-requirements to try one by one.")
+        _print_next_steps(args)
         return
-    
-    # Determine which packages to install
-    packages_to_check = CORE_PACKAGES.copy()
-    
+
+    # --- Fallback: built-in list ---
+    packages = list(CORE_PACKAGES)
     if args.web_only:
-        packages_to_check.extend(WEB_PACKAGES)
-        print("Mode: Web interface only")
+        packages.extend(WEB_PACKAGES)
+        print(f"  Mode:      web-only")
     elif args.desktop_only:
-        packages_to_check.extend(DESKTOP_PACKAGES)
-        print("Mode: Desktop application only")
+        packages.extend(DESKTOP_PACKAGES)
+        print(f"  Mode:      desktop-only")
     else:
-        packages_to_check.extend(DESKTOP_PACKAGES)
-        packages_to_check.extend(WEB_PACKAGES)
-        print("Mode: Full installation (both desktop and web)")
-    
+        packages.extend(DESKTOP_PACKAGES)
+        packages.extend(WEB_PACKAGES)
+        print(f"  Mode:      full install (desktop + web)")
+
     if args.skip_optional:
-        packages_to_check = [p for p in packages_to_check if not p.get("optional", False)]
-        print("Skipping optional packages")
-    
-    print("=" * 60)
-    
-    missing_packages = []
-    optional_missing = []
-    
-    # Check for required packages
-    print("Checking for required packages...")
-    for package in packages_to_check:
-        sys.stdout.write(f"  - {package['name']} ({package['description']}): ")
-        
-        # Extract package name for import check (remove version constraints)
-        import_name = package['pip_name'].split('>=')[0].split('==')[0].split('[')[0]
-        
-        if is_package_installed(import_name):
-            sys.stdout.write("Already installed ✓\n")
+        packages = [p for p in packages if not p.get("optional", False)]
+
+    print()
+    print(bold("  Checking packages:"))
+
+    missing = []
+    for pkg in packages:
+        status = CHECK if is_package_installed(pkg["pip_name"]) else CROSS
+        print(f"  {status} {pkg['name']:<14} {dim(pkg['description'])}")
+        if status == CROSS:
+            missing.append(pkg)
+
+    if not missing:
+        print()
+        print(f"  {CHECK} All packages already installed.")
+        _print_next_steps(args)
+        return
+
+    print()
+    print(f"  {ylw('Missing:')} {len(missing)} package(s)")
+    for pkg in missing:
+        print(f"    - {pkg['name']} ({pkg['pip_name']})")
+
+    print()
+    if not confirm("  Install missing packages now?", args.yes):
+        print(dim("  Skipped. The app may not run correctly."))
+        return
+
+    print()
+    failed = []
+    for pkg in missing:
+        if install_package(pkg["pip_name"]):
+            print(f"     {CHECK} {pkg['name']}")
         else:
-            sys.stdout.write("Missing ✗\n")
-            if package.get("optional", False):
-                optional_missing.append(package)
-            else:
-                missing_packages.append(package)
-    
-    # Handle missing packages
-    total_missing = len(missing_packages) + len(optional_missing)
-    
-    if total_missing == 0:
-        print("\nAll required packages are already installed!")
+            failed.append(pkg)
+            print(f"     {CROSS} {pkg['name']}")
+
+    print()
+    if failed:
+        print(f"  {ylw('Warning:')} {len(failed)} package(s) failed:")
+        for pkg in failed:
+            print(f"    - {pkg['name']}")
+        print(f"  {dim('Try: pip install --upgrade pip, then re-run.')}")
     else:
-        print(f"\nFound {total_missing} missing packages:")
-        
-        if missing_packages:
-            print("\nRequired packages:")
-            for package in missing_packages:
-                print(f"  - {package['name']} ({package['pip_name']})")
-        
-        if optional_missing:
-            print("\nOptional packages:")
-            for package in optional_missing:
-                print(f"  - {package['name']} ({package['pip_name']}) - {package['description']}")
-        
-        install_confirmation = input("\nWould you like to install these packages now? (y/n): ")
-        
-        if install_confirmation.lower() in ('y', 'yes'):
-            print("\nInstalling packages...")
-            
-            all_packages = missing_packages + optional_missing
-            failed_packages = []
-            
-            for package in all_packages:
-                success = install_package(package['pip_name'])
-                if success:
-                    print(f"  - {package['name']} installed successfully ✓")
-                else:
-                    failed_packages.append(package)
-                    status = "(optional - continuing)" if package.get("optional", False) else "(required - may cause issues)"
-                    print(f"  - {package['name']} installation failed ✗ {status}")
-            
-            if failed_packages:
-                print(f"\nWarning: {len(failed_packages)} packages failed to install:")
-                for package in failed_packages:
-                    print(f"  - {package['name']}")
-                print("\nThe application may have limited functionality.")
-            else:
-                print("\nAll packages installed successfully!")
-        else:
-            print("\nInstallation cancelled by user.")
-            if missing_packages:
-                print("Warning: Required packages are missing. The application may not function correctly.")
-    
-    # Provide usage information
-    print("\n" + "=" * 60)
-    print("USAGE INFORMATION")
-    print("=" * 60)
-    
-    if not args.desktop_only:
-        print("To start the web interface:")
-        print("  python web_pipeline_server.py")
-        print("  Then open: http://127.0.0.1:8000")
-        print()
-    
+        print(f"  {CHECK} All packages installed.")
+
+    _print_next_steps(args)
+
+
+def _print_next_steps(args):
+    banner("Next Steps")
     if not args.web_only:
-        print("To start the desktop application:")
-        print("  python fastrak_hub.py")
+        print(f"  {ARROW} Launch the hub:")
+        print(f"     python fastrak_hub.py")
         print()
-    
-    print("Dependency installation complete!")
-    
-    # Keep console window open on Windows if double-clicked
-    if os.name == 'nt' and not sys.stdin.isatty():
-        print("\nPress Enter to exit...")
-        input()
+    if not args.desktop_only and WEB_PACKAGES:
+        print(f"  {ARROW} Start the web interface:")
+        print(f"     python web_pipeline_server.py")
+        print(f"     {dim('then open http://127.0.0.1:8000')}")
+        print()
+    print(f"  {ARROW} First-time on a new PC? Run the full setup:")
+    print(f"     python install.py")
+    print()
+
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("\nInstallation cancelled by user.")
+        print()
+        print(red("  Installation cancelled."))
         sys.exit(1)
     except Exception as e:
-        print(f"\nAn error occurred: {e}")
-        print("Please try running this script with administrator privileges or manually install the required packages.")
-        if os.name == 'nt' and not sys.stdin.isatty():
-            print("\nPress Enter to exit...")
-            input()
+        print()
+        print(red(f"  Unexpected error: {e}"))
+        print(dim("  Try re-running with administrator privileges, or install manually:"))
+        print(dim("    pip install -r requirements.txt"))
+        if os.name == "nt" and not sys.stdin.isatty():
+            input("\nPress Enter to exit...")
         sys.exit(1)
+
+    if os.name == "nt" and not sys.stdin.isatty():
+        input("\nPress Enter to exit...")

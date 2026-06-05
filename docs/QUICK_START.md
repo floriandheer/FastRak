@@ -1,70 +1,65 @@
 # Quick Start Guide
 
-Get up and running with the Pipeline Manager in 5 minutes!
+Get up and running with the Pipeline Manager in 5 minutes.
 
-## 1. Install Dependencies (2 minutes)
+## 1. Run the installer (3 minutes)
 
-Open a terminal in the project directory and run:
+From the project directory:
 
 ```bash
-python install_dependencies.py
+python install.py
 ```
 
-Press `y` when asked to install packages.
+Press Enter to begin and follow the prompts. The installer covers:
 
-## 2. Launch the Application (1 minute)
+- Python packages
+- External tools (FFmpeg, FLAC, rclone) via winget
+- Folders + drive mappings (`subst I:`, `subst P:`, …)
+- Pipeline config (`rak_config.json`)
+- A pinnable `Fastrak.lnk` shortcut
+- A final "doctor" pass that confirms everything is healthy
 
-**Windows (Easy Way):**
-- Double-click `fastrak_launcher.vbs`
+Safe to re-run any time. Press `Ctrl+C` at any prompt to bail.
 
-**Any Platform:**
+## 2. Launch the application (10 seconds)
+
+**Windows:** double-click `Fastrak.lnk` (or right-click → Pin to taskbar).
+
+**Any platform:**
 ```bash
 python fastrak_hub.py
 ```
 
-## 3. Use Your First Script (2 minutes)
+## 3. Use your first script (1 minute)
 
 1. **Select a category** from the top tabs (Audio, Photo, Visual, Web, etc.)
 2. **Click a script** from the left sidebar
 3. **Click "Run Script"** at the bottom
 4. **Follow the prompts** in the script output area
 
-## Common First Scripts
+## Common first scripts
 
-### Create a New Project Folder
+### Create a new project folder
 
-1. Go to the relevant category (Audio DJ, Photo, Visual CG, etc.)
+1. Go to the relevant category (Audio DJ, Photo, Visual CG, …)
 2. Click "New [Category] Project"
 3. Choose a location when prompted
 4. Enter a project name
-5. Done! Your folder structure is created
+5. Done — your folder structure is created
 
-### Backup MusicBee Library
+### Backup MusicBee library
 
-1. Go to **Audio** tab
-2. Click **"Backup MusicBee to OneDrive"**
-3. Click **"Run Script"**
-4. Wait for the backup to complete
+1. **Audio** tab → **Backup MusicBee to OneDrive** → **Run Script**
 
-### Rename Invoices
+### Rename invoices
 
-1. Go to **Business** tab
-2. Click **"Invoice Renamer"**
-3. Click **"Run Script"**
-4. Select the folder containing invoices
-5. Follow prompts to rename
+1. **Business** tab → **Invoice Renamer** → **Run Script** → pick the folder
 
 ## Customization
 
-### Change Base Paths
+### Change base paths
 
-Edit the paths in `fastrak_hub.py`:
-
-```python
-"folder_path": "I:\\Audio",  # ← Change to your path
-```
-
-See [CONFIGURATION.md](CONFIGURATION.md) for more options.
+Edit the values in `setup_config.json` and re-run `python install.py --step env`. See [CONFIGURATION.md](CONFIGURATION.md) for more.
 
 ## Troubleshooting
 
@@ -74,23 +69,28 @@ See [CONFIGURATION.md](CONFIGURATION.md) for more options.
 - Look at the output area for error messages
 
 ### Missing dependencies?
-- Re-run: `python install_dependencies.py`
-- Check [INSTALLATION.md](INSTALLATION.md)
+- Re-run `python install.py` — the doctor step lists exactly what is missing
+- Or just the Python piece: `python install_dependencies.py`
+- See [INSTALLATION.md](INSTALLATION.md) for manual install
+
+### Drive letters not mapping after reboot?
+- Re-run `python install.py --step env` — it writes a `HKCU\…\Run` entry so `subst` runs on login
 
 ### Can't find a script?
 - Check it's in the correct category tab
 - Some scripts are in subcategories (expand the section)
 
-## Next Steps
+## Next steps
 
 - Read the full [README.md](../README.md)
 - Explore [CONFIGURATION.md](CONFIGURATION.md) for customization
-- Check [INSTALLATION.md](INSTALLATION.md) for advanced setup
+- Press **F1** in the app to see every keyboard shortcut
+- Press **Ctrl+,** to open Settings (paths, dependencies, shortcut)
 
 ## Help
 
-All scripts have descriptions. Hover or click to see what they do before running!
+All scripts have descriptions. Hover or click to see what they do before running.
 
 ---
 
-**That's it! You're ready to use the Pipeline Manager.**
+**That's it. You're ready to use the Pipeline Manager.**

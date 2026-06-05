@@ -7,7 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `install.py` — a friendly first-run installer that takes a fresh machine
+  to a working Pipeline Hub in six guided steps: prerequisites, Python
+  packages, external tools (FFmpeg / FLAC / rclone via winget),
+  environment (folders + drives + config), desktop shortcut, and a final
+  doctor health check. Every step is idempotent and asks before touching
+  anything. Use `--yes` for unattended, `--dry-run` to preview, or
+  `--step STEP` to run a single phase.
+- `requirements.txt` — single source of truth for Python deps. Both
+  `install.py` and `install_dependencies.py` read it.
+- `install_dependencies.py` now installs `pyexiv2` (previously listed in
+  the README but missing from the installer) and uses
+  `requirements.txt` when present.
+
 ### Changed
+- README, `docs/QUICK_START.md`, and `docs/INSTALLATION.md` restructured
+  around `python install.py` as the single entry point. Removed the
+  stale `fastrak_launcher.vbs` reference (the file never existed).
 - Folder structure creators consolidated into a single manifest-driven
   `GenericFolderStructureCreator`. Adding a new project subtype is now a
   one-entry change in `pipeline_categories.CATEGORIES`. Outliers (Photo,
