@@ -40,12 +40,13 @@ class OrdersSection(Section):
         super().__init__(parent, state)
         self._orders_cache: List[Dict] = []
         self._count_var = tk.StringVar(value="")
-        self._quarter = "year"  # default to "all 4 quarters of selected year"
+        self._quarter = state.quarter
         self._search = tk.StringVar()
 
         # Subscribe to AppState — works even before this section is built.
         state.on_wc_orders(self._on_orders_update)
         state.on_wc_status(self._on_status_update)
+        state.on_quarter_change(self._on_state_quarter_change)
         state.on_year_change(
             lambda _y: self._render_orders() if self._built_tree() else None
         )
@@ -315,8 +316,14 @@ class OrdersSection(Section):
             per_q["year"] += 1
         self._q_chips.set_counts({k: v if v else None for k, v in per_q.items()})
 
+    def _on_state_quarter_change(self, q: str) -> None:
+        self._quarter = q
+        if self.frame is not None and self._built_tree():
+            self._q_chips.select(q)
+
     def _set_quarter(self, q: str) -> None:
         self._quarter = q
+        self.state.set_quarter(q)
         self._render_orders()
 
     def _selected_orders(self) -> List[Dict]:

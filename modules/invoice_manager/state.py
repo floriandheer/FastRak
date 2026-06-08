@@ -41,9 +41,11 @@ class AppState:
 
         self.year: int = datetime.now().year
         self.company: str = "All"  # "All" or a company.key
+        self.quarter: str = self._current_quarter()
 
         self._year_listeners: List[Callable[[int], None]] = []
         self._company_listeners: List[Callable[[str], None]] = []
+        self._quarter_listeners: List[Callable[[str], None]] = []
 
         # WooCommerce monitor — built at start_wc_monitor() time
         self._wc_monitor: Optional[Any] = None
@@ -93,6 +95,25 @@ class AppState:
                     years_set.add(r.year)
         years_set.add(self.year)
         return sorted(years_set, reverse=True) or [self.year]
+
+    # ===== quarter ====================================================
+
+    @staticmethod
+    def _current_quarter() -> str:
+        return f"q{(datetime.now().month - 1) // 3 + 1}"
+
+    def set_quarter(self, quarter: str) -> None:
+        if quarter == self.quarter:
+            return
+        self.quarter = quarter
+        for cb in list(self._quarter_listeners):
+            try:
+                cb(quarter)
+            except Exception:
+                logger.exception("quarter listener failed")
+
+    def on_quarter_change(self, cb: Callable[[str], None]) -> None:
+        self._quarter_listeners.append(cb)
 
     # ===== company ====================================================
 

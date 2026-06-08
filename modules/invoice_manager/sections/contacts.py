@@ -14,6 +14,7 @@ from tkinter import ttk
 from typing import Dict, List, Optional
 
 from shared_logging import get_logger
+from pipeline_categories import creative_categories
 
 from invoice_manager.dialogs import ask_yes_no, show_error, show_info
 from invoice_manager.sections.base import Section
@@ -171,6 +172,34 @@ class ContactsSection(Section):
 
         row(6, "Notes", make_entry(parent, self._f_notes, width=32))
 
+        # Project-category checkboxes — control which "New project" client
+        # autocomplete lists this contact appears in. Unchecked = appears
+        # everywhere (the legacy behaviour for contacts that predate this
+        # feature); checking one or more narrows it to just those.
+        form_label(parent, "Show in").grid(
+            row=7, column=0, sticky="ne", padx=(0, 10), pady=(2, 6),
+        )
+        cats_frame = tk.Frame(parent, bg=C["card_bg"])
+        cats_frame.grid(row=7, column=1, sticky="we", pady=(0, 6))
+        self._f_categories: Dict[str, tk.BooleanVar] = {}
+        for i, cat in enumerate(creative_categories()):
+            var = tk.BooleanVar(value=False)
+            self._f_categories[cat] = var
+            tk.Checkbutton(
+                cats_frame, text=cat, variable=var,
+                fg=C["label_fg"], bg=C["card_bg"],
+                activeforeground=C["label_fg"], activebackground=C["card_bg"],
+                selectcolor=C["bg_input"], font=FONTS["label"],
+                bd=0, highlightthickness=0,
+            ).grid(row=i // 3, column=i % 3, sticky="w", padx=(0, 12))
+        tk.Label(
+            parent,
+            text="Limits which \"New project\" category autocompletes "
+                 "suggest this client in. None checked = every category.",
+            fg=C["text_dim"], bg=C["card_bg"], font=FONTS["small"],
+            anchor="w", justify="left", wraplength=260,
+        ).grid(row=8, column=1, sticky="w", pady=(0, 6))
+
         # Dim "From project: <folder name>" line — shows the original
         # one-string client identifier this contact was imported from so
         # the user can verify the project folder mapping stays intact.
@@ -178,10 +207,10 @@ class ContactsSection(Section):
             parent, textvariable=self._f_project_label,
             fg=C["text_dim"], bg=C["card_bg"], font=FONTS["small"],
             anchor="w",
-        ).grid(row=7, column=0, columnspan=2, sticky="we", pady=(4, 0))
+        ).grid(row=9, column=0, columnspan=2, sticky="we", pady=(4, 0))
 
         btns = tk.Frame(parent, bg=C["card_bg"])
-        btns.grid(row=8, column=0, columnspan=2, sticky="we", pady=(12, 0))
+        btns.grid(row=10, column=0, columnspan=2, sticky="we", pady=(12, 0))
         self._save_btn = primary_button(btns, "Save", self._on_save)
         self._save_btn.pack(side="left")
         self._delete_btn = danger_button(btns, "Delete", self._on_delete)
@@ -406,6 +435,8 @@ class ContactsSection(Section):
         self._f_email.set("")
         self._f_notes.set("")
         self._f_address.delete("1.0", "end")
+        for var in self._f_categories.values():
+            var.set(False)
         state = "disabled" if disable else "normal"
         self._save_btn.configure(state=state)
         self._delete_btn.configure(state="disabled")
@@ -419,6 +450,9 @@ class ContactsSection(Section):
         self._f_notes.set(contact.get("notes", ""))
         self._f_address.delete("1.0", "end")
         self._f_address.insert("1.0", contact.get("address", ""))
+        selected = set(contact.get("project_categories") or [])
+        for cat, var in self._f_categories.items():
+            var.set(cat in selected)
         self._pending_project_link = contact.get("project_client_name") or None
         self._set_project_label(self._pending_project_link)
         self._save_btn.configure(state="normal")
@@ -451,6 +485,8 @@ class ContactsSection(Section):
             "address": self._f_address.get("1.0", "end").strip(),
             "notes": self._f_notes.get().strip(),
             "project_client_name": self._pending_project_link,
+            "project_categories": [cat for cat, var in self._f_categories.items()
+                                   if var.get()],
         }
 
     def _on_save(self) -> None:

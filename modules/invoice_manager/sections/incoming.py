@@ -27,6 +27,7 @@ from invoice_manager.incoming_scanner import (
     BOEKHOUDING_ROOT,
     INVOICE2DATA_AVAILABLE,
     _extract_in_subprocess,
+    _get_quarter_files,
     find_duplicates,
     scan_quarter,
     scan_year,
@@ -76,7 +77,7 @@ class IncomingSection(Section):
 
     def __init__(self, parent, state):
         super().__init__(parent, state)
-        self._quarter = "q1"
+        self._quarter = state.quarter
         self._view = VIEW_VENDORS
         self._search = tk.StringVar()
         self._rename_pending: List[Tuple[int, Path, str]] = []
@@ -89,6 +90,7 @@ class IncomingSection(Section):
         self._naming_issues: List[Tuple[int, str, List[str], str]] = []
 
         self.state.on_year_change(lambda _y: self.reload())
+        self.state.on_quarter_change(self._on_state_quarter_change)
 
     # ----- build -------------------------------------------------------
 
@@ -241,8 +243,14 @@ class IncomingSection(Section):
 
     # ----- chip / view handlers ---------------------------------------
 
+    def _on_state_quarter_change(self, q: str) -> None:
+        self._quarter = q
+        if self.frame is not None:
+            self._q_chips.select(q)
+
     def _set_quarter(self, q: str) -> None:
         self._quarter = q
+        self.state.set_quarter(q)
         year = self.state.year
         # Lazy-scan quarter the first time it's selected
         if q != "year":
@@ -277,43 +285,16 @@ class IncomingSection(Section):
     # ----- chip counts ------------------------------------------------
 
     def _update_chip_counts(self) -> None:
-        """Counts depend on which view is active.
-
-        - Vendors:    number of expected vendors per quarter
-        - Duplicates: dup files per quarter (each dup counts in each quarter it appears in)
-        - Naming:     issues per quarter
-        """
-        per_q = {k: 0 for k in self.QUARTERS}
-
-        if self._view == VIEW_VENDORS:
-            year = self.state.year
-            for q in (1, 2, 3, 4):
-                if q in self._quarter_results:
-                    rows = self._quarter_results[q]
-                else:
-                    # We haven't scanned this quarter yet — leave count blank
-                    continue
-                count = sum(len(vendors) for vendors in rows.values())
-                per_q[f"q{q}"] += count
-                per_q["year"] += count
-            # Year tally uses scan_year when available
-            if self._year_results:
-                per_q["year"] = sum(
-                    len(vendors) for vendors in self._year_results.values()
-                )
-
-        elif self._view == VIEW_DUPLICATES:
-            for _filename, locations in self._duplicates:
-                qs = {q for q, _ in locations}
-                for q in qs:
-                    per_q[f"q{q}"] += 1
-                per_q["year"] += 1
-
-        elif self._view == VIEW_NAMING:
-            for q, *_ in self._naming_issues:
-                per_q[f"q{q}"] += 1
-                per_q["year"] += 1
-
+        """Show how many invoice files actually sit in each quarter's
+        Binnenkomend folder (and the year total), regardless of view."""
+        year = self.state.year
+        per_q: Dict[str, int] = {}
+        total = 0
+        for q in (1, 2, 3, 4):
+            n = len(_get_quarter_files(year, q))
+            per_q[f"q{q}"] = n
+            total += n
+        per_q["year"] = total
         self._q_chips.set_counts({k: v if v else None for k, v in per_q.items()})
 
     # ----- folder hint ------------------------------------------------
@@ -642,11 +623,12 @@ class IncomingSection(Section):
 
     def _preview_rename(self) -> None:
         if not INVOICE2DATA_AVAILABLE:
-            messagebox.showerror(
-                "Rename", "invoice2data is not installed.\n\n"
-                "Install with: pip install invoice2data pdfplumber",
+            messagebox.showinfo(
+                "Rename",
+                "invoice2data is not installed — falling back to keyword matching.\n\n"
+                "Install it for better accuracy:\n"
+                "    pip install invoice2data pdfplumber",
             )
-            return
         year = self.state.year
         to_rename = [
             (q, fname) for q, fname, _, itype in self._naming_issues

@@ -103,17 +103,43 @@ class AutocompleteComboEntry(tk.Frame):
         self.entry.focus_set()
 
     def _load_clients(self):
-        """Load client names from database."""
+        """Load client names for the autocomplete.
+
+        Sourced from the Contacts directory (human display names like
+        "Walking the Dog" / "Tijs Joos") rather than the project DB's raw
+        client list, which is a mix of correctly-resolved abbreviations
+        and whatever strings old folder scans happened to parse out — the
+        two don't match, which is confusing while typing. The display
+        name you see here gets turned into the right abbreviation ("WTD"
+        / "TJS") automatically at folder-creation time.
+
+        Falls back to the project DB's list if the Contacts registry
+        can't be reached (e.g. invoice_manager not configured yet).
+        """
         try:
-            if self.category:
-                clients = self.db.get_clients_for_category(self.category, exclude_personal=self.exclude_personal)
+            curated = self._curated_labels()
+            if curated is not None:
+                self.all_clients = curated
             else:
-                clients = self.db.get_all_clients(exclude_personal=self.exclude_personal)
-            self.all_clients = [c["name"] for c in clients]
+                if self.category:
+                    clients = self.db.get_clients_for_category(self.category, exclude_personal=self.exclude_personal)
+                else:
+                    clients = self.db.get_all_clients(exclude_personal=self.exclude_personal)
+                self.all_clients = [c["name"] for c in clients]
             logger.debug(f"Loaded {len(self.all_clients)} clients for autocomplete")
         except Exception as e:
             logger.error(f"Failed to load clients: {e}")
             self.all_clients = []
+
+    def _curated_labels(self) -> Optional[List[str]]:
+        """Display labels from the Contacts directory, or None if that
+        registry can't be reached — callers then fall back to the project
+        DB's raw client list rather than showing nothing."""
+        try:
+            from invoice_manager.contacts_resolver import curated_client_labels
+            return curated_client_labels(self.category, exclude_personal=self.exclude_personal)
+        except Exception:
+            return None
 
     def reload_clients(self):
         """Reload client names from database (call after new clients added)."""

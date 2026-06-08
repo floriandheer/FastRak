@@ -48,7 +48,7 @@ class OutgoingSection(Section):
 
     def __init__(self, parent, state):
         super().__init__(parent, state)
-        self._quarter = "q1"
+        self._quarter = state.quarter
         self._invoices: List[Dict] = []
         self._search = tk.StringVar()
         self._status_filter = tk.StringVar(value="All")
@@ -56,6 +56,7 @@ class OutgoingSection(Section):
         self._legacy_path_to_obj: Dict[str, Any] = {}
 
         self.state.on_year_change(lambda _y: self.reload())
+        self.state.on_quarter_change(self._on_state_quarter_change)
         self.state.on_company_change(
             lambda _c: self._render_tree() if self.frame is not None else None
         )
@@ -212,8 +213,14 @@ class OutgoingSection(Section):
         else:
             self._legacy_status_var.set("")
 
+    def _on_state_quarter_change(self, q: str) -> None:
+        self._quarter = q
+        if self.frame is not None:
+            self._q_chips.select(q)
+
     def _set_quarter(self, q: str) -> None:
         self._quarter = q
+        self.state.set_quarter(q)
         self._update_folder_label()
         self._render_tree()
 
@@ -537,6 +544,10 @@ class OutgoingSection(Section):
                 secondary_button(self._action_btns_frame, "Void…",
                                  lambda: self._void(first_inv)
                                  ).pack(side="left", padx=4)
+                if self._is_deletable(first_inv):
+                    secondary_button(self._action_btns_frame, "Delete…",
+                                     lambda: self._delete_invoice(first_inv)
+                                     ).pack(side="left", padx=4)
 
         # Legacy-row actions
         if n_leg:
@@ -662,6 +673,56 @@ class OutgoingSection(Section):
             messagebox.showinfo("Open folder", "This invoice has no filed PDF.")
             return
         self.state.resolve_pdf_open(pdf.parent)
+
+    def _is_deletable(self, inv: Dict) -> bool:
+        """True if `inv` is the most-recently reserved number — the only
+        row that can be deleted without leaving a gap in the sequence
+        (see `Registry.delete_invoice`). Applies regardless of status:
+        drafts and "oops, test invoice" issued rows alike."""
+        try:
+            preview = self.state.registry.get_next_preview(inv["year"])
+        except Exception:
+            return False
+        return inv.get("sequence") == preview - 1
+
+    def _delete_invoice(self, inv: Dict) -> None:
+        if not self._is_deletable(inv):
+            messagebox.showinfo(
+                "Delete",
+                "This invoice can no longer be deleted — it's not the most "
+                "recently reserved number anymore.\n\nUse Void instead.",
+            )
+            return
+        msg = (
+            f"Permanently delete invoice #{inv['sequence']:03d} (year {inv['year']})?\n\n"
+            "This removes the row entirely (and its PDF, if one was filed) "
+            "and frees up the number so the next invoice you create will "
+            "reuse it."
+        )
+        if inv.get("status") != "draft":
+            msg += (
+                "\n\n⚠ This invoice was already issued. Belgian law normally "
+                "requires keeping issued numbers (that's what Void is for) — "
+                "only delete it if it was a mistake/test that was never "
+                "actually sent to a customer."
+            )
+        if not messagebox.askyesno("Delete invoice", msg, parent=self.frame):
+            return
+        try:
+            deleted = self.state.registry.delete_invoice(inv["id"])
+        except ValueError as e:
+            messagebox.showerror("Delete", str(e))
+            return
+
+        pdf_path = deleted.get("pdf_path")
+        if pdf_path:
+            try:
+                p = Path(pdf_path)
+                if p.exists():
+                    p.unlink()
+            except Exception:
+                logger.exception(f"Could not remove PDF for deleted invoice: {pdf_path}")
+        self.reload()
 
     def _void(self, inv: Dict) -> None:
         if inv.get("status") == "voided":

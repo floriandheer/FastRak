@@ -18,7 +18,7 @@ to drop the cache if you do edit contacts within the same process.
 
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 
 # Cache: lowercased name → abbreviation. None = not yet loaded; {} =
@@ -43,6 +43,52 @@ def resolve_client_folder_name(typed_value: str) -> str:
     cache = _ensure_cache()
     hit = cache.get(needle.lower())
     return hit if hit else needle
+
+
+def curated_client_labels(category: Optional[str] = None,
+                          exclude_personal: bool = False) -> Optional[List[str]]:
+    """Display labels for the project-creation client autocomplete,
+    sourced entirely from the Contacts directory rather than the
+    project DB's raw (and inconsistent) folder-derived client list.
+
+    Each contact contributes its human ``display_name`` — e.g. "Walking
+    the Dog", "Tijs Joos" — so what you see while typing matches what you
+    stored. The abbreviation ("WTD", "TJS") is applied later, at
+    folder-creation time, by `resolve_client_folder_name`; you never need
+    to type it. Contacts without a display name (e.g. freshly bulk-
+    imported, not yet filled in) fall back to their abbreviation so they
+    still show up.
+
+    Optionally narrowed to contacts that opted into `category` via their
+    "Show in" checkboxes — a contact with no categories checked matches
+    every category (the default for contacts that predate this feature).
+
+    Returns ``None`` if the registry isn't available — callers should
+    treat that as "can't curate, fall back to the project DB" rather than
+    "show nothing".
+    """
+    try:
+        from invoice_manager.core.config import load_config
+        from invoice_manager.core.registry import InvoiceRegistry
+        config = load_config()
+        registry = InvoiceRegistry(config.resolve_db_path())
+        contacts = registry.list_contacts()
+    except Exception:
+        return None
+
+    labels: set = set()
+    for c in contacts:
+        if category:
+            cats = c.get("project_categories") or []
+            if cats and category not in cats:
+                continue
+        label = (c.get("display_name") or "").strip() or (c.get("abbreviation") or "").strip()
+        if not label:
+            continue
+        if exclude_personal and label.lower() == "personal":
+            continue
+        labels.add(label)
+    return sorted(labels, key=str.lower)
 
 
 def invalidate_cache() -> None:
