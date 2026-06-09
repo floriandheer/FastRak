@@ -239,6 +239,13 @@ CATEGORIES: Dict[str, Dict[str, Any]] = {
                 "description": "Backup MusicBee library to OneDrive, only transferring changed or new files",
                 "icon": "💾",
             },
+            {
+                "key": "format_genres",
+                "name": "Format Genres",
+                "module": "PipelineScript_Audio_FormatGenres",
+                "description": "Normalize clipboard genre strings to '; '-separated; auto-formats while open",
+                "icon": "🏷",
+            },
         ],
         "subtypes": {
             "DJ": {
