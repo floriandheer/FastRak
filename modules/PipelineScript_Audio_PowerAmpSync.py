@@ -98,6 +98,7 @@ class SyncSettings:
     sync_target: str = "local"  # "local" or "adb"
     adb_music_path: str = "/storage/emulated/0/Music/"
     adb_playlist_path: str = "/storage/emulated/0/Music/Playlists/"
+    adb_device_id: str = ""  # Last selected ADB device serial (remembered across runs)
     # Saved playlist selection presets
     playlist_presets: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     active_preset: str = ""
@@ -188,6 +189,8 @@ class PowerAmpSyncApp:
         self.adb_device_id: Optional[str] = None
         self.adb_device_name: str = ""
         self.adb_path: Optional[str] = None  # Will be set by _find_adb()
+        # Combobox-backed device list: [(device_id, state, label)]
+        self._device_entries: List[Tuple[str, str, str]] = []
 
         # Find ADB executable
         self._find_adb()
@@ -239,32 +242,87 @@ class PowerAmpSyncApp:
         """Check if ADB is available."""
         return self.adb_path is not None
 
-    def _get_adb_device(self) -> Optional[str]:
-        """Get connected device ID, or None if no device connected."""
+    def _list_adb_devices(self) -> List[Tuple[str, str]]:
+        """Return every attached ADB device as (device_id, state) tuples.
+
+        State is the literal token adb reports per device — "device" means
+        ready, others include "unauthorized", "offline", "no permissions".
+        Returning ALL of them (not just the first ready one) is what lets the
+        sync flow refuse to run when multiple devices would be ambiguous.
+        """
         if not self.adb_path:
-            return None
+            return []
         try:
             process_args = {
                 "stdout": subprocess.PIPE,
                 "stderr": subprocess.PIPE,
-                "creationflags": subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+                "creationflags": subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
             }
             result = subprocess.run([self.adb_path, "devices"], **process_args, timeout=10)
             if result.returncode != 0:
-                return None
+                return []
 
-            output = result.stdout.decode('utf-8', errors='replace')
-            lines = output.strip().split('\n')
-
-            # Skip header line "List of devices attached"
-            for line in lines[1:]:
-                if '\tdevice' in line:
-                    device_id = line.split('\t')[0].strip()
-                    if device_id:
-                        return device_id
-            return None
+            output = result.stdout.decode("utf-8", errors="replace")
+            devices: List[Tuple[str, str]] = []
+            # Skip the "List of devices attached" header
+            for line in output.splitlines()[1:]:
+                parts = line.strip().split("\t")
+                if len(parts) >= 2:
+                    dev_id = parts[0].strip()
+                    state = parts[1].strip().split()[0] if parts[1].strip() else ""
+                    if dev_id:
+                        devices.append((dev_id, state))
+            return devices
         except (subprocess.SubprocessError, FileNotFoundError, OSError):
-            return None
+            return []
+
+    def _resolve_adb_device(self) -> Tuple[bool, str]:
+        """Ensure self.adb_device_id is a connected & ready device.
+
+        Called from validation right before sync. Returns (ok, error_message);
+        on success self.adb_device_id is guaranteed non-empty and points to a
+        device whose state is "device". On failure, the message is suitable
+        for showing in a messagebox.
+        """
+        if not self._check_adb():
+            return False, "ADB is not installed or not found.\n\nInstall Android Platform Tools."
+
+        devices = self._list_adb_devices()
+        ready = [(dev_id, state) for dev_id, state in devices if state == "device"]
+
+        if not ready:
+            if devices:
+                summary = "\n".join(f"  • {dev_id} — {state}" for dev_id, state in devices)
+                return False, (
+                    "No usable ADB device. Detected:\n"
+                    f"{summary}\n\n"
+                    "If you see 'unauthorized', accept the USB-debugging prompt on the phone.\n"
+                    "If you see 'offline', unplug and re-plug, or run `adb kill-server`."
+                )
+            return False, (
+                "No Android device connected.\n\n"
+                "Plug in the phone and enable USB debugging."
+            )
+
+        # Honor an existing selection if it's still attached and ready.
+        if self.adb_device_id and any(dev_id == self.adb_device_id for dev_id, _ in ready):
+            return True, ""
+
+        # Stale selection — drop it before deciding.
+        self.adb_device_id = None
+        self.adb_device_name = ""
+
+        if len(ready) == 1:
+            self.adb_device_id = ready[0][0]
+            self.adb_device_name = self._get_adb_device_name(self.adb_device_id)
+            return True, ""
+
+        names = ", ".join(dev_id for dev_id, _ in ready)
+        return False, (
+            f"{len(ready)} ADB devices are connected ({names}).\n\n"
+            "Pick one from the Device dropdown in the Android Device (ADB) panel, "
+            "then start the sync again."
+        )
 
     def _get_adb_device_name(self, device_id: str) -> str:
         """Get the model name of the connected device."""
@@ -287,12 +345,25 @@ class PowerAmpSyncApp:
             return device_id
 
     def _adb_cmd(self, *args) -> List[str]:
-        """Build ADB command with device specifier if needed."""
+        """Build an ADB command pinned to the selected device via -s.
+
+        Always emits -s when a device is selected, so multi-device setups
+        (phone + emulator, phone + cached wireless adb, two phones) never
+        hit "more than one device/emulator" mid-sync.
+        """
         cmd = [self.adb_path]
         if self.adb_device_id:
             cmd.extend(["-s", self.adb_device_id])
         cmd.extend(args)
         return cmd
+
+    def _require_adb_device(self) -> Tuple[bool, str]:
+        """Defensive check used by every ADB operation right before it runs."""
+        if not self.adb_path:
+            return False, "ADB not available"
+        if not self.adb_device_id:
+            return False, "No ADB device selected (open the Device dropdown and pick one)"
+        return True, ""
 
     def _adb_push(self, local_path: str, remote_path: str) -> Tuple[bool, str]:
         """Push a file to the connected Android device.
@@ -300,8 +371,9 @@ class PowerAmpSyncApp:
         Returns:
             Tuple of (success, error_message)
         """
-        if not self.adb_path:
-            return False, "ADB not available"
+        ok, err = self._require_adb_device()
+        if not ok:
+            return False, err
         try:
             process_args = {
                 "stdout": subprocess.PIPE,
@@ -336,7 +408,9 @@ class PowerAmpSyncApp:
 
         Returns a list of file paths relative to remote_dir.
         """
-        if not self.adb_path:
+        ok, err = self._require_adb_device()
+        if not ok:
+            logger.error(f"ADB list files skipped: {err}")
             return []
         try:
             process_args = {
@@ -384,7 +458,8 @@ class PowerAmpSyncApp:
 
     def _adb_delete(self, remote_path: str) -> bool:
         """Delete a file on the device."""
-        if not self.adb_path:
+        ok, _err = self._require_adb_device()
+        if not ok:
             return False
         try:
             process_args = {
@@ -403,7 +478,8 @@ class PowerAmpSyncApp:
 
     def _adb_rmdir_empty(self, remote_dir: str) -> bool:
         """Remove an empty directory on the device."""
-        if not self.adb_path:
+        ok, _err = self._require_adb_device()
+        if not ok:
             return False
         try:
             process_args = {
@@ -421,7 +497,8 @@ class PowerAmpSyncApp:
 
     def _adb_exists(self, remote_path: str) -> bool:
         """Check if a file or directory exists on the device."""
-        if not self.adb_path:
+        ok, _err = self._require_adb_device()
+        if not ok:
             return False
         try:
             process_args = {
@@ -558,26 +635,41 @@ class PowerAmpSyncApp:
         self.adb_frame.columnconfigure(1, weight=1)
         self.adb_frame.grid_remove()  # Hidden by default
 
-        # Device status row
+        # Device picker row — Combobox lists every attached device so the user
+        # can disambiguate multi-device setups (phone + emulator, two phones,
+        # stale wireless adb sessions, etc.) instead of silently grabbing the
+        # first one and hitting "more than one device/emulator" during sync.
         adb_status_row = ttk.Frame(self.adb_frame)
-        adb_status_row.grid(row=0, column=0, columnspan=3, sticky="w", padx=5, pady=3)
+        adb_status_row.grid(row=0, column=0, columnspan=3, sticky="ew", padx=5, pady=3)
         ttk.Label(adb_status_row, text="Device:").pack(side=tk.LEFT, padx=(0, 10))
-        self.adb_device_status_var = tk.StringVar(value="No device detected")
-        self.adb_device_status_label = ttk.Label(adb_status_row, textvariable=self.adb_device_status_var)
-        self.adb_device_status_label.pack(side=tk.LEFT)
-        self.detect_device_btn = ttk.Button(adb_status_row, text="Detect Device", command=self._detect_adb_device, width=14)
-        self.detect_device_btn.pack(side=tk.LEFT, padx=(15, 0))
+        self.adb_device_combo_var = tk.StringVar()
+        self.adb_device_combo = ttk.Combobox(
+            adb_status_row, textvariable=self.adb_device_combo_var,
+            state="readonly", width=42,
+        )
+        self.adb_device_combo.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.adb_device_combo.bind("<<ComboboxSelected>>", self._on_adb_device_selected)
+        self.detect_device_btn = ttk.Button(
+            adb_status_row, text="Refresh", command=self._detect_adb_device, width=10,
+        )
+        self.detect_device_btn.pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(adb_status_row, text="?", command=self._show_adb_help, width=3).pack(side=tk.LEFT, padx=(5, 0))
 
+        # Status sub-row — shows readiness / multi-device hints under the picker
+        adb_status_row2 = ttk.Frame(self.adb_frame)
+        adb_status_row2.grid(row=1, column=0, columnspan=3, sticky="w", padx=5, pady=(0, 3))
+        self.adb_device_status_var = tk.StringVar(value="No device detected")
+        ttk.Label(adb_status_row2, textvariable=self.adb_device_status_var, foreground="gray").pack(side=tk.LEFT)
+
         # ADB Music path
-        ttk.Label(self.adb_frame, text="Music path:").grid(row=1, column=0, sticky="w", padx=5, pady=3)
+        ttk.Label(self.adb_frame, text="Music path:").grid(row=2, column=0, sticky="w", padx=5, pady=3)
         self.adb_music_path_var = tk.StringVar(value="/storage/emulated/0/Music/")
-        ttk.Entry(self.adb_frame, textvariable=self.adb_music_path_var).grid(row=1, column=1, columnspan=2, sticky="ew", padx=5, pady=3)
+        ttk.Entry(self.adb_frame, textvariable=self.adb_music_path_var).grid(row=2, column=1, columnspan=2, sticky="ew", padx=5, pady=3)
 
         # ADB Playlist path
-        ttk.Label(self.adb_frame, text="Playlist path:").grid(row=2, column=0, sticky="w", padx=5, pady=3)
+        ttk.Label(self.adb_frame, text="Playlist path:").grid(row=3, column=0, sticky="w", padx=5, pady=3)
         self.adb_playlist_path_var = tk.StringVar(value="/storage/emulated/0/Music/Playlists/")
-        ttk.Entry(self.adb_frame, textvariable=self.adb_playlist_path_var).grid(row=2, column=1, columnspan=2, sticky="ew", padx=5, pady=3)
+        ttk.Entry(self.adb_frame, textvariable=self.adb_playlist_path_var).grid(row=3, column=1, columnspan=2, sticky="ew", padx=5, pady=3)
 
         current_row += 1
 
@@ -792,6 +884,10 @@ class PowerAmpSyncApp:
         self.sync_target_var.set(settings.sync_target)
         self.adb_music_path_var.set(settings.adb_music_path)
         self.adb_playlist_path_var.set(settings.adb_playlist_path)
+        # Seed the remembered device id — _detect_adb_device will reselect it
+        # if the device is still attached (otherwise the user picks again).
+        if settings.adb_device_id:
+            self.adb_device_id = settings.adb_device_id
 
         # Set quality combobox based on saved bitrate
         bitrate_to_combo = {
@@ -892,6 +988,10 @@ class PowerAmpSyncApp:
         if is_adb:
             self.local_dest_frame.grid_remove()
             self.adb_frame.grid()
+            # Auto-populate the device picker when the panel becomes visible
+            # so the user sees what's attached without clicking Refresh first.
+            if not self._device_entries:
+                self.root.after_idle(self._detect_adb_device)
         else:
             self.adb_frame.grid_remove()
             self.local_dest_frame.grid()
@@ -899,19 +999,25 @@ class PowerAmpSyncApp:
         # Update sync mode UI state as well (local music folder depends on target)
         self._on_sync_mode_changed()
 
+    def _device_label(self, dev_id: str, state: str, model: str) -> str:
+        """Combobox label for one device entry."""
+        if state != "device":
+            return f"{dev_id}  —  {state}"
+        if model and model != dev_id:
+            return f"{model}  ({dev_id})"
+        return dev_id
+
     def _detect_adb_device(self) -> None:
-        """Detect connected ADB device and update UI."""
+        """Refresh the device picker. Auto-selects when unambiguous."""
         self.adb_device_status_var.set("Detecting...")
         self.root.update_idletasks()
 
-        # Re-check for ADB in case user just added it
+        # Re-check for ADB in case user just dropped platform-tools into place
         self._find_adb()
 
         if not self._check_adb():
-            self.adb_device_status_var.set("ADB not found - add to tools/platform-tools/")
-            self.adb_device_id = None
-            self.adb_device_name = ""
-            # Show helpful message in log
+            self.adb_device_status_var.set("ADB not found — add to tools/platform-tools/")
+            self._set_device_choices([])
             self.analysis_text.delete(1.0, tk.END)
             self.analysis_text.insert(tk.END, "ADB not found!\n\n")
             self.analysis_text.insert(tk.END, "To enable ADB sync, download Android Platform Tools:\n")
@@ -920,16 +1026,87 @@ class PowerAmpSyncApp:
             self.analysis_text.insert(tk.END, "The folder should contain adb.exe, fastboot.exe, etc.\n")
             return
 
-        device_id = self._get_adb_device()
-        if device_id:
-            self.adb_device_id = device_id
-            self.adb_device_name = self._get_adb_device_name(device_id)
-            self.adb_device_status_var.set(f"{self.adb_device_name} ({device_id})")
-            logger.info(f"ADB device detected: {self.adb_device_name} ({device_id})")
+        devices = self._list_adb_devices()
+        if not devices:
+            self._set_device_choices([])
+            self.adb_device_status_var.set("No device connected")
+            return
+
+        # Build dropdown entries — only query model for ready devices (fast path)
+        entries: List[Tuple[str, str, str]] = []
+        for dev_id, state in devices:
+            model = self._get_adb_device_name(dev_id) if state == "device" else ""
+            entries.append((dev_id, state, self._device_label(dev_id, state, model)))
+        self._set_device_choices(entries)
+
+        ready = [e for e in entries if e[1] == "device"]
+
+        # Honor a previously chosen device if still present and ready
+        chosen: Optional[Tuple[str, str, str]] = None
+        if self.adb_device_id:
+            for entry in ready:
+                if entry[0] == self.adb_device_id:
+                    chosen = entry
+                    break
+
+        if chosen is None and len(ready) == 1:
+            chosen = ready[0]
+
+        if chosen is not None:
+            self._select_adb_device_entry(chosen, persist=False)
+            logger.info(f"ADB device selected: {chosen[2]}")
+        else:
+            # Either multiple ready devices and no prior pick, or no ready
+            # devices at all — force the user to choose explicitly.
+            self.adb_device_id = None
+            self.adb_device_name = ""
+            self.adb_device_combo_var.set("")
+            if len(ready) > 1:
+                self.adb_device_status_var.set(
+                    f"{len(ready)} devices ready — pick one from the dropdown"
+                )
+            else:
+                bad = [e for e in entries if e[1] != "device"]
+                hint = f" ({bad[0][1]})" if len(bad) == 1 else ""
+                self.adb_device_status_var.set(
+                    f"No ready device{hint} — check authorization on the phone"
+                )
+
+    def _set_device_choices(self, entries: List[Tuple[str, str, str]]) -> None:
+        """Replace the combobox contents. entries is [(id, state, label)]."""
+        self._device_entries = entries
+        self.adb_device_combo["values"] = [e[2] for e in entries]
+        if not entries:
+            self.adb_device_combo_var.set("")
+
+    def _select_adb_device_entry(
+        self, entry: Tuple[str, str, str], persist: bool = True
+    ) -> None:
+        """Apply an entry from _device_entries as the active device."""
+        dev_id, state, label = entry
+        self.adb_device_combo_var.set(label)
+        if state == "device":
+            self.adb_device_id = dev_id
+            self.adb_device_name = self._get_adb_device_name(dev_id)
+            self.adb_device_status_var.set(f"Connected: {label}")
+            if persist:
+                # Quiet persistence — don't show the "Settings saved" popup
+                try:
+                    self.config_manager.update_settings(adb_device_id=dev_id)
+                except Exception as e:
+                    logger.warning(f"Could not persist ADB device id: {e}")
         else:
             self.adb_device_id = None
             self.adb_device_name = ""
-            self.adb_device_status_var.set("No device connected")
+            self.adb_device_status_var.set(f"Not ready ({state}) — check the phone")
+
+    def _on_adb_device_selected(self, _event=None) -> None:
+        """User picked an entry in the device dropdown."""
+        label = self.adb_device_combo_var.get()
+        for entry in getattr(self, "_device_entries", []):
+            if entry[2] == label:
+                self._select_adb_device_entry(entry, persist=True)
+                return
 
     def _show_adb_help(self) -> None:
         """Show ADB setup instructions in a dialog."""
@@ -1061,6 +1238,7 @@ TROUBLESHOOTING
             sync_target=self.sync_target_var.get(),
             adb_music_path=self.adb_music_path_var.get(),
             adb_playlist_path=self.adb_playlist_path_var.get(),
+            adb_device_id=self.adb_device_id or "",
             # Preset state (presets dict already mutated in place; explicit for clarity)
             playlist_presets=self.config_manager.settings.playlist_presets,
             active_preset=self.preset_var.get(),
@@ -1883,18 +2061,21 @@ TROUBLESHOOTING
             music_dest = self.adb_music_path_var.get().strip().rstrip('/')
             playlist_dest = self.adb_playlist_path_var.get().strip().rstrip('/')
 
-            # Validate ADB connection
-            if not self._check_adb():
-                messagebox.showerror("ADB Not Found",
-                    "ADB is not installed or not in PATH.\n\n"
-                    "Please install Android SDK Platform Tools.")
+            # Resolve and pin the target device. This is the single gate that
+            # guarantees self.adb_device_id is set to a ready device before any
+            # sync work runs — otherwise _adb_cmd would skip the -s flag and
+            # multi-device setups would flood the log with "more than one
+            # device/emulator" errors per file.
+            ok, err_msg = self._resolve_adb_device()
+            if not ok:
+                messagebox.showerror("ADB Device", err_msg)
                 return
-
-            if not self._get_adb_device():
-                messagebox.showerror("No Device",
-                    "No Android device connected.\n\n"
-                    "Please connect your phone and enable USB debugging.")
-                return
+            # Reflect the resolved device in the picker UI
+            for entry in self._device_entries:
+                if entry[0] == self.adb_device_id:
+                    self.adb_device_combo_var.set(entry[2])
+                    self.adb_device_status_var.set(f"Connected: {entry[2]}")
+                    break
         else:
             playlist_dest = self.dest_var.get().strip()
             music_dest = self.music_dest_var.get().strip()
