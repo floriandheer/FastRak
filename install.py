@@ -4,24 +4,29 @@ Florian Dheer Pipeline - Friendly First-Run Installer
 -----------------------------------------------------
 A single command that takes a brand-new machine to a working Pipeline Hub.
 
-It walks you through six small steps, asks before touching anything, and
+It walks you through seven small steps, asks before touching anything, and
 prints a clear "all green" report at the end:
 
   1. Prerequisites      - Python version, pip, optional git
   2. Python packages    - pip install -r requirements.txt
   3. External tools     - FFmpeg / FLAC / rclone, with winget offers (Windows)
   4. Environment        - folders, subst drive mappings, Synology checks, config
-  5. Desktop shortcut   - Fastrak.lnk you can pin to the taskbar
-  6. Doctor             - verifies the end state is actually healthy
+  5. Workstation apps   - KeePassXC, Synology Drive, Visual Subst (winget)
+  6. Desktop shortcut   - Fastrak.lnk you can pin to the taskbar
+  7. Doctor             - verifies the end state is actually healthy
 
 Re-run any time. Every step is idempotent.
 
 Usage:
     python install.py                  # full guided install
-    python install.py --yes            # accept every prompt (CI-friendly)
+    python install.py --yes            # accept every prompt (alias: --unattended)
     python install.py --skip-externals # skip the FFmpeg/FLAC/rclone step
+    python install.py --skip-apps      # skip the workstation apps step
     python install.py --step deps      # run just one step
     python install.py --dry-run        # show what would happen, change nothing
+
+At the start prompt you can also press A to enable unattended mode
+without re-launching with --yes.
 """
 
 from __future__ import annotations
@@ -38,7 +43,8 @@ from typing import Callable, Iterable
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 APP_NAME = "Florian Dheer Pipeline"
-STEPS = ("prereq", "deps", "externals", "env", "shortcut", "doctor")
+STEPS = ("prereq", "deps", "externals", "env", "apps", "shortcut", "doctor")
+TOTAL_STEPS = 7
 
 
 # ============================================================
@@ -126,7 +132,7 @@ def confirm(prompt: str, auto_yes: bool, default_yes: bool = True) -> bool:
 # ============================================================
 
 def step_prereq(opts) -> bool:
-    step_header(1, 6, "Prerequisites")
+    step_header(1, TOTAL_STEPS, "Prerequisites")
 
     ok = True
 
@@ -174,7 +180,7 @@ def step_prereq(opts) -> bool:
 # ============================================================
 
 def step_deps(opts) -> bool:
-    step_header(2, 6, "Python packages")
+    step_header(2, TOTAL_STEPS, "Python packages")
 
     req = SCRIPT_DIR / "requirements.txt"
     if not req.exists():
@@ -265,7 +271,7 @@ EXTERNAL_TOOLS = [
 
 
 def step_externals(opts) -> bool:
-    step_header(3, 6, "External tools")
+    step_header(3, TOTAL_STEPS, "External tools")
     print(f"  {dim('Optional helpers used by specific pipeline scripts.')}")
     print()
 
@@ -342,7 +348,7 @@ def step_externals(opts) -> bool:
 # ============================================================
 
 def step_env(opts) -> bool:
-    step_header(4, 6, "Environment setup")
+    step_header(4, TOTAL_STEPS, "Environment setup")
 
     cfg_path = SCRIPT_DIR / "setup_config.json"
     example = SCRIPT_DIR / "setup_config.json.example"
@@ -465,11 +471,156 @@ def _seed_invoice_manager_config(opts) -> None:
 
 
 # ============================================================
-# Step 5: Desktop shortcut
+# Step 5: Workstation apps (KeePassXC, Synology Drive, Visual Subst)
+# ============================================================
+
+# Hardcoded fallback used when setup_config.json doesn't carry a
+# workstation_apps section (older configs from before this step existed).
+_DEFAULT_WORKSTATION_APPS = [
+    {
+        "name": "KeePassXC",
+        "winget_id": "KeePassXCTeam.KeePassXC",
+        "exe": "KeePassXC",
+        "why": "Password manager",
+        "url": "https://keepassxc.org/",
+    },
+    {
+        "name": "Synology Drive Client",
+        "winget_id": "Synology.DriveClient",
+        "exe": "SynologyDrive",
+        "why": "NAS sync for Active / Archive / Pipeline",
+        "url": "https://www.synology.com/en-global/dsm/feature/drive",
+        "post_install": "launch",
+    },
+    {
+        "name": "Visual Subst",
+        "winget_id": "NTWindSoftware.VisualSubst",
+        "exe": "visualsubst",
+        "why": "GUI for the subst drive mappings install.py creates",
+        "url": "https://www.ntwind.com/software/visual-subst.html",
+    },
+]
+
+
+def _load_workstation_apps() -> list[dict]:
+    """Read workstation_apps from setup_config.json, fall back to defaults.
+
+    Existing configs (pre-this-feature) won't have the section; rather
+    than refusing to run, we use a sensible default. Users who want to
+    customise the list edit setup_config.json.
+    """
+    cfg_path = SCRIPT_DIR / "setup_config.json"
+    if cfg_path.exists():
+        try:
+            import json  # local import — only needed here
+            with cfg_path.open("r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            apps = cfg.get("workstation_apps")
+            if isinstance(apps, list) and apps:
+                return apps
+        except Exception:
+            pass  # fall through to defaults
+    return _DEFAULT_WORKSTATION_APPS
+
+
+def step_apps(opts) -> bool:
+    step_header(5, TOTAL_STEPS, "Workstation apps")
+    print(f"  {dim('Apps you want on every PC. Pipeline runs without them - never fatal.')}")
+    print()
+
+    apps = _load_workstation_apps()
+    winget_available = sys.platform == "win32" and shutil.which("winget") is not None
+
+    missing = []
+    for app in apps:
+        exe = app.get("exe", "")
+        path = shutil.which(exe) if exe else None
+        if path:
+            status(app["name"], True, f"{path}  ({app.get('why', '')})")
+        else:
+            status(app["name"], False, f"missing - {app.get('why', '')}", warn=True)
+            missing.append(app)
+
+    if not missing:
+        print()
+        print(f"  {CHECK} All workstation apps present.")
+        return True
+
+    print()
+    if sys.platform != "win32":
+        print(f"  {dim('Workstation apps assume Windows winget; skipping on this OS.')}")
+        return True
+
+    if not winget_available:
+        print(f"  {WARN} winget not found - cannot auto-install.")
+        print(f"  {dim('Download each missing app from its homepage:')}")
+        for app in missing:
+            print(f"    {BULLET}{app['name']:<22} {cyn(app.get('url', ''))}")
+        return True
+
+    print(f"  {ARROW} winget can install these for you:")
+    for app in missing:
+        print(f"    {BULLET}{app['name']:<22} {dim('winget install --id ' + app['winget_id'])}")
+
+    print()
+    if not confirm(f"Install {len(missing)} missing app(s) via winget?",
+                   opts.yes, default_yes=True):
+        print(f"  {dim('Skipped. You can rerun this step with: python install.py --step apps')}")
+        return True
+
+    if opts.dry_run:
+        print(f"  {dim('[dry-run] would install via winget')}")
+        return True
+
+    installed_now = []
+    failed = []
+    for app in missing:
+        print()
+        print(f"  {ARROW} Installing {bold(app['name'])} {DOTS}")
+        try:
+            subprocess.run(
+                ["winget", "install", "--id", app["winget_id"],
+                 "--accept-source-agreements", "--accept-package-agreements",
+                 "--silent"],
+                check=True,
+            )
+            print(f"     {CHECK} {app['name']}")
+            installed_now.append(app)
+        except subprocess.CalledProcessError:
+            print(f"     {CROSS} {app['name']} - install via {cyn(app.get('url', ''))}")
+            failed.append(app)
+
+    # Post-install hooks (currently only "launch" for Synology so the
+    # user lands on the pair-with-NAS wizard immediately).
+    for app in installed_now:
+        if app.get("post_install") != "launch":
+            continue
+        exe = shutil.which(app.get("exe", ""))
+        if not exe:
+            continue
+        if not confirm(f"Launch {app['name']} now to finish setup?",
+                       opts.yes, default_yes=True):
+            continue
+        try:
+            os.startfile(exe)  # type: ignore[attr-defined]
+            print(f"     {CHECK} Launched {app['name']}")
+        except Exception as e:
+            print(f"     {dim('(could not launch: ' + str(e) + ')')}")
+
+    if failed:
+        print()
+        print(f"  {WARN} {len(failed)} app(s) failed to install. Pipeline still works;")
+        print(f"  {dim('install them manually when convenient.')}")
+
+    return True  # never block downstream
+
+
+# ============================================================
+# Step 6: Desktop shortcut
 # ============================================================
 
 def step_shortcut(opts) -> bool:
-    step_header(5, 6, "Desktop shortcut")
+    step_header(6, TOTAL_STEPS, "Desktop shortcut")
 
     if sys.platform != "win32":
         status("shortcut", True, "skipped - Windows only", warn=True)
@@ -505,7 +656,7 @@ def step_shortcut(opts) -> bool:
 # ============================================================
 
 def step_doctor(opts) -> bool:
-    step_header(6, 6, "Doctor - is everything healthy?")
+    step_header(7, TOTAL_STEPS, "Doctor - is everything healthy?")
 
     all_ok = True
 
@@ -561,6 +712,16 @@ def step_doctor(opts) -> bool:
            f"{len(found_externals)}/{len(EXTERNAL_TOOLS)} present",
            warn=len(found_externals) < len(EXTERNAL_TOOLS))
 
+    # Workstation apps - informational only, never blocks green
+    apps = _load_workstation_apps()
+    found_apps = [a["name"] for a in apps if shutil.which(a.get("exe", ""))]
+    missing_apps = [a["name"] for a in apps if not shutil.which(a.get("exe", ""))]
+    detail = f"{len(found_apps)}/{len(apps)} present"
+    if missing_apps:
+        detail += f"  (missing: {', '.join(missing_apps)})"
+    status("workstation apps", len(found_apps) == len(apps),
+           detail, warn=len(found_apps) < len(apps))
+
     # invoice_manager config (per-user AppData)
     if sys.platform == "win32":
         inv_cfg = Path.home() / "AppData" / "Local" / "PipelineManager" / "global_invoice" / "config.json"
@@ -582,16 +743,19 @@ def welcome():
     title_box(f"Welcome to {APP_NAME}")
     print()
     print(f"  This installer takes you from a fresh machine to a working")
-    print(f"  {bold('Pipeline Hub')} in six small steps:")
+    print(f"  {bold('Pipeline Hub')} in seven small steps:")
     print()
     print(f"    {cyn('1.')} Prerequisites      {dim('Python, pip, git')}")
     print(f"    {cyn('2.')} Python packages    {dim('pillow, pdfplumber, invoice2data, ...')}")
     print(f"    {cyn('3.')} External tools     {dim('FFmpeg, FLAC, rclone (winget)')}")
     print(f"    {cyn('4.')} Environment        {dim('folders, drive mappings, config')}")
-    print(f"    {cyn('5.')} Desktop shortcut   {dim('Fastrak.lnk to pin')}")
-    print(f"    {cyn('6.')} Doctor             {dim('verify everything works')}")
+    print(f"    {cyn('5.')} Workstation apps   {dim('KeePassXC, Synology Drive, Visual Subst')}")
+    print(f"    {cyn('6.')} Desktop shortcut   {dim('Fastrak.lnk to pin')}")
+    print(f"    {cyn('7.')} Doctor             {dim('verify everything works')}")
     print()
     print(f"  {dim('Every step asks before touching anything. Safe to re-run.')}")
+    print(f"  {dim('Tip: pass --yes / --unattended (or press A at the start prompt)')}")
+    print(f"  {dim('     to accept every prompt automatically.')}")
     print()
 
 
@@ -625,6 +789,58 @@ def final_report(results: dict, opts):
 
 
 # ============================================================
+# Interactive start choice
+# ============================================================
+
+def _prompt_start_choice() -> str:
+    """Ask the user how to run the installer at startup.
+
+    Returns one of: 'step' (default, prompt each step), 'all'
+    (unattended, accept everything), 'cancel'. On Windows we use
+    msvcrt.getch() for a real single-keystroke prompt; everywhere else
+    we fall back to input() which still works but needs Enter.
+    """
+    prompt = (
+        "  Press "
+        + bold("Enter") + " to step through, "
+        + bold("A") + " to run all unattended, "
+        + bold("Q") + " to quit: "
+    )
+    print(prompt, end="", flush=True)
+
+    if sys.platform == "win32":
+        try:
+            import msvcrt  # local — Windows-only stdlib
+            while True:
+                ch = msvcrt.getch()
+                if ch in (b"\r", b"\n"):
+                    print()
+                    return "step"
+                if ch in (b"a", b"A"):
+                    print("A")
+                    return "all"
+                if ch in (b"q", b"Q", b"\x03"):  # q or Ctrl+C
+                    print("Q")
+                    return "cancel"
+                # ignore other keys, keep waiting
+        except (KeyboardInterrupt, OSError):
+            print()
+            return "cancel"
+
+    # Non-Windows fallback: line-based input.
+    try:
+        answer = input("").strip().lower()
+    except KeyboardInterrupt:
+        print()
+        return "cancel"
+    if answer in ("a", "all", "unattended"):
+        return "all"
+    if answer in ("q", "quit", "cancel"):
+        return "cancel"
+    return "step"
+
+
+# ============================================================
 # Main
 # ============================================================
 
@@ -634,7 +850,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("--yes", "-y", action="store_true",
+    parser.add_argument("--yes", "-y", "--unattended", dest="yes",
+                        action="store_true",
                         help="Accept every prompt (CI / unattended)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Print what would happen without changing anything")
@@ -642,6 +859,8 @@ def main():
                         help="Run only one step (default: all)")
     parser.add_argument("--skip-externals", action="store_true",
                         help="Skip the FFmpeg / FLAC / rclone step")
+    parser.add_argument("--skip-apps", action="store_true",
+                        help="Skip the KeePassXC / Synology Drive / Visual Subst step")
     parser.add_argument("--skip-shortcut", action="store_true",
                         help="Skip Windows shortcut creation")
     opts = parser.parse_args()
@@ -649,12 +868,15 @@ def main():
     welcome()
 
     if opts.step == "all" and not opts.yes:
-        try:
-            input("  Press Enter to begin, or Ctrl+C to quit. ")
-        except KeyboardInterrupt:
+        choice = _prompt_start_choice()
+        if choice == "cancel":
             print()
             print(dim("  Cancelled."))
             return
+        if choice == "all":
+            opts.yes = True
+            print(f"  {dim('Unattended mode enabled - skipping per-step prompts.')}")
+            print()
 
     results: dict[str, bool] = {}
     run = opts.step
@@ -666,6 +888,7 @@ def main():
         ("deps",      "Python packages",  step_deps,      None),
         ("externals", "External tools",   step_externals, "skip_externals"),
         ("env",       "Environment",      step_env,       None),
+        ("apps",      "Workstation apps", step_apps,      "skip_apps"),
         ("shortcut",  "Desktop shortcut", step_shortcut,  "skip_shortcut"),
         ("doctor",    "Doctor",           step_doctor,    None),
     ]

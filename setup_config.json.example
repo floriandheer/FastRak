@@ -31,6 +31,32 @@
     ]
   },
 
+  "_workstation_apps_comment": "Apps you want installed on every PC. Pipeline does not require them - missing entries are non-fatal. Add more as needed; install.py just calls winget.",
+  "workstation_apps": [
+    {
+      "name": "KeePassXC",
+      "winget_id": "KeePassXCTeam.KeePassXC",
+      "exe": "KeePassXC",
+      "why": "Password manager",
+      "url": "https://keepassxc.org/"
+    },
+    {
+      "name": "Synology Drive Client",
+      "winget_id": "Synology.DriveClient",
+      "exe": "SynologyDrive",
+      "why": "NAS sync for Active / Archive / Pipeline",
+      "url": "https://www.synology.com/en-global/dsm/feature/drive",
+      "post_install": "launch"
+    },
+    {
+      "name": "Visual Subst",
+      "winget_id": "NTWindSoftware.VisualSubst",
+      "exe": "visualsubst",
+      "why": "GUI for the subst drive mappings install.py creates",
+      "url": "https://www.ntwind.com/software/visual-subst.html"
+    }
+  ],
+
   "pipeline_config": {
     "work_drive": "I:",
     "active_base": "D:\\_work\\Active",
