@@ -83,10 +83,21 @@ WEB_PACKAGES: list = []
 # Helpers
 # ============================================================
 
+# pip name → top-level import name, for packages where they differ.
+_PIP_TO_IMPORT = {
+    "pillow": "PIL",
+    "pyyaml": "yaml",
+    "beautifulsoup4": "bs4",
+    "python-dateutil": "dateutil",
+    "opencv-python": "cv2",
+}
+
+
 def is_package_installed(pip_name: str) -> bool:
     """Check if a package is importable. Accepts the pip name with version pin."""
     base = pip_name.split(">=")[0].split("==")[0].split("<")[0].split("[")[0].strip()
-    import_name = base.lower().replace("-", "_")
+    key = base.lower()
+    import_name = _PIP_TO_IMPORT.get(key, key.replace("-", "_"))
     return importlib.util.find_spec(import_name) is not None
 
 

@@ -702,6 +702,9 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
             main_container, bg=COLORS["bg_primary"]
         )
         self.invoice_manager = None  # populated by _ensure_invoice_manager
+        # Sticky: once construction fails (bad config etc.) we show a
+        # placeholder and stop retrying on every tab switch.
+        self._invoice_manager_failed = False
         # When the user pops the Invoice Manager out via its topbar
         # button, we destroy the embedded instance and reopen it in
         # this Toplevel; re-clicking Business raises it instead of
@@ -715,12 +718,53 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
     # ----- right-panel swap helpers ---------------------------------
 
     def _ensure_invoice_manager(self):
-        """Lazy-create the embedded InvoiceManager on first Business select."""
-        if self.invoice_manager is None:
+        """Lazy-create the embedded InvoiceManager on first Business select.
+
+        If creation fails (typically a missing/invalid global_invoice
+        config.json), show a placeholder in the right panel instead of
+        propagating — otherwise startup would crash because session
+        restore opens the Business tab automatically.
+        """
+        if self.invoice_manager is not None or self._invoice_manager_failed:
+            return
+        try:
             self.invoice_manager = InvoiceManager(
                 self.invoice_manager_panel, embedded=True,
                 on_detach=self._detach_invoice_manager,
             )
+        except Exception as exc:
+            logger.exception("Failed to start embedded Invoice Manager")
+            self._invoice_manager_failed = True
+            self._show_invoice_manager_error(exc)
+
+    def _show_invoice_manager_error(self, exc: Exception):
+        """Render a placeholder inside the invoice panel when startup fails."""
+        for w in self.invoice_manager_panel.winfo_children():
+            w.destroy()
+        wrap = tk.Frame(self.invoice_manager_panel, bg=COLORS["bg_primary"])
+        wrap.pack(fill=tk.BOTH, expand=True, padx=24, pady=24)
+        tk.Label(
+            wrap, text="Invoice Manager unavailable",
+            bg=COLORS["bg_primary"], fg=COLORS.get("fg_primary", "#fff"),
+            font=("Segoe UI", 14, "bold"),
+            anchor="w", justify="left",
+        ).pack(fill=tk.X, pady=(0, 8))
+        tk.Label(
+            wrap, text=str(exc),
+            bg=COLORS["bg_primary"], fg=COLORS.get("fg_secondary", "#bbb"),
+            font=("Consolas", 10),
+            wraplength=600, anchor="w", justify="left",
+        ).pack(fill=tk.X, pady=(0, 12))
+        tk.Label(
+            wrap,
+            text=("Fix the issue above (typically: copy "
+                  "modules/invoice_manager/core/config.json.example into "
+                  "%LOCALAPPDATA%\\PipelineManager\\global_invoice\\config.json "
+                  "and edit it) then restart the hub."),
+            bg=COLORS["bg_primary"], fg=COLORS.get("fg_secondary", "#bbb"),
+            font=("Segoe UI", 10),
+            wraplength=600, anchor="w", justify="left",
+        ).pack(fill=tk.X)
 
     def _show_invoice_manager_panel(self):
         """Swap the right-hand slot to the Invoice Manager.

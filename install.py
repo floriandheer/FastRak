@@ -217,9 +217,20 @@ def step_deps(opts) -> bool:
     return True
 
 
+# pip name → top-level import name, for packages where they differ.
+_PIP_TO_IMPORT = {
+    "pillow": "PIL",
+    "pyyaml": "yaml",
+    "beautifulsoup4": "bs4",
+    "python-dateutil": "dateutil",
+    "opencv-python": "cv2",
+}
+
+
 def _is_pkg_installed(req_line: str) -> bool:
     base = req_line.split(">=")[0].split("==")[0].split("<")[0].split("[")[0].strip()
-    import_name = base.lower().replace("-", "_")
+    key = base.lower()
+    import_name = _PIP_TO_IMPORT.get(key, key.replace("-", "_"))
     return importlib.util.find_spec(import_name) is not None
 
 
@@ -397,14 +408,60 @@ def step_env(opts) -> bool:
         import setup_environment  # noqa: WPS433
         setup_environment.main()
     except SystemExit as e:
-        return e.code in (0, None)
+        if e.code not in (0, None):
+            return False
     except Exception as e:
         print(f"  {CROSS} setup_environment failed: {e}")
         return False
     finally:
         sys.argv = saved_argv
 
+    # Seed per-user invoice_manager config so the hub doesn't crash on first launch.
+    _seed_invoice_manager_config(opts)
+
     return True
+
+
+def _seed_invoice_manager_config(opts) -> None:
+    """Copy invoice_manager's config.json.example into the per-user AppData dir.
+
+    The hub raises ConfigError on startup if this file is missing; we copy
+    the template so first launch works, and the user edits company details
+    after the fact.
+    """
+    example = (
+        SCRIPT_DIR
+        / "modules" / "invoice_manager" / "core" / "config.json.example"
+    )
+    if not example.exists():
+        return  # nothing to seed
+
+    if sys.platform == "win32":
+        data_dir = Path.home() / "AppData" / "Local" / "PipelineManager" / "global_invoice"
+    else:
+        data_dir = Path.home() / ".local" / "share" / "PipelineManager" / "global_invoice"
+    target = data_dir / "config.json"
+
+    print()
+    if target.exists():
+        status("invoice_manager config.json", True, str(target))
+        return
+
+    if opts.dry_run:
+        print(f"  {dim('[dry-run] would copy ' + str(example) + ' to ' + str(target))}")
+        return
+
+    try:
+        data_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(example, target)
+    except OSError as e:
+        status("invoice_manager config.json", False, f"could not seed: {e}", warn=True)
+        return
+
+    status("invoice_manager config.json", True, f"seeded from template -> {target}")
+    print(f"  {ARROW} Edit {bold(str(target))} to set your")
+    print(f"     {BULLET}legal name, VAT, address, IBAN/BIC")
+    print(f"     {BULLET}per-company invoice template + output_prefix")
 
 
 # ============================================================
@@ -503,6 +560,16 @@ def step_doctor(opts) -> bool:
            len(found_externals) == len(EXTERNAL_TOOLS),
            f"{len(found_externals)}/{len(EXTERNAL_TOOLS)} present",
            warn=len(found_externals) < len(EXTERNAL_TOOLS))
+
+    # invoice_manager config (per-user AppData)
+    if sys.platform == "win32":
+        inv_cfg = Path.home() / "AppData" / "Local" / "PipelineManager" / "global_invoice" / "config.json"
+    else:
+        inv_cfg = Path.home() / ".local" / "share" / "PipelineManager" / "global_invoice" / "config.json"
+    status("invoice_manager config", inv_cfg.exists(),
+           str(inv_cfg) if inv_cfg.exists()
+           else "missing - hub will disable Business tab",
+           warn=not inv_cfg.exists())
 
     return all_ok
 
