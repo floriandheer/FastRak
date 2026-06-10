@@ -479,22 +479,22 @@ def _seed_invoice_manager_config(opts) -> None:
 _DEFAULT_WORKSTATION_APPS = [
     {
         "name": "KeePassXC",
-        "winget_id": "KeePassXCTeam.KeePassXC",
+        "install_method": "manual",
         "exe": "KeePassXC",
         "why": "Password manager",
-        "url": "https://keepassxc.org/",
+        "url": "https://keepassxc.org/download/#windows",
     },
     {
         "name": "Synology Drive Client",
+        "install_method": "winget",
         "winget_id": "Synology.DriveClient",
         "exe": "SynologyDrive",
         "why": "NAS sync for Active / Archive / Pipeline",
         "url": "https://www.synology.com/en-global/dsm/feature/drive",
-        "post_install": "launch",
     },
     {
         "name": "Visual Subst",
-        "winget_id": "NTWindSoftware.VisualSubst",
+        "install_method": "manual",
         "exe": "visualsubst",
         "why": "GUI for the subst drive mappings install.py creates",
         "url": "https://www.ntwind.com/software/visual-subst.html",
@@ -529,41 +529,54 @@ def step_apps(opts) -> bool:
     print()
 
     apps = _load_workstation_apps()
-    winget_available = sys.platform == "win32" and shutil.which("winget") is not None
 
-    missing = []
+    missing_manual: list[dict] = []  # just show the URL
+    missing_winget: list[dict] = []  # offer auto-install
     for app in apps:
         exe = app.get("exe", "")
         path = shutil.which(exe) if exe else None
         if path:
             status(app["name"], True, f"{path}  ({app.get('why', '')})")
+            continue
+        status(app["name"], False, f"missing - {app.get('why', '')}", warn=True)
+        if app.get("install_method") == "winget" and app.get("winget_id"):
+            missing_winget.append(app)
         else:
-            status(app["name"], False, f"missing - {app.get('why', '')}", warn=True)
-            missing.append(app)
+            missing_manual.append(app)
 
-    if not missing:
+    if not missing_manual and not missing_winget:
         print()
         print(f"  {CHECK} All workstation apps present.")
         return True
 
-    print()
-    if sys.platform != "win32":
-        print(f"  {dim('Workstation apps assume Windows winget; skipping on this OS.')}")
+    # Manual apps: just hand the user the download link and move on.
+    if missing_manual:
+        print()
+        print(f"  {ARROW} Download the missing apps from their homepage:")
+        for app in missing_manual:
+            print(f"    {BULLET}{app['name']:<22} {cyn(app.get('url', ''))}")
+
+    if not missing_winget:
         return True
 
+    # Winget apps: same flow as before, scoped to install_method=winget only.
+    winget_available = sys.platform == "win32" and shutil.which("winget") is not None
+    if sys.platform != "win32":
+        return True
     if not winget_available:
-        print(f"  {WARN} winget not found - cannot auto-install.")
-        print(f"  {dim('Download each missing app from its homepage:')}")
-        for app in missing:
+        print()
+        print(f"  {WARN} winget not found - install manually:")
+        for app in missing_winget:
             print(f"    {BULLET}{app['name']:<22} {cyn(app.get('url', ''))}")
         return True
 
+    print()
     print(f"  {ARROW} winget can install these for you:")
-    for app in missing:
+    for app in missing_winget:
         print(f"    {BULLET}{app['name']:<22} {dim('winget install --id ' + app['winget_id'])}")
 
     print()
-    if not confirm(f"Install {len(missing)} missing app(s) via winget?",
+    if not confirm(f"Install {len(missing_winget)} app(s) via winget?",
                    opts.yes, default_yes=True):
         print(f"  {dim('Skipped. You can rerun this step with: python install.py --step apps')}")
         return True
@@ -572,9 +585,8 @@ def step_apps(opts) -> bool:
         print(f"  {dim('[dry-run] would install via winget')}")
         return True
 
-    installed_now = []
     failed = []
-    for app in missing:
+    for app in missing_winget:
         print()
         print(f"  {ARROW} Installing {bold(app['name'])} {DOTS}")
         try:
@@ -585,27 +597,9 @@ def step_apps(opts) -> bool:
                 check=True,
             )
             print(f"     {CHECK} {app['name']}")
-            installed_now.append(app)
         except subprocess.CalledProcessError:
             print(f"     {CROSS} {app['name']} - install via {cyn(app.get('url', ''))}")
             failed.append(app)
-
-    # Post-install hooks (currently only "launch" for Synology so the
-    # user lands on the pair-with-NAS wizard immediately).
-    for app in installed_now:
-        if app.get("post_install") != "launch":
-            continue
-        exe = shutil.which(app.get("exe", ""))
-        if not exe:
-            continue
-        if not confirm(f"Launch {app['name']} now to finish setup?",
-                       opts.yes, default_yes=True):
-            continue
-        try:
-            os.startfile(exe)  # type: ignore[attr-defined]
-            print(f"     {CHECK} Launched {app['name']}")
-        except Exception as e:
-            print(f"     {dim('(could not launch: ' + str(e) + ')')}")
 
     if failed:
         print()
@@ -772,6 +766,21 @@ def final_report(results: dict, opts):
         print(f"  {dim('Re-run install.py after fixing, or run a single step with --step.')}")
     else:
         print(f"  {grn(bold('Everything is green. Have fun!'))}")
+
+    # Manual downloads still pending — surface URLs the user needs to
+    # click. Recomputed from live state so apps installed mid-run drop
+    # off the list automatically.
+    still_manual = [
+        a for a in _load_workstation_apps()
+        if a.get("install_method", "manual") != "winget"
+        and not shutil.which(a.get("exe", ""))
+        and a.get("url")
+    ]
+    if still_manual:
+        print()
+        print(bold("  Still to install manually:"))
+        for app in still_manual:
+            print(f"    {BULLET}{app['name']:<22} {cyn(app['url'])}")
 
     print()
     print(bold("  How to launch:"))
