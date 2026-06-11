@@ -13,6 +13,7 @@ Reads:
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -49,6 +50,16 @@ class App:
     exe: str = ""
     why: str = ""
     url: str = ""
+    # Optional list of absolute paths (env vars OK) where the executable
+    # might live. Used when the app does not put itself on PATH — which
+    # is most Windows GUI apps. Examples:
+    #   "%ProgramFiles%\\Synology\\SynologyDrive\\SynologyDrive.exe"
+    detect_paths: list[str] = field(default_factory=list)
+    # Optional override for registry detection. Defaults to App.name —
+    # set this when the installer's DisplayName doesn't contain the
+    # catalog name (e.g. "Affinity Suite" → DisplayName is "Affinity
+    # Photo 2", so detect_name should be "Affinity Photo").
+    detect_name: Optional[str] = None
 
 
 @dataclass
@@ -123,6 +134,8 @@ def load_apps(config: Optional[dict] = None) -> list[App]:
             exe=entry.get("exe", ""),
             why=entry.get("why", ""),
             url=entry.get("url", ""),
+            detect_paths=list(entry.get("detect_paths", [])),
+            detect_name=entry.get("detect_name"),
         ))
     return out
 
@@ -191,10 +204,90 @@ def expand_profile(profile: Profile,
 # Detection
 # ============================================================
 
+def _read_uninstall_display_names() -> set[str]:
+    """Read DisplayName values from Windows uninstall registry keys.
+
+    This is the authoritative list of installed programs from the
+    user's perspective — MSI installers, NSIS installers, winget,
+    Add/Remove Programs all populate the same hives. Pure Python via
+    ``winreg``; no admin needed; both HKLM (system-wide) and HKCU
+    (per-user) are read so apps installed for the current user only
+    are also caught."""
+    if sys.platform != "win32":
+        return set()
+    try:
+        import winreg  # local — Windows-only
+    except ImportError:
+        return set()
+
+    names: set[str] = set()
+    targets = [
+        (winreg.HKEY_LOCAL_MACHINE,
+         r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (winreg.HKEY_LOCAL_MACHINE,
+         r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (winreg.HKEY_CURRENT_USER,
+         r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+    ]
+    for hive, subkey in targets:
+        try:
+            with winreg.OpenKey(hive, subkey) as key:
+                count = winreg.QueryInfoKey(key)[0]
+                for i in range(count):
+                    try:
+                        child_name = winreg.EnumKey(key, i)
+                        with winreg.OpenKey(key, child_name) as child:
+                            display, _ = winreg.QueryValueEx(child, "DisplayName")
+                            if isinstance(display, str) and display.strip():
+                                names.add(display.lower())
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return names
+
+
+_INSTALLED_PROGRAMS_CACHE: Optional[set[str]] = None
+
+
+def installed_programs() -> set[str]:
+    """Memoised view of installed-program DisplayNames (lowercased).
+
+    Cached for the lifetime of the process because reading the registry
+    is mildly expensive (~50–200 ms). Call
+    ``invalidate_program_cache()`` after running an installer so the
+    next ``is_installed()`` reflects the new state."""
+    global _INSTALLED_PROGRAMS_CACHE
+    if _INSTALLED_PROGRAMS_CACHE is None:
+        _INSTALLED_PROGRAMS_CACHE = _read_uninstall_display_names()
+    return _INSTALLED_PROGRAMS_CACHE
+
+
+def invalidate_program_cache() -> None:
+    global _INSTALLED_PROGRAMS_CACHE
+    _INSTALLED_PROGRAMS_CACHE = None
+
+
 def is_installed(app: App) -> bool:
-    if not app.exe:
-        return False
-    return shutil.which(app.exe) is not None
+    """Three independent checks, fast first:
+      1. ``shutil.which(exe)`` — covers anything on PATH
+      2. ``detect_paths`` — explicit absolute paths (env vars expanded)
+      3. Registry DisplayName substring match (catches most GUI apps)
+    """
+    if app.exe and shutil.which(app.exe):
+        return True
+    for raw in app.detect_paths:
+        if not raw:
+            continue
+        expanded = Path(os.path.expandvars(raw))
+        if expanded.exists():
+            return True
+    needle = (app.detect_name or app.name).lower().strip()
+    if needle:
+        for display in installed_programs():
+            if needle in display:
+                return True
+    return False
 
 
 def winget_available() -> bool:

@@ -1081,10 +1081,17 @@ class SettingsDialog:
         self._apps_refresh()
 
     def _apps_refresh(self):
-        """Re-read app status and rebuild the per-category rows."""
+        """Re-read app status and rebuild the per-category rows.
+
+        Invalidates the workstation_apps install-detection cache first
+        so apps installed since the dialog opened (in a console window
+        or via the per-row Install button) actually show up as
+        installed instead of being remembered as missing."""
         if not hasattr(self, "_apps_list_frame"):
             return
         wa = self._wa
+        if hasattr(wa, "invalidate_program_cache"):
+            wa.invalidate_program_cache()
         for child in self._apps_list_frame.winfo_children():
             child.destroy()
 
@@ -1162,7 +1169,8 @@ class SettingsDialog:
             anchor="w",
         ).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        # Action buttons (right-aligned)
+        # Action buttons (right-aligned, packed in reverse since they're
+        # right-aligned: Install/Restore lands rightmost, then Skip, then Page).
         if app.name in skip_set:
             tk.Button(
                 row, text="Restore",
@@ -1173,18 +1181,29 @@ class SettingsDialog:
             ).pack(side=tk.RIGHT, padx=2)
         elif not wa.is_installed(app):
             tk.Button(
+                row, text="Install",
+                command=lambda a=app: self._apps_install_one(a),
+                bg=COLORS["accent_dark"], fg="#ffffff",
+                font=font.Font(family="Segoe UI", size=9, weight="bold"),
+                relief=tk.FLAT, cursor="hand2", padx=10, pady=2,
+            ).pack(side=tk.RIGHT, padx=2)
+            tk.Button(
                 row, text="Skip",
                 command=lambda n=app.name: self._apps_skip(n),
                 bg=COLORS["bg_secondary"], fg=COLORS["text_primary"],
                 font=font.Font(family="Segoe UI", size=9),
                 relief=tk.FLAT, cursor="hand2", padx=8, pady=2,
             ).pack(side=tk.RIGHT, padx=2)
+
+        # Page button on every row that has a URL — installed apps get
+        # a quick path to the vendor for re-downloading / docs / etc.
+        if app.url:
             tk.Button(
-                row, text="Install",
-                command=lambda a=app: self._apps_install_one(a),
-                bg=COLORS["accent_dark"], fg="#ffffff",
-                font=font.Font(family="Segoe UI", size=9, weight="bold"),
-                relief=tk.FLAT, cursor="hand2", padx=10, pady=2,
+                row, text="Page",
+                command=lambda a=app: self._wa.open_download_page(a),
+                bg=COLORS["bg_secondary"], fg=COLORS["text_primary"],
+                font=font.Font(family="Segoe UI", size=9),
+                relief=tk.FLAT, cursor="hand2", padx=8, pady=2,
             ).pack(side=tk.RIGHT, padx=2)
 
     def _apps_skip(self, name):

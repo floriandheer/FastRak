@@ -513,6 +513,11 @@ def step_apps(opts) -> bool:
             print(f"  {dim('No workstation_apps configured in setup_config.json. Skipping.')}")
             return True
 
+    # Bust the installed-programs cache so we re-scan the registry
+    # every time this step runs (otherwise apps installed by an earlier
+    # run of this same step show up as still missing).
+    wa.invalidate_program_cache()
+
     skip_set = wa.load_skip_list()
     _print_apps_status(wa, all_apps, skip_set)
 
@@ -523,12 +528,38 @@ def step_apps(opts) -> bool:
         print(f"  {CHECK} All workstation apps present (or skipped on this machine).")
         return True
 
-    # Unattended: install everything missing via winget, list manual URLs.
-    if opts.yes:
-        return _install_set(wa, missing, opts, label="all missing")
+    # Split missing by "every-PC General" vs "role-specific other".
+    #
+    # General apps install automatically — they're the universal
+    # baseline (KeePass, Synology Drive, Sublime, ...). Role-specific
+    # categories (Visual, Audio, RealTime, ...) always go through the
+    # picker so the user can pick what this machine is actually for.
+    general_missing = [a for a in missing
+                       if a.category == wa.DEFAULT_CATEGORY]
+    other_missing = [a for a in missing
+                     if a.category != wa.DEFAULT_CATEGORY]
 
-    # Interactive: ask the user how they want to pick.
-    target = _pick_apps(wa, all_apps, missing, opts)
+    if general_missing:
+        print()
+        print(f"  {ARROW} {bold('General')} apps — installing without prompting "
+              f"(every PC needs these):")
+        _install_set(wa, general_missing, opts,
+                     label="General", force_yes=True)
+
+    if not other_missing:
+        return True
+
+    # Non-General categories: always picker, even in unattended mode.
+    # If --yes, fall through and tell the user how to install them.
+    if opts.yes:
+        print()
+        print(f"  {WARN} Role-specific categories (Visual, Audio, RealTime, ...) "
+              f"need a manual pick.")
+        print(f"  {dim('Re-run interactively to install them: '
+                       'python install.py --step apps')}")
+        return True
+
+    target = _pick_apps(wa, all_apps, other_missing, opts)
     if target is None:
         print(f"  {dim('Skipped. Re-run with: python install.py --step apps')}")
         return True
@@ -665,9 +696,16 @@ def _pick_by_profile(wa, all_apps, missing):
     return [a for a in profile_apps if a.name in missing_names]
 
 
-def _install_set(wa, target, opts, label: str) -> bool:
+def _install_set(wa, target, opts, label: str,
+                 force_yes: bool = False) -> bool:
     """Run installs for one set of apps. Winget apps via winget, manual
-    apps via 'open download URL' (CLI prints the URL and offers to open)."""
+    apps via 'open download URL' (CLI prints the URL and offers to open).
+
+    ``force_yes`` suppresses the per-set confirmation prompt — used by
+    the General auto-install path so the universal apps install without
+    any extra clicks even in interactive mode.
+    """
+    auto_yes = opts.yes or force_yes
     winget_targets = [a for a in target if a.install_method == "winget"]
     manual_targets = [a for a in target if a.install_method != "winget"]
 
@@ -685,13 +723,18 @@ def _install_set(wa, target, opts, label: str) -> bool:
                 print(f"    {BULLET}{a.name:<22} {dim('winget install --id ' + (a.winget_id or ''))}")
             print()
             if confirm(f"Install {len(winget_targets)} app(s) via winget?",
-                       opts.yes, default_yes=True):
+                       auto_yes, default_yes=True):
                 for a in winget_targets:
                     print()
                     print(f"  {ARROW} Installing {bold(a.name)} {DOTS}")
                     result = wa.install_app(a, dry_run=opts.dry_run)
                     if result.success:
                         print(f"     {CHECK} {a.name}  {dim(result.detail)}")
+                        # Bust the registry cache so the next is_installed()
+                        # picks up the freshly installed app (doctor step
+                        # runs after this and would otherwise show it as
+                        # missing).
+                        wa.invalidate_program_cache()
                     else:
                         print(f"     {CROSS} {a.name} - {dim(result.detail)}")
                         if a.url:

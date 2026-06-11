@@ -244,6 +244,85 @@ def test_status_counts_counts_skipped_separately(isolated_paths, monkeypatch):
 
 
 # ============================================================
+# is_installed — detection paths
+# ============================================================
+
+@pytest.fixture
+def no_real_detection(monkeypatch):
+    """Force all detection paths to negative so each test enables only
+    the one it wants to exercise."""
+    monkeypatch.setattr(wa.shutil, "which", lambda exe: None)
+    monkeypatch.setattr(wa, "installed_programs", lambda: set())
+    yield
+
+
+def test_is_installed_finds_via_path(isolated_paths, monkeypatch, no_real_detection):
+    monkeypatch.setattr(wa.shutil, "which",
+                        lambda exe: r"C:\tools\blender.exe" if exe == "blender" else None)
+    app = wa.App(name="Blender", exe="blender")
+    assert wa.is_installed(app) is True
+
+
+def test_is_installed_finds_via_detect_paths(isolated_paths, monkeypatch, no_real_detection, tmp_path):
+    fake = tmp_path / "fake_synology" / "SynologyDrive.exe"
+    fake.parent.mkdir(parents=True)
+    fake.write_text("stub")
+    app = wa.App(name="Synology Drive Client",
+                 exe="SynologyDrive",
+                 detect_paths=[str(fake)])
+    assert wa.is_installed(app) is True
+
+
+def test_is_installed_expands_env_vars_in_detect_paths(isolated_paths, monkeypatch, no_real_detection, tmp_path):
+    fake = tmp_path / "WizTree.exe"
+    fake.write_text("stub")
+    monkeypatch.setenv("FAKE_PROG_FILES", str(tmp_path))
+    app = wa.App(name="WizTree", exe="WizTree",
+                 detect_paths=["%FAKE_PROG_FILES%\\WizTree.exe"])
+    assert wa.is_installed(app) is True
+
+
+def test_is_installed_finds_via_registry_substring(isolated_paths, monkeypatch, no_real_detection):
+    monkeypatch.setattr(wa, "installed_programs",
+                        lambda: {"winscp 6.5", "ableton live 12 suite"})
+    assert wa.is_installed(wa.App(name="WinSCP", exe="WinSCP")) is True
+    assert wa.is_installed(wa.App(name="Ableton Live", exe="Ableton Live 12 Suite")) is True
+
+
+def test_is_installed_honors_detect_name_override(isolated_paths, monkeypatch, no_real_detection):
+    """Affinity Suite's installer DisplayName is 'Affinity Photo 2' —
+    a detect_name override lets the catalog keep its conceptual name."""
+    monkeypatch.setattr(wa, "installed_programs",
+                        lambda: {"affinity photo 2"})
+    app = wa.App(name="Affinity Suite", detect_name="Affinity Photo",
+                 exe="Affinity Photo 2")
+    assert wa.is_installed(app) is True
+
+
+def test_is_installed_missing_when_nothing_matches(isolated_paths, no_real_detection):
+    app = wa.App(name="Houdini", exe="houdini")
+    assert wa.is_installed(app) is False
+
+
+def test_invalidate_program_cache_forces_rescan(isolated_paths, monkeypatch):
+    calls = []
+
+    def fake_read():
+        calls.append(1)
+        return {"foo"}
+
+    monkeypatch.setattr(wa, "_read_uninstall_display_names", fake_read)
+    wa.invalidate_program_cache()
+    wa.installed_programs()
+    wa.installed_programs()
+    assert len(calls) == 1  # cached
+
+    wa.invalidate_program_cache()
+    wa.installed_programs()
+    assert len(calls) == 2  # re-read after invalidation
+
+
+# ============================================================
 # install_app dispatch
 # ============================================================
 
