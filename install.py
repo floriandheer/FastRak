@@ -501,8 +501,17 @@ def step_apps(opts) -> bool:
 
     all_apps = wa.load_apps()
     if not all_apps:
-        print(f"  {dim('No workstation_apps configured in setup_config.json. Skipping.')}")
-        return True
+        # Two distinct cases:
+        #   (a) setup_config.json exists but predates this feature →
+        #       offer to overwrite with the bundled .example so the
+        #       catalog appears.
+        #   (b) no setup_config.json at all → step_env handled that.
+        if wa.user_config_lacks_apps() and not opts.dry_run:
+            if _offer_config_overwrite(opts):
+                all_apps = wa.load_apps()  # re-read after overwrite
+        if not all_apps:
+            print(f"  {dim('No workstation_apps configured in setup_config.json. Skipping.')}")
+            return True
 
     skip_set = wa.load_skip_list()
     _print_apps_status(wa, all_apps, skip_set)
@@ -711,6 +720,48 @@ def _install_set(wa, target, opts, label: str) -> bool:
                 _offer_skip(wa, a, opts)
 
     return True  # never block downstream
+
+
+def _offer_config_overwrite(opts) -> bool:
+    """When the user's setup_config.json predates the workstation_apps
+    feature, offer to overwrite it with the bundled .example.
+
+    Destructive: replaces the entire file including drive_mappings and
+    pipeline_config. We back the old file up to setup_config.json.bak
+    first and default the prompt to NO.
+    """
+    cfg_path = SCRIPT_DIR / "setup_config.json"
+    example_path = SCRIPT_DIR / "setup_config.json.example"
+    if not example_path.exists():
+        print(f"  {CROSS} setup_config.json.example is missing - cannot overwrite.")
+        return False
+
+    print()
+    print(f"  {WARN} Your setup_config.json is missing the {bold('workstation_apps')} section.")
+    print(f"  {dim('It was probably created before this feature existed.')}")
+    print()
+    print(f"  {ARROW} Overwriting will {bold('replace the entire file')} with the bundled example,")
+    print(f"     including {bold('drive_mappings')} and {bold('pipeline_config')}.")
+    print(f"     A backup is written to {cyn('setup_config.json.bak')} first.")
+    print(f"     You'll need to re-check the drive letters / paths afterwards.")
+    print()
+    if not confirm("Overwrite setup_config.json with the example now?",
+                   auto_yes=False, default_yes=False):
+        print(f"  {dim('Skipped. Add the workstation_apps section to setup_config.json by hand,')}")
+        print(f"  {dim('or copy from setup_config.json.example.')}")
+        return False
+
+    try:
+        backup_path = cfg_path.with_suffix(".json.bak")
+        shutil.copyfile(cfg_path, backup_path)
+        shutil.copyfile(example_path, cfg_path)
+    except OSError as e:
+        print(f"  {CROSS} Overwrite failed: {e}")
+        return False
+    print(f"  {CHECK} Backed up old config -> {backup_path.name}")
+    print(f"  {CHECK} Wrote bundled example -> {cfg_path.name}")
+    print(f"  {WARN} Open {bold(cfg_path.name)} and confirm the drive letters / paths match this PC.")
+    return True
 
 
 def _offer_skip(wa, app, opts):

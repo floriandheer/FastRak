@@ -74,8 +74,13 @@ class InstallResult:
 # ============================================================
 
 def _load_config_dict() -> dict:
-    """Read setup_config.json, falling back to the .example if the user
-    hasn't created their own yet."""
+    """Read setup_config.json, falling back to the .example only if the
+    user hasn't created their own yet.
+
+    If setup_config.json exists but is missing the workstation_apps
+    section, that returns an empty catalog — the caller is expected to
+    notice and prompt the user (see install.py's step_apps, which
+    offers to overwrite with the bundled .example)."""
     path = CONFIG_PATH if CONFIG_PATH.exists() else EXAMPLE_PATH
     if not path.exists():
         return {}
@@ -84,6 +89,21 @@ def _load_config_dict() -> dict:
             return json.load(f)
     except (OSError, json.JSONDecodeError):
         return {}
+
+
+def user_config_lacks_apps() -> bool:
+    """True iff setup_config.json exists but has no usable
+    workstation_apps section. Used by the installer to decide whether to
+    propose an overwrite."""
+    if not CONFIG_PATH.exists():
+        return False
+    try:
+        with CONFIG_PATH.open("r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return False
+    raw = cfg.get("workstation_apps")
+    return not (isinstance(raw, list) and raw)
 
 
 def load_apps(config: Optional[dict] = None) -> list[App]:
