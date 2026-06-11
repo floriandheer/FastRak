@@ -108,6 +108,11 @@ class SettingsDialog:
         self.notebook.add(software_tab, text="Software Defaults")
         self._build_software_tab(software_tab)
 
+        # === WORKSTATION APPS TAB ===
+        apps_tab = tk.Frame(self.notebook, bg=COLORS["bg_primary"])
+        self.notebook.add(apps_tab, text="Workstation Apps")
+        self._build_workstation_apps_tab(apps_tab)
+
     def _build_general_tab(self, parent):
         """Build the General settings tab."""
         content_frame = tk.Frame(parent, bg=COLORS["bg_primary"])
@@ -976,6 +981,309 @@ class SettingsDialog:
                 entry.pack(side=tk.LEFT)
 
                 self.software_entries[software] = var
+
+    # ============================================================
+    # Workstation Apps tab
+    # ============================================================
+    #
+    # Status viewer + thin launcher over modules/workstation_apps.py.
+    # Per-app install runs winget in a new console (so the dialog stays
+    # responsive); "Install All Missing" hands off to install.py --step
+    # apps so the user gets the full picker UI in a console.
+
+    def _build_workstation_apps_tab(self, parent):
+        """Build the Workstation Apps tab: status overview + install actions."""
+        try:
+            import workstation_apps as wa  # noqa: WPS433
+        except ImportError as e:
+            tk.Label(
+                parent,
+                text=f"workstation_apps module not available:\n{e}",
+                font=font.Font(family="Segoe UI", size=10),
+                fg=COLORS["text_secondary"],
+                bg=COLORS["bg_primary"],
+                justify="left",
+            ).pack(padx=20, pady=20, anchor="nw")
+            return
+
+        self._wa = wa  # cached for action callbacks
+
+        # Header: summary line + action buttons
+        header = tk.Frame(parent, bg=COLORS["bg_primary"])
+        header.pack(fill=tk.X, padx=20, pady=(10, 5))
+
+        self._apps_summary_var = tk.StringVar(value="Loading...")
+        tk.Label(
+            header,
+            textvariable=self._apps_summary_var,
+            font=font.Font(family="Segoe UI", size=10, weight="bold"),
+            fg=COLORS["text_primary"],
+            bg=COLORS["bg_primary"],
+        ).pack(side=tk.LEFT)
+
+        actions = tk.Frame(parent, bg=COLORS["bg_primary"])
+        actions.pack(fill=tk.X, padx=20, pady=(0, 10))
+
+        tk.Button(
+            actions, text="Install Missing...",
+            command=self._apps_install_missing_console,
+            bg=COLORS["bg_secondary"], fg=COLORS["text_primary"],
+            font=font.Font(family="Segoe UI", size=10),
+            relief=tk.FLAT, cursor="hand2", padx=15, pady=6,
+        ).pack(side=tk.LEFT)
+
+        tk.Button(
+            actions, text="Refresh",
+            command=self._apps_refresh,
+            bg=COLORS["bg_secondary"], fg=COLORS["text_primary"],
+            font=font.Font(family="Segoe UI", size=10),
+            relief=tk.FLAT, cursor="hand2", padx=15, pady=6,
+        ).pack(side=tk.LEFT, padx=(10, 0))
+
+        self._apps_show_skipped_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            actions,
+            text="Show skipped apps",
+            variable=self._apps_show_skipped_var,
+            command=self._apps_refresh,
+            font=font.Font(family="Segoe UI", size=10),
+            fg=COLORS["text_primary"],
+            bg=COLORS["bg_primary"],
+            selectcolor=COLORS["bg_secondary"],
+            activebackground=COLORS["bg_primary"],
+            activeforeground=COLORS["text_primary"],
+        ).pack(side=tk.LEFT, padx=(20, 0))
+
+        # Scrollable body for the per-category app lists
+        body = tk.Frame(parent, bg=COLORS["bg_primary"])
+        body.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 10))
+
+        canvas = tk.Canvas(body, bg=COLORS["bg_primary"], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(body, orient="vertical", command=canvas.yview)
+        self._apps_list_frame = tk.Frame(canvas, bg=COLORS["bg_primary"])
+
+        self._apps_list_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all")),
+        )
+        canvas.create_window((0, 0), window=self._apps_list_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _on_mousewheel))
+        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self._apps_refresh()
+
+    def _apps_refresh(self):
+        """Re-read app status and rebuild the per-category rows."""
+        if not hasattr(self, "_apps_list_frame"):
+            return
+        wa = self._wa
+        for child in self._apps_list_frame.winfo_children():
+            child.destroy()
+
+        apps = wa.load_apps()
+        if not apps:
+            tk.Label(
+                self._apps_list_frame,
+                text="No workstation_apps configured in setup_config.json.",
+                font=font.Font(family="Segoe UI", size=10, slant="italic"),
+                fg=COLORS["text_secondary"], bg=COLORS["bg_primary"],
+            ).pack(anchor="nw", pady=10)
+            self._apps_summary_var.set("No apps configured")
+            return
+
+        skip_set = wa.load_skip_list()
+        counts = wa.status_counts(apps, skip_set)
+        self._apps_summary_var.set(
+            f"{counts.installed}/{counts.total} installed, "
+            f"{counts.missing} missing, {counts.skipped} skipped"
+        )
+
+        show_skipped = self._apps_show_skipped_var.get()
+        grouped = wa.apps_by_category(apps)
+        for cat, cat_apps in grouped.items():
+            visible = [a for a in cat_apps
+                       if show_skipped or a.name not in skip_set]
+            if not visible:
+                continue
+
+            section = tk.LabelFrame(
+                self._apps_list_frame,
+                text=f" {cat} ",
+                font=font.Font(family="Segoe UI", size=10, weight="bold"),
+                fg=COLORS["text_primary"], bg=COLORS["bg_card"],
+                padx=10, pady=6,
+            )
+            section.pack(fill=tk.X, pady=(0, 8), anchor="nw")
+
+            for a in visible:
+                self._build_app_row(section, a, skip_set, wa)
+
+    def _build_app_row(self, parent, app, skip_set, wa):
+        """One row per app: status icon, name, why, action button(s)."""
+        row = tk.Frame(parent, bg=COLORS["bg_card"])
+        row.pack(fill=tk.X, pady=2)
+
+        if app.name in skip_set:
+            icon, icon_color = "–", COLORS["text_secondary"]
+            status_text = f"skipped — {app.why}"
+        elif wa.is_installed(app):
+            icon, icon_color = "✓", "#22c55e"
+            status_text = app.why
+        else:
+            icon, icon_color = "✗", "#ef4444"
+            method = "winget" if app.install_method == "winget" else "manual"
+            status_text = f"missing ({method}) — {app.why}"
+
+        tk.Label(
+            row, text=icon,
+            font=font.Font(family="Segoe UI", size=11, weight="bold"),
+            fg=icon_color, bg=COLORS["bg_card"], width=2,
+        ).pack(side=tk.LEFT)
+
+        tk.Label(
+            row, text=app.name,
+            font=font.Font(family="Segoe UI", size=10, weight="bold"),
+            fg=COLORS["text_primary"], bg=COLORS["bg_card"],
+            width=22, anchor="w",
+        ).pack(side=tk.LEFT)
+
+        tk.Label(
+            row, text=status_text,
+            font=font.Font(family="Segoe UI", size=9),
+            fg=COLORS["text_secondary"], bg=COLORS["bg_card"],
+            anchor="w",
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # Action buttons (right-aligned)
+        if app.name in skip_set:
+            tk.Button(
+                row, text="Restore",
+                command=lambda n=app.name: self._apps_unskip(n),
+                bg=COLORS["bg_secondary"], fg=COLORS["text_primary"],
+                font=font.Font(family="Segoe UI", size=9),
+                relief=tk.FLAT, cursor="hand2", padx=8, pady=2,
+            ).pack(side=tk.RIGHT, padx=2)
+        elif not wa.is_installed(app):
+            tk.Button(
+                row, text="Skip",
+                command=lambda n=app.name: self._apps_skip(n),
+                bg=COLORS["bg_secondary"], fg=COLORS["text_primary"],
+                font=font.Font(family="Segoe UI", size=9),
+                relief=tk.FLAT, cursor="hand2", padx=8, pady=2,
+            ).pack(side=tk.RIGHT, padx=2)
+            tk.Button(
+                row, text="Install",
+                command=lambda a=app: self._apps_install_one(a),
+                bg=COLORS["accent_dark"], fg="#ffffff",
+                font=font.Font(family="Segoe UI", size=9, weight="bold"),
+                relief=tk.FLAT, cursor="hand2", padx=10, pady=2,
+            ).pack(side=tk.RIGHT, padx=2)
+
+    def _apps_skip(self, name):
+        self._wa.mark_skipped(name)
+        logger.info("Workstation app marked as skipped: %s", name)
+        self._apps_refresh()
+
+    def _apps_unskip(self, name):
+        self._wa.unskip(name)
+        logger.info("Workstation app un-skipped: %s", name)
+        self._apps_refresh()
+
+    def _apps_install_one(self, app):
+        """Install one app. winget = new console; manual = open URL."""
+        wa = self._wa
+        if app.install_method == "winget" and app.winget_id:
+            if sys.platform != "win32" or not wa.winget_available():
+                messagebox.showwarning(
+                    "winget unavailable",
+                    f"winget is not available on this machine.\n\n"
+                    f"Install {app.name} manually from:\n{app.url}",
+                    parent=self.dialog,
+                )
+                return
+            try:
+                # Open a new console so winget can show progress and the
+                # user can confirm UAC prompts. cmd /k keeps the window
+                # up after winget finishes so success/failure stays
+                # visible.
+                subprocess.Popen(
+                    ["cmd", "/k", "winget", "install", "--id", app.winget_id,
+                     "--accept-source-agreements",
+                     "--accept-package-agreements"],
+                    creationflags=subprocess.CREATE_NEW_CONSOLE,
+                )
+                logger.info("Launched winget install for %s", app.name)
+                messagebox.showinfo(
+                    "Install Started",
+                    f"winget is installing {app.name} in a new console.\n\n"
+                    "Click Refresh after it finishes to update the status.",
+                    parent=self.dialog,
+                )
+            except Exception as e:
+                logger.exception("winget install failed to launch")
+                messagebox.showerror(
+                    "Launch Failed",
+                    f"Could not start winget:\n{e}",
+                    parent=self.dialog,
+                )
+            return
+
+        # Manual install: open the vendor download page
+        if not app.url:
+            messagebox.showinfo(
+                app.name,
+                "No download URL configured for this app.",
+                parent=self.dialog,
+            )
+            return
+        if not wa.open_download_page(app):
+            messagebox.showwarning(
+                "Could not open browser",
+                f"Open this URL manually:\n{app.url}",
+                parent=self.dialog,
+            )
+
+    def _apps_install_missing_console(self):
+        """Hand off to install.py --step apps for the full picker UI."""
+        if sys.platform != "win32":
+            messagebox.showwarning(
+                "Windows Only",
+                "The interactive installer requires Windows.",
+                parent=self.dialog,
+            )
+            return
+        project_root = self._project_root()
+        script_path = os.path.join(project_root, "install.py")
+        if not os.path.isfile(script_path):
+            messagebox.showerror(
+                "install.py Not Found",
+                f"Could not locate:\n{script_path}",
+                parent=self.dialog,
+            )
+            return
+        exe = self._console_python()
+        try:
+            subprocess.Popen(
+                ["cmd", "/k", exe, script_path, "--step", "apps"],
+                cwd=project_root,
+                creationflags=subprocess.CREATE_NEW_CONSOLE,
+            )
+            logger.info("Launched install.py --step apps in new console")
+        except Exception as e:
+            logger.exception("Failed to launch install.py")
+            messagebox.showerror(
+                "Launch Failed",
+                f"Could not start install.py:\n{e}",
+                parent=self.dialog,
+            )
 
     def _build_button_row(self):
         """Build the button row at the bottom of the dialog."""

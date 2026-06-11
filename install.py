@@ -471,142 +471,258 @@ def _seed_invoice_manager_config(opts) -> None:
 
 
 # ============================================================
-# Step 5: Workstation apps (KeePassXC, Synology Drive, Visual Subst)
+# Step 5: Workstation apps
 # ============================================================
-
-# Hardcoded fallback used when setup_config.json doesn't carry a
-# workstation_apps section (older configs from before this step existed).
-_DEFAULT_WORKSTATION_APPS = [
-    {
-        "name": "KeePassXC",
-        "install_method": "manual",
-        "exe": "KeePassXC",
-        "why": "Password manager",
-        "url": "https://keepassxc.org/download/#windows",
-    },
-    {
-        "name": "Synology Drive Client",
-        "install_method": "winget",
-        "winget_id": "Synology.DriveClient",
-        "exe": "SynologyDrive",
-        "why": "NAS sync for Active / Archive / Pipeline",
-        "url": "https://www.synology.com/en-global/dsm/feature/drive",
-    },
-    {
-        "name": "Visual Subst",
-        "install_method": "manual",
-        "exe": "visualsubst",
-        "why": "GUI for the subst drive mappings install.py creates",
-        "url": "https://www.ntwind.com/software/visual-subst.html",
-    },
-]
+#
+# Delegates app catalog / install / skip-list logic to
+# modules/workstation_apps.py — same code path the Settings dialog
+# uses, so the CLI and GUI can't drift apart.
 
 
-def _load_workstation_apps() -> list[dict]:
-    """Read workstation_apps from setup_config.json, fall back to defaults.
-
-    Existing configs (pre-this-feature) won't have the section; rather
-    than refusing to run, we use a sensible default. Users who want to
-    customise the list edit setup_config.json.
-    """
-    cfg_path = SCRIPT_DIR / "setup_config.json"
-    if cfg_path.exists():
-        try:
-            import json  # local import — only needed here
-            with cfg_path.open("r", encoding="utf-8") as f:
-                cfg = json.load(f)
-            apps = cfg.get("workstation_apps")
-            if isinstance(apps, list) and apps:
-                return apps
-        except Exception:
-            pass  # fall through to defaults
-    return _DEFAULT_WORKSTATION_APPS
+def _import_workstation_apps():
+    """Lazy import so install.py works even if modules/ has issues."""
+    modules_dir = str(SCRIPT_DIR / "modules")
+    if modules_dir not in sys.path:
+        sys.path.insert(0, modules_dir)
+    import workstation_apps  # noqa: WPS433
+    return workstation_apps
 
 
 def step_apps(opts) -> bool:
     step_header(5, TOTAL_STEPS, "Workstation apps")
-    print(f"  {dim('Apps you want on every PC. Pipeline runs without them - never fatal.')}")
+    print(f"  {dim('Apps you may want on this PC. Pipeline runs without them - never fatal.')}")
     print()
 
-    apps = _load_workstation_apps()
+    try:
+        wa = _import_workstation_apps()
+    except Exception as e:
+        print(f"  {CROSS} Could not load workstation_apps module: {e}")
+        return False
 
-    missing_manual: list[dict] = []  # just show the URL
-    missing_winget: list[dict] = []  # offer auto-install
-    for app in apps:
-        exe = app.get("exe", "")
-        path = shutil.which(exe) if exe else None
-        if path:
-            status(app["name"], True, f"{path}  ({app.get('why', '')})")
+    all_apps = wa.load_apps()
+    if not all_apps:
+        print(f"  {dim('No workstation_apps configured in setup_config.json. Skipping.')}")
+        return True
+
+    skip_set = wa.load_skip_list()
+    _print_apps_status(wa, all_apps, skip_set)
+
+    missing = [a for a in all_apps
+               if a.name not in skip_set and not wa.is_installed(a)]
+    if not missing:
+        print()
+        print(f"  {CHECK} All workstation apps present (or skipped on this machine).")
+        return True
+
+    # Unattended: install everything missing via winget, list manual URLs.
+    if opts.yes:
+        return _install_set(wa, missing, opts, label="all missing")
+
+    # Interactive: ask the user how they want to pick.
+    target = _pick_apps(wa, all_apps, missing, opts)
+    if target is None:
+        print(f"  {dim('Skipped. Re-run with: python install.py --step apps')}")
+        return True
+    if not target:
+        print(f"  {dim('Nothing selected.')}")
+        return True
+
+    return _install_set(wa, target, opts, label=f"{len(target)} app(s)")
+
+
+def _print_apps_status(wa, apps, skip_set):
+    """Per-category status table; mirrors the format the Settings dialog
+    will eventually show."""
+    counts = wa.status_counts(apps, skip_set)
+    print(f"  {dim(f'{counts.installed}/{counts.total} installed, '
+                   f'{counts.missing} missing, {counts.skipped} skipped')}")
+    grouped = wa.apps_by_category(apps)
+    for cat, cat_apps in grouped.items():
+        print()
+        print(f"  {bold(cat)}")
+        for a in cat_apps:
+            if a.name in skip_set:
+                status(a.name, True,
+                       f"skipped on this machine - {a.why}", warn=True)
+            elif wa.is_installed(a):
+                detail = a.why or ""
+                status(a.name, True, detail)
+            else:
+                method = "winget" if a.install_method == "winget" else "manual"
+                status(a.name, False, f"missing ({method}) - {a.why}", warn=True)
+
+
+def _pick_apps(wa, all_apps, missing, opts):
+    """Return the list of App objects the user wants to install, or None
+    to skip the step entirely. Empty list = nothing selected."""
+    print()
+    print(f"  {ARROW} How do you want to install the missing apps?")
+    print(f"    {bold('[E]')} Everything missing                  ({len(missing)} app(s))")
+    print(f"    {bold('[C]')} By category")
+    print(f"    {bold('[I]')} Individual pick")
+    print(f"    {bold('[P]')} Profile (VJ rig / Audio rig / ...)")
+    print(f"    {bold('[S]')} Skip this step")
+    print()
+    choice = input("  > ").strip().lower()
+
+    if choice in ("", "s", "skip", "q"):
+        return None
+    if choice in ("e", "all", "everything"):
+        return missing
+    if choice in ("c", "category", "categories"):
+        return _pick_by_category(wa, missing)
+    if choice in ("i", "individual", "pick"):
+        return _pick_individual(missing)
+    if choice in ("p", "profile"):
+        return _pick_by_profile(wa, all_apps, missing)
+
+    print(f"  {WARN} Unknown choice {choice!r}, skipping.")
+    return None
+
+
+def _pick_by_category(wa, missing):
+    by_cat = wa.apps_by_category(missing)
+    cats = list(by_cat.keys())
+    if not cats:
+        print(f"  {dim('No missing apps grouped by category.')}")
+        return []
+    print()
+    print(f"  {ARROW} Categories with missing apps:")
+    for idx, c in enumerate(cats, 1):
+        print(f"    {cyn(str(idx))}. {c:<14} {dim(f'({len(by_cat[c])} missing)')}")
+    print(f"    {dim('Enter comma-separated numbers (e.g. 1,3) or A for all:')}")
+    raw = input("  > ").strip().lower()
+    if not raw:
+        return []
+    if raw in ("a", "all"):
+        picks = cats
+    else:
+        picks = []
+        for tok in raw.split(","):
+            tok = tok.strip()
+            if not tok.isdigit():
+                continue
+            i = int(tok) - 1
+            if 0 <= i < len(cats):
+                picks.append(cats[i])
+    out = []
+    for c in picks:
+        out.extend(by_cat.get(c, []))
+    return out
+
+
+def _pick_individual(missing):
+    print()
+    print(f"  {ARROW} Missing apps:")
+    for idx, a in enumerate(missing, 1):
+        method = "winget" if a.install_method == "winget" else "manual"
+        print(f"    {cyn(str(idx))}. {a.name:<22} {dim(f'[{a.category}/{method}] {a.why}')}")
+    print(f"    {dim('Enter comma-separated numbers (e.g. 1,3,5) or A for all:')}")
+    raw = input("  > ").strip().lower()
+    if not raw:
+        return []
+    if raw in ("a", "all"):
+        return missing
+    out = []
+    for tok in raw.split(","):
+        tok = tok.strip()
+        if not tok.isdigit():
             continue
-        status(app["name"], False, f"missing - {app.get('why', '')}", warn=True)
-        if app.get("install_method") == "winget" and app.get("winget_id"):
-            missing_winget.append(app)
+        i = int(tok) - 1
+        if 0 <= i < len(missing):
+            out.append(missing[i])
+    return out
+
+
+def _pick_by_profile(wa, all_apps, missing):
+    profiles = wa.load_profiles()
+    if not profiles:
+        print(f"  {dim('No workstation_profiles configured. Falling back to all-missing.')}")
+        return missing
+    print()
+    print(f"  {ARROW} Profiles:")
+    for idx, p in enumerate(profiles, 1):
+        print(f"    {cyn(str(idx))}. {p.name:<14} {dim(p.description)}")
+    print(f"    {dim('Pick one number:')}")
+    raw = input("  > ").strip()
+    if not raw.isdigit():
+        return []
+    i = int(raw) - 1
+    if not (0 <= i < len(profiles)):
+        return []
+    profile_apps = wa.expand_profile(profiles[i], all_apps)
+    # Only install the ones from the profile that are actually missing
+    missing_names = {a.name for a in missing}
+    return [a for a in profile_apps if a.name in missing_names]
+
+
+def _install_set(wa, target, opts, label: str) -> bool:
+    """Run installs for one set of apps. Winget apps via winget, manual
+    apps via 'open download URL' (CLI prints the URL and offers to open)."""
+    winget_targets = [a for a in target if a.install_method == "winget"]
+    manual_targets = [a for a in target if a.install_method != "winget"]
+
+    # Winget block
+    if winget_targets:
+        if not wa.winget_available():
+            print()
+            print(f"  {WARN} winget not found - cannot auto-install these:")
+            for a in winget_targets:
+                print(f"    {BULLET}{a.name:<22} {cyn(a.url)}")
         else:
-            missing_manual.append(app)
+            print()
+            print(f"  {ARROW} winget will install ({label}):")
+            for a in winget_targets:
+                print(f"    {BULLET}{a.name:<22} {dim('winget install --id ' + (a.winget_id or ''))}")
+            print()
+            if confirm(f"Install {len(winget_targets)} app(s) via winget?",
+                       opts.yes, default_yes=True):
+                for a in winget_targets:
+                    print()
+                    print(f"  {ARROW} Installing {bold(a.name)} {DOTS}")
+                    result = wa.install_app(a, dry_run=opts.dry_run)
+                    if result.success:
+                        print(f"     {CHECK} {a.name}  {dim(result.detail)}")
+                    else:
+                        print(f"     {CROSS} {a.name} - {dim(result.detail)}")
+                        if a.url:
+                            print(f"     {dim('Fallback: ' + a.url)}")
+                        _offer_skip(wa, a, opts)
 
-    if not missing_manual and not missing_winget:
+    # Manual block — just URLs, optionally opened in browser.
+    # Unattended mode (--yes) deliberately NEVER auto-opens browser tabs —
+    # opening a dozen pages without the user watching is the opposite of
+    # what "unattended" means.
+    if manual_targets:
         print()
-        print(f"  {CHECK} All workstation apps present.")
-        return True
-
-    # Manual apps: just hand the user the download link and move on.
-    if missing_manual:
-        print()
-        print(f"  {ARROW} Download the missing apps from their homepage:")
-        for app in missing_manual:
-            print(f"    {BULLET}{app['name']:<22} {cyn(app.get('url', ''))}")
-
-    if not missing_winget:
-        return True
-
-    # Winget apps: same flow as before, scoped to install_method=winget only.
-    winget_available = sys.platform == "win32" and shutil.which("winget") is not None
-    if sys.platform != "win32":
-        return True
-    if not winget_available:
-        print()
-        print(f"  {WARN} winget not found - install manually:")
-        for app in missing_winget:
-            print(f"    {BULLET}{app['name']:<22} {cyn(app.get('url', ''))}")
-        return True
-
-    print()
-    print(f"  {ARROW} winget can install these for you:")
-    for app in missing_winget:
-        print(f"    {BULLET}{app['name']:<22} {dim('winget install --id ' + app['winget_id'])}")
-
-    print()
-    if not confirm(f"Install {len(missing_winget)} app(s) via winget?",
-                   opts.yes, default_yes=True):
-        print(f"  {dim('Skipped. You can rerun this step with: python install.py --step apps')}")
-        return True
-
-    if opts.dry_run:
-        print(f"  {dim('[dry-run] would install via winget')}")
-        return True
-
-    failed = []
-    for app in missing_winget:
-        print()
-        print(f"  {ARROW} Installing {bold(app['name'])} {DOTS}")
-        try:
-            subprocess.run(
-                ["winget", "install", "--id", app["winget_id"],
-                 "--accept-source-agreements", "--accept-package-agreements",
-                 "--silent"],
-                check=True,
-            )
-            print(f"     {CHECK} {app['name']}")
-        except subprocess.CalledProcessError:
-            print(f"     {CROSS} {app['name']} - install via {cyn(app.get('url', ''))}")
-            failed.append(app)
-
-    if failed:
-        print()
-        print(f"  {WARN} {len(failed)} app(s) failed to install. Pipeline still works;")
-        print(f"  {dim('install them manually when convenient.')}")
+        print(f"  {ARROW} Manual installs (license-gated or no winget):")
+        for a in manual_targets:
+            print(f"    {BULLET}{a.name:<22} {cyn(a.url)}")
+        if not opts.yes:
+            print()
+            if confirm("Open these download pages in your browser now?",
+                       auto_yes=False, default_yes=False):
+                for a in manual_targets:
+                    if opts.dry_run:
+                        print(f"  {dim('[dry-run] would open ' + a.url)}")
+                    else:
+                        wa.open_download_page(a)
+            for a in manual_targets:
+                _offer_skip(wa, a, opts)
 
     return True  # never block downstream
+
+
+def _offer_skip(wa, app, opts):
+    """After a failed/declined install, offer to remember the skip."""
+    if opts.yes or opts.dry_run:
+        return
+    if wa.is_skipped(app):
+        return
+    if confirm(f"  Don't ask about {bold(app.name)} again on this machine?",
+               auto_yes=False, default_yes=False):
+        wa.mark_skipped(app.name)
+        print(f"     {dim('Marked as skipped in setup_apps_state.json')}")
 
 
 # ============================================================
@@ -706,15 +822,31 @@ def step_doctor(opts) -> bool:
            f"{len(found_externals)}/{len(EXTERNAL_TOOLS)} present",
            warn=len(found_externals) < len(EXTERNAL_TOOLS))
 
-    # Workstation apps - informational only, never blocks green
-    apps = _load_workstation_apps()
-    found_apps = [a["name"] for a in apps if shutil.which(a.get("exe", ""))]
-    missing_apps = [a["name"] for a in apps if not shutil.which(a.get("exe", ""))]
-    detail = f"{len(found_apps)}/{len(apps)} present"
-    if missing_apps:
-        detail += f"  (missing: {', '.join(missing_apps)})"
-    status("workstation apps", len(found_apps) == len(apps),
-           detail, warn=len(found_apps) < len(apps))
+    # Workstation apps - informational only, never blocks green.
+    # Skipped apps (per-machine) count as "intentionally absent" so the
+    # doctor stays useful instead of nagging forever.
+    try:
+        wa = _import_workstation_apps()
+        apps_list = wa.load_apps()
+        skip_set = wa.load_skip_list()
+        counts = wa.status_counts(apps_list, skip_set)
+        missing_unskipped = [
+            a.name for a in apps_list
+            if a.name not in skip_set and not wa.is_installed(a)
+        ]
+        detail = f"{counts.installed}/{counts.total} installed"
+        if counts.skipped:
+            detail += f", {counts.skipped} skipped"
+        if missing_unskipped:
+            detail += f"  (missing: {', '.join(missing_unskipped[:4])}"
+            if len(missing_unskipped) > 4:
+                detail += f", +{len(missing_unskipped) - 4} more"
+            detail += ")"
+        status("workstation apps", not missing_unskipped,
+               detail, warn=bool(missing_unskipped))
+    except Exception as e:
+        status("workstation apps", False,
+               f"could not check: {e}", warn=True)
 
     # invoice_manager config (per-user AppData)
     if sys.platform == "win32":
@@ -769,18 +901,25 @@ def final_report(results: dict, opts):
 
     # Manual downloads still pending — surface URLs the user needs to
     # click. Recomputed from live state so apps installed mid-run drop
-    # off the list automatically.
-    still_manual = [
-        a for a in _load_workstation_apps()
-        if a.get("install_method", "manual") != "winget"
-        and not shutil.which(a.get("exe", ""))
-        and a.get("url")
-    ]
+    # off the list automatically. Skipped apps are intentionally absent
+    # on this machine and don't get nagged about.
+    try:
+        wa = _import_workstation_apps()
+        skip_set = wa.load_skip_list()
+        still_manual = [
+            a for a in wa.load_apps()
+            if a.install_method != "winget"
+            and a.name not in skip_set
+            and not wa.is_installed(a)
+            and a.url
+        ]
+    except Exception:
+        still_manual = []
     if still_manual:
         print()
         print(bold("  Still to install manually:"))
         for app in still_manual:
-            print(f"    {BULLET}{app['name']:<22} {cyn(app['url'])}")
+            print(f"    {BULLET}{app.name:<22} {cyn(app.url)}")
 
     print()
     print(bold("  How to launch:"))

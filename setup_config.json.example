@@ -31,17 +31,19 @@
     ]
   },
 
-  "_workstation_apps_comment": "Apps you want installed on every PC. Pipeline does not require them - missing entries are non-fatal. install_method: 'winget' = auto-install via winget; 'manual' = just print the download URL.",
+  "_workstation_apps_comment": "Apps you may want installed on each PC. The Pipeline does not require any of them - missing entries are non-fatal. category groups them in the picker. install_method: 'winget' = auto-install via winget; 'manual' = print/open the download URL.",
   "workstation_apps": [
     {
       "name": "KeePassXC",
+      "category": "General",
       "install_method": "manual",
       "exe": "KeePassXC",
-      "why": "Password manager",
+      "why": "Password manager (settings sync via NAS, not winget)",
       "url": "https://keepassxc.org/download/#windows"
     },
     {
       "name": "Synology Drive Client",
+      "category": "General",
       "install_method": "winget",
       "winget_id": "Synology.DriveClient",
       "exe": "SynologyDrive",
@@ -50,10 +52,240 @@
     },
     {
       "name": "Visual Subst",
+      "category": "General",
       "install_method": "manual",
       "exe": "visualsubst",
       "why": "GUI for the subst drive mappings install.py creates",
       "url": "https://www.ntwind.com/software/visual-subst.html"
+    },
+    {
+      "name": "WizTree",
+      "category": "General",
+      "install_method": "winget",
+      "winget_id": "AntibodySoftware.WizTree",
+      "exe": "WizTree",
+      "why": "Fast disk space analyzer",
+      "url": "https://www.diskanalyzer.com/"
+    },
+    {
+      "name": "WinDirStat",
+      "category": "General",
+      "install_method": "winget",
+      "winget_id": "WinDirStat.WinDirStat",
+      "exe": "WinDirStat",
+      "why": "Disk usage visualizer (treemap)",
+      "url": "https://windirstat.net/"
+    },
+    {
+      "name": "Advanced Renamer",
+      "category": "General",
+      "install_method": "winget",
+      "winget_id": "HulubuluSoftware.AdvancedRenamer",
+      "exe": "AdvancedRenamer",
+      "why": "Batch file renaming - the workhorse for naming conventions",
+      "url": "https://www.advancedrenamer.com/"
+    },
+    {
+      "name": "Sublime Text",
+      "category": "General",
+      "install_method": "winget",
+      "winget_id": "SublimeHQ.SublimeText.4",
+      "exe": "subl",
+      "why": "General-purpose code/text editor",
+      "url": "https://www.sublimetext.com/"
+    },
+
+    {
+      "name": "Blender",
+      "category": "Visual",
+      "install_method": "winget",
+      "winget_id": "BlenderFoundation.Blender",
+      "exe": "blender",
+      "why": "Open-source 3D / animation",
+      "url": "https://www.blender.org/download/"
+    },
+    {
+      "name": "Houdini",
+      "category": "Visual",
+      "install_method": "manual",
+      "exe": "houdini",
+      "why": "Procedural FX / GD / 3D (license-gated, use SideFX installer)",
+      "url": "https://www.sidefx.com/download/"
+    },
+    {
+      "name": "DaVinci Resolve",
+      "category": "Visual",
+      "install_method": "manual",
+      "exe": "Resolve",
+      "why": "Video editing + color grading (login required for download)",
+      "url": "https://www.blackmagicdesign.com/products/davinciresolve"
+    },
+    {
+      "name": "Fusion",
+      "category": "Visual",
+      "install_method": "manual",
+      "exe": "Fusion",
+      "why": "Compositing (standalone or via Resolve Studio)",
+      "url": "https://www.blackmagicdesign.com/products/fusion"
+    },
+    {
+      "name": "Affinity Suite",
+      "category": "Visual",
+      "install_method": "manual",
+      "exe": "Affinity Photo 2",
+      "why": "Photo / Designer / Publisher (license + account)",
+      "url": "https://affinity.serif.com/"
+    },
+
+    {
+      "name": "Resolume",
+      "category": "RealTime",
+      "install_method": "manual",
+      "exe": "Avenue",
+      "why": "VJ / live video performance",
+      "url": "https://resolume.com/download/"
+    },
+    {
+      "name": "TouchDesigner",
+      "category": "RealTime",
+      "install_method": "manual",
+      "exe": "TouchDesigner",
+      "why": "Real-time visual programming",
+      "url": "https://derivative.ca/download"
+    },
+    {
+      "name": "TIXL",
+      "category": "RealTime",
+      "install_method": "manual",
+      "exe": "Editor",
+      "why": "Real-time motion graphics (formerly Tooll3)",
+      "url": "https://tixl.app/"
+    },
+    {
+      "name": "MadMapper",
+      "category": "RealTime",
+      "install_method": "manual",
+      "exe": "MadMapper",
+      "why": "Video / lighting projection mapping",
+      "url": "https://madmapper.com/madmapper"
+    },
+
+    {
+      "name": "MusicBee",
+      "category": "Audio",
+      "install_method": "winget",
+      "winget_id": "MusicBee.MusicBee",
+      "exe": "MusicBee",
+      "why": "Music library manager",
+      "url": "https://getmusicbee.com/"
+    },
+    {
+      "name": "Ableton Live",
+      "category": "Audio",
+      "install_method": "manual",
+      "exe": "Ableton Live 12 Suite",
+      "why": "DAW (license + .auz authorization)",
+      "url": "https://www.ableton.com/en/live/"
+    },
+    {
+      "name": "Traktor Pro",
+      "category": "Audio",
+      "install_method": "manual",
+      "exe": "Traktor",
+      "why": "DJ software - needed for beatmatching tests on a VJ rig",
+      "url": "https://www.native-instruments.com/en/products/traktor/"
+    },
+
+    {
+      "name": "Bambu Studio",
+      "category": "Physical",
+      "install_method": "winget",
+      "winget_id": "Bambulab.BambuStudio",
+      "exe": "bambu-studio",
+      "why": "Bambu Lab 3D printer slicer",
+      "url": "https://bambulab.com/en/download/studio"
+    },
+    {
+      "name": "Alibre Design",
+      "category": "Physical",
+      "install_method": "manual",
+      "exe": "Alibre Design",
+      "why": "Parametric CAD (license)",
+      "url": "https://www.alibre.com/"
+    },
+
+    {
+      "name": "Darktable",
+      "category": "Photo",
+      "install_method": "winget",
+      "winget_id": "darktable.darktable",
+      "exe": "darktable",
+      "why": "RAW photo developer",
+      "url": "https://www.darktable.org/install/"
+    },
+
+    {
+      "name": "Laragon",
+      "category": "Web",
+      "install_method": "manual",
+      "exe": "laragon",
+      "why": "Local PHP / MySQL / Node stack",
+      "url": "https://laragon.org/download/"
+    },
+    {
+      "name": "WinSCP",
+      "category": "Web",
+      "install_method": "winget",
+      "winget_id": "WinSCP.WinSCP",
+      "exe": "WinSCP",
+      "why": "SFTP / FTP client (used by the publish-static script)",
+      "url": "https://winscp.net/eng/download.php"
+    }
+  ],
+
+  "_workstation_profiles_comment": "Pre-baked combos for common machine roles. categories pulls in every app in those categories; extra_apps adds named apps from other categories (e.g. VJ rig wants Traktor for beatmatching even though Traktor is an Audio app).",
+  "workstation_profiles": [
+    {
+      "name": "VJ rig",
+      "description": "Live video performance + beatmatching",
+      "categories": ["General", "Visual", "RealTime"],
+      "extra_apps": ["Traktor Pro"]
+    },
+    {
+      "name": "Audio rig",
+      "description": "Music production / DJ workstation",
+      "categories": ["General", "Audio"],
+      "extra_apps": []
+    },
+    {
+      "name": "3D rig",
+      "description": "Modeling, rendering, 3D printing",
+      "categories": ["General", "Visual", "Physical"],
+      "extra_apps": []
+    },
+    {
+      "name": "Photo rig",
+      "description": "RAW developing + light editing",
+      "categories": ["General", "Photo"],
+      "extra_apps": ["Affinity Suite"]
+    },
+    {
+      "name": "Web rig",
+      "description": "Web development workstation",
+      "categories": ["General", "Web"],
+      "extra_apps": ["Sublime Text"]
+    },
+    {
+      "name": "Office laptop",
+      "description": "Lightweight machine, just the essentials",
+      "categories": ["General"],
+      "extra_apps": []
+    },
+    {
+      "name": "Everything",
+      "description": "Kitchen-sink workstation - all categories",
+      "categories": ["General", "Visual", "RealTime", "Audio", "Physical", "Photo", "Web"],
+      "extra_apps": []
     }
   ],
 
