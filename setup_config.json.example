@@ -122,6 +122,24 @@
       "url": "https://www.mozilla.org/firefox/"
     },
     {
+      "name": "Obsidian",
+      "category": "General",
+      "install_method": "winget",
+      "winget_id": "Obsidian.Obsidian",
+      "exe": "Obsidian",
+      "why": "Markdown notes + vaults (project journals, idea capture)",
+      "url": "https://obsidian.md/"
+    },
+    {
+      "name": "qBittorrent",
+      "category": "General",
+      "install_method": "winget",
+      "winget_id": "qBittorrent.qBittorrent",
+      "exe": "qbittorrent",
+      "why": "Torrent client - clean, ad-free",
+      "url": "https://www.qbittorrent.org/"
+    },
+    {
       "name": "Advanced Renamer",
       "category": "General",
       "install_method": "winget",
