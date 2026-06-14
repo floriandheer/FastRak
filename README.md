@@ -59,6 +59,17 @@ Some pipeline scripts require additional external software:
 
 ## Installation
 
+### Prerequisites (one-time, ~2 minutes)
+
+You need **Python** and **git** on the machine before `install.py` can run. Open Command Prompt — press **Start**, type **`cmd`**, press Enter — then:
+
+1. Type **`python`**. Windows opens the Microsoft Store on the Python page; click **Get**.
+2. Type **`winget install Git.Git -e`** to install git.
+   *If you get "winget is not recognized"*: install **App Installer** from the Microsoft Store first, then retry.
+3. Close the window and open a fresh `cmd` so the new tools land on PATH.
+
+Then continue with the one-command install below.
+
 ### One command (recommended)
 
 ```bash
@@ -67,14 +78,15 @@ cd FastRak
 python install.py
 ```
 
-`install.py` is a friendly first-run installer that walks you through six steps:
+`install.py` is a friendly first-run installer that walks you through seven steps:
 
-1. **Prerequisites** — Python, pip, git
+1. **Prerequisites check** — verifies Python, pip, and git are present (install them via the section above if not)
 2. **Python packages** — `pip install -r requirements.txt`
 3. **External tools** — FFmpeg, FLAC, rclone (offers a winget install on Windows)
 4. **Environment** — folders, `subst` drive mappings (with registry persistence, no admin needed), Synology checks, pipeline config
-5. **Desktop shortcut** — generates `Fastrak.lnk` you can pin to the taskbar
-6. **Doctor** — verifies the end state is healthy
+5. **Workstation apps** — KeePassXC, Synology Drive, browser, media player, and role-specific picks (Visual / Audio / RealTime / ...)
+6. **Desktop shortcut** — generates `Fastrak.lnk` you can pin to the taskbar
+7. **Doctor** — verifies the end state is healthy
 
 Every step asks before touching anything. Safe to re-run on the same machine, and gives a clean "all green" report when done.
 
