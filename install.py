@@ -335,6 +335,14 @@ def step_externals(opts) -> bool:
             print(f"     {CROSS} {t['name']} - install via {cyn(t['url'])}")
             failed.append(t)
 
+    # Tools just got added to the system PATH — pick that up in-process
+    # so the doctor step (and any later shutil.which call) sees them
+    # without waiting for a shell restart.
+    try:
+        _import_workstation_apps().refresh_path_from_registry()
+    except Exception:
+        pass
+
     if failed:
         print()
         print(f"  {WARN} {len(failed)} tool(s) failed to install. Pipeline still usable;")
@@ -354,40 +362,23 @@ def step_env(opts) -> bool:
     example = SCRIPT_DIR / "setup_config.json.example"
 
     if not cfg_path.exists():
-        status("setup_config.json", False, "not found", warn=True)
         if not example.exists():
+            status("setup_config.json", False, "not found", warn=True)
             print(f"  {CROSS} setup_config.json.example missing too - cannot proceed.")
             return False
 
-        print()
-        print(f"  {dim('Every PC needs its own setup_config.json (drive letters, paths, etc).')}")
-        if not confirm("Copy the example template now?", opts.yes, default_yes=True):
-            print(f"  {dim('Skipped. Create setup_config.json by hand and re-run.')}")
-            return False
-
+        # Fresh machine: silently copy the template and keep going. The
+        # defaults work for the standard D:\_work\... layout; anyone who
+        # wants different drive letters or a different physical base
+        # edits setup_config.json by hand after the install.
         if opts.dry_run:
             print(f"  {dim('[dry-run] would copy ' + example.name + ' to ' + cfg_path.name)}")
         else:
             shutil.copyfile(example, cfg_path)
-            print(f"  {CHECK} Copied {example.name} -> {cfg_path.name}")
-
-        print()
-        print(f"  {ARROW} Open {bold(cfg_path.name)} and adjust:")
-        print(f"     {BULLET}drive_mappings (I:, P:, ...)")
-        print(f"     {BULLET}folder_structure.bases  (where your Active / Archive folders live)")
-        print(f"     {BULLET}pipeline_config (active_base, archive_base, ...)")
-        print()
-        if sys.platform == "win32" and not opts.dry_run:
-            if confirm("Open setup_config.json in your default editor now?", opts.yes, default_yes=True):
-                try:
-                    os.startfile(str(cfg_path))  # type: ignore[attr-defined]
-                except Exception as e:
-                    print(f"  {dim('(could not auto-open: ' + str(e) + ')')}")
-        print()
-        print(f"  {WARN} After editing, re-run {bold('python install.py')} to apply.")
-        return False  # block doctor until config edited
-
-    status("setup_config.json", True, str(cfg_path))
+        status("setup_config.json", True,
+               f"copied from template ({example.name} -> {cfg_path.name})")
+    else:
+        status("setup_config.json", True, str(cfg_path))
 
     # Delegate to setup_environment.main()
     print()
@@ -921,6 +912,15 @@ def step_shortcut(opts) -> bool:
 
 def step_doctor(opts) -> bool:
     step_header(7, TOTAL_STEPS, "Doctor - is everything healthy?")
+
+    # Safety net: any winget install earlier in this run may have
+    # extended PATH at the OS level without the running process
+    # noticing. Refresh before any shutil.which calls so we don't
+    # report freshly-installed tools as missing.
+    try:
+        _import_workstation_apps().refresh_path_from_registry()
+    except Exception:
+        pass
 
     all_ok = True
 

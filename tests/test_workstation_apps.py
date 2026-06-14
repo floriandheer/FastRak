@@ -372,6 +372,68 @@ def test_is_installed_missing_when_nothing_matches(isolated_paths, no_real_detec
     assert wa.is_installed(app) is False
 
 
+def test_refresh_path_from_registry_is_noop_off_windows(monkeypatch):
+    """Off Windows the helper must do nothing — winreg isn't even
+    importable. We can't easily fake the platform, so just verify the
+    in-process PATH is untouched when there's nothing to add."""
+    monkeypatch.setattr(wa.sys, "platform", "linux")
+    before = wa.os.environ.get("PATH", "")
+    wa.refresh_path_from_registry()
+    assert wa.os.environ.get("PATH", "") == before
+
+
+def test_refresh_path_from_registry_appends_new_entries(monkeypatch):
+    """Simulate winget having added an entry to the user hive: the
+    helper should append it to os.environ['PATH'] without dropping or
+    duplicating anything already there."""
+    monkeypatch.setattr(wa.sys, "platform", "win32")
+
+    class _FakeKey:
+        def __init__(self, value):
+            self._value = value
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+
+    class _FakeWinreg:
+        HKEY_LOCAL_MACHINE = 1
+        HKEY_CURRENT_USER = 2
+
+        def __init__(self):
+            self._values = {
+                (self.HKEY_LOCAL_MACHINE,
+                 r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"):
+                    r"C:\Windows;C:\Windows\System32",
+                (self.HKEY_CURRENT_USER, r"Environment"):
+                    r"C:\Users\me\AppData\Local\Microsoft\WinGet\Links",
+            }
+
+        def OpenKey(self, hive, subkey):
+            if (hive, subkey) not in self._values:
+                raise OSError("missing key")
+            return _FakeKey(self._values[(hive, subkey)])
+
+        def QueryValueEx(self, key, name):
+            assert name == "Path"
+            return key._value, 1  # REG_SZ
+
+    fake = _FakeWinreg()
+    monkeypatch.setitem(sys.modules, "winreg", fake)
+    monkeypatch.setenv("PATH", r"C:\Windows;C:\Windows\System32")
+
+    wa.refresh_path_from_registry()
+
+    parts = wa.os.environ["PATH"].split(wa.os.pathsep)
+    # original entries preserved
+    assert r"C:\Windows" in parts
+    assert r"C:\Windows\System32" in parts
+    # new user-hive entry appended
+    assert r"C:\Users\me\AppData\Local\Microsoft\WinGet\Links" in parts
+    # no duplicates of the entries that were already in PATH
+    assert parts.count(r"C:\Windows") == 1
+
+
 def test_invalidate_program_cache_forces_rescan(isolated_paths, monkeypatch):
     calls = []
 

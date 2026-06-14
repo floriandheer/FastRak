@@ -325,6 +325,54 @@ def winget_available() -> bool:
     return sys.platform == "win32" and shutil.which(WINGET) is not None
 
 
+def refresh_path_from_registry() -> None:
+    """Pick up PATH changes made by winget without restarting the shell.
+
+    winget installs typically add their bin directory to the system or
+    user ``Path`` in the registry. The running Python process still has
+    the PATH it inherited at startup, so ``shutil.which`` (used by
+    doctor + ``is_installed``) would say the just-installed tool is
+    missing. Re-reading both hives and appending any new entries to
+    ``os.environ['PATH']`` fixes that in-process. No-op off Windows.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import winreg  # local — Windows-only
+    except ImportError:
+        return
+
+    current = os.environ.get("PATH", "")
+    have = {p.lower().rstrip("\\")
+            for p in current.split(os.pathsep) if p}
+    additions: list[str] = []
+    hives = [
+        (winreg.HKEY_LOCAL_MACHINE,
+         r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+        (winreg.HKEY_CURRENT_USER, r"Environment"),
+    ]
+    for hive, subkey in hives:
+        try:
+            with winreg.OpenKey(hive, subkey) as key:
+                value, _ = winreg.QueryValueEx(key, "Path")
+        except OSError:
+            continue
+        if not isinstance(value, str) or not value:
+            continue
+        for raw in os.path.expandvars(value).split(os.pathsep):
+            entry = raw.strip()
+            if not entry:
+                continue
+            key2 = entry.lower().rstrip("\\")
+            if key2 in have:
+                continue
+            additions.append(entry)
+            have.add(key2)
+    if additions:
+        prefix = current + os.pathsep if current else ""
+        os.environ["PATH"] = prefix + os.pathsep.join(additions)
+
+
 @dataclass
 class StatusCounts:
     total: int
@@ -427,6 +475,10 @@ def install_app(app: App, dry_run: bool = False) -> InstallResult:
              "--silent"],
             check=True,
         )
+        # Pick up the new PATH entry winget just registered so
+        # subsequent is_installed / which calls see the freshly-
+        # installed exe in the same process.
+        refresh_path_from_registry()
         return InstallResult(app, True, "installed")
     except (subprocess.CalledProcessError, FileNotFoundError) as exc:
         return InstallResult(app, False, str(exc))
