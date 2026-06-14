@@ -44,7 +44,12 @@ MANUAL = "manual"
 @dataclass
 class App:
     name: str
-    category: str = DEFAULT_CATEGORY
+    # One or more categories the app belongs to. JSON accepts either
+    # a string ("Audio") or a list (["Audio", "Media"]); load_apps
+    # normalises both to a list. An app listed in N categories appears
+    # under each in the picker / status table but is only ever installed
+    # once (callers dedupe by name).
+    categories: list[str] = field(default_factory=lambda: [DEFAULT_CATEGORY])
     install_method: str = MANUAL  # "winget" | "manual"
     winget_id: Optional[str] = None
     exe: str = ""
@@ -57,9 +62,17 @@ class App:
     detect_paths: list[str] = field(default_factory=list)
     # Optional override for registry detection. Defaults to App.name —
     # set this when the installer's DisplayName doesn't contain the
-    # catalog name (e.g. "Affinity Suite" → DisplayName is "Affinity
-    # Photo 2", so detect_name should be "Affinity Photo").
+    # catalog name (e.g. an "Affinity Suite" catalog entry whose
+    # installer DisplayName is "Affinity Photo 2" would set
+    # detect_name="Affinity Photo").
     detect_name: Optional[str] = None
+
+    @property
+    def category(self) -> str:
+        """Primary category — back-compat shim for callers that only
+        care about the first/owning category (status display, default
+        sort order). Iterate ``categories`` for the full list."""
+        return self.categories[0] if self.categories else DEFAULT_CATEGORY
 
 
 @dataclass
@@ -128,7 +141,7 @@ def load_apps(config: Optional[dict] = None) -> list[App]:
             continue
         out.append(App(
             name=entry["name"],
-            category=entry.get("category") or DEFAULT_CATEGORY,
+            categories=_parse_categories(entry.get("category")),
             install_method=entry.get("install_method", MANUAL),
             winget_id=entry.get("winget_id"),
             exe=entry.get("exe", ""),
@@ -138,6 +151,18 @@ def load_apps(config: Optional[dict] = None) -> list[App]:
             detect_name=entry.get("detect_name"),
         ))
     return out
+
+
+def _parse_categories(raw) -> list[str]:
+    """Accept ``"Audio"``, ``["Audio", "Media"]``, or missing/empty.
+    Always returns a non-empty list so downstream code can assume
+    ``categories[0]`` exists."""
+    if isinstance(raw, list):
+        cats = [str(c).strip() for c in raw if isinstance(c, str) and c.strip()]
+        return cats or [DEFAULT_CATEGORY]
+    if isinstance(raw, str) and raw.strip():
+        return [raw.strip()]
+    return [DEFAULT_CATEGORY]
 
 
 def load_profiles(config: Optional[dict] = None) -> list[Profile]:
@@ -160,12 +185,17 @@ def load_profiles(config: Optional[dict] = None) -> list[Profile]:
 
 def apps_by_category(apps: Optional[list[App]] = None) -> dict[str, list[App]]:
     """Group apps by category, preserving insertion order of categories
-    so the UI doesn't re-shuffle on every load."""
+    so the UI doesn't re-shuffle on every load.
+
+    Multi-category apps appear under each of their categories — callers
+    that flatten back into an install list must dedupe by ``App.name``.
+    """
     if apps is None:
         apps = load_apps()
     out: dict[str, list[App]] = {}
     for a in apps:
-        out.setdefault(a.category, []).append(a)
+        for cat in a.categories:
+            out.setdefault(cat, []).append(a)
     return out
 
 
@@ -174,8 +204,9 @@ def categories_present(apps: Optional[list[App]] = None) -> list[str]:
         apps = load_apps()
     seen: list[str] = []
     for a in apps:
-        if a.category not in seen:
-            seen.append(a.category)
+        for cat in a.categories:
+            if cat not in seen:
+                seen.append(cat)
     return seen
 
 

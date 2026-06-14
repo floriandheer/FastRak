@@ -31,7 +31,7 @@
     ]
   },
 
-  "_workstation_apps_comment": "Apps you may want installed on each PC. The Pipeline does not require any of them - missing entries are non-fatal. category groups them in the picker. install_method: 'winget' = auto-install via winget; 'manual' = print/open the download URL.",
+  "_workstation_apps_comment": "Apps you may want installed on each PC. The Pipeline does not require any of them - missing entries are non-fatal. category groups them in the picker (accepts a single string like 'Audio' or a list like ['Audio', 'Media'] for apps that belong in multiple sections; the first entry is the 'primary' one). install_method: 'winget' = auto-install via winget; 'manual' = print/open the download URL.",
   "workstation_apps": [
     {
       "name": "KeePassXC",
@@ -68,13 +68,58 @@
       "url": "https://www.diskanalyzer.com/"
     },
     {
-      "name": "WinDirStat",
+      "name": "LibreOffice",
       "category": "General",
       "install_method": "winget",
-      "winget_id": "WinDirStat.WinDirStat",
-      "exe": "WinDirStat",
-      "why": "Disk usage visualizer (treemap)",
-      "url": "https://windirstat.net/"
+      "winget_id": "TheDocumentFoundation.LibreOffice",
+      "exe": "soffice",
+      "why": "Office suite - Writer / Calc / Impress",
+      "url": "https://www.libreoffice.org/download/download/"
+    },
+    {
+      "name": "VLC",
+      "category": "General",
+      "install_method": "winget",
+      "winget_id": "VideoLAN.VLC",
+      "exe": "vlc",
+      "why": "Plays anything - audio + video",
+      "url": "https://www.videolan.org/vlc/"
+    },
+    {
+      "name": "PotPlayer",
+      "category": "General",
+      "install_method": "winget",
+      "winget_id": "Daum.PotPlayer",
+      "exe": "PotPlayerMini64",
+      "why": "Lightweight video player with frame-accurate scrubbing",
+      "url": "https://potplayer.daum.net/"
+    },
+    {
+      "name": "7-Zip",
+      "category": "General",
+      "install_method": "winget",
+      "winget_id": "7zip.7zip",
+      "exe": "7z",
+      "why": "Archive tool - zip / 7z / rar / tar",
+      "url": "https://www.7-zip.org/"
+    },
+    {
+      "name": "GitHub Desktop",
+      "category": "General",
+      "install_method": "winget",
+      "winget_id": "GitHub.GitHubDesktop",
+      "exe": "GitHubDesktop",
+      "why": "Git GUI - clone / commit / push without the CLI",
+      "url": "https://desktop.github.com/"
+    },
+    {
+      "name": "Firefox",
+      "category": "General",
+      "install_method": "winget",
+      "winget_id": "Mozilla.Firefox",
+      "exe": "firefox",
+      "why": "Backup browser - useful for second-account logins / testing",
+      "url": "https://www.mozilla.org/firefox/"
     },
     {
       "name": "Advanced Renamer",
@@ -129,12 +174,13 @@
       "url": "https://www.blackmagicdesign.com/products/fusion"
     },
     {
-      "name": "Affinity Suite",
+      "name": "Affinity",
       "category": "Visual",
       "install_method": "manual",
-      "exe": "Affinity Photo 2",
-      "why": "Photo / Designer / Publisher (license + account)",
-      "url": "https://affinity.serif.com/"
+      "exe": "Affinity",
+      "why": "Photo / Designer / Publisher (Canva account, free since 2025)",
+      "url": "https://www.affinity.studio/",
+      "detect_paths": ["%ProgramData%\\Affinity"]
     },
 
     {
@@ -172,12 +218,21 @@
 
     {
       "name": "MusicBee",
-      "category": "Audio",
+      "category": ["Audio", "Media"],
       "install_method": "winget",
       "winget_id": "MusicBee.MusicBee",
       "exe": "MusicBee",
       "why": "Music library manager",
       "url": "https://getmusicbee.com/"
+    },
+    {
+      "name": "foobar2000",
+      "category": ["Audio", "Media"],
+      "install_method": "winget",
+      "winget_id": "PeterPawlowski.foobar2000",
+      "exe": "foobar2000",
+      "why": "Lightweight audio player + tagger",
+      "url": "https://www.foobar2000.org/"
     },
     {
       "name": "Ableton Live",
@@ -225,6 +280,33 @@
     },
 
     {
+      "name": "Kodi",
+      "category": "Media",
+      "install_method": "winget",
+      "winget_id": "XBMCFoundation.Kodi",
+      "exe": "kodi",
+      "why": "Media center for movies / TV / music",
+      "url": "https://kodi.tv/download/"
+    },
+    {
+      "name": "tinyMediaManager",
+      "category": "Media",
+      "install_method": "manual",
+      "exe": "tinyMediaManager",
+      "why": "Scrape + organize movie / TV metadata for Kodi / Plex",
+      "url": "https://www.tinymediamanager.org/download/"
+    },
+    {
+      "name": "Calibre",
+      "category": "Media",
+      "install_method": "winget",
+      "winget_id": "calibre.calibre",
+      "exe": "calibre",
+      "why": "E-book library manager + converter",
+      "url": "https://calibre-ebook.com/download"
+    },
+
+    {
       "name": "Laragon",
       "category": "Web",
       "install_method": "manual",
@@ -267,7 +349,7 @@
       "name": "Photo rig",
       "description": "RAW developing + light editing",
       "categories": ["General", "Photo"],
-      "extra_apps": ["Affinity Suite"]
+      "extra_apps": ["Affinity"]
     },
     {
       "name": "Web rig",
@@ -284,7 +366,7 @@
     {
       "name": "Everything",
       "description": "Kitchen-sink workstation - all categories",
-      "categories": ["General", "Visual", "RealTime", "Audio", "Physical", "Photo", "Web"],
+      "categories": ["General", "Visual", "RealTime", "Audio", "Physical", "Photo", "Media", "Web"],
       "extra_apps": []
     }
   ],

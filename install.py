@@ -535,9 +535,9 @@ def step_apps(opts) -> bool:
     # categories (Visual, Audio, RealTime, ...) always go through the
     # picker so the user can pick what this machine is actually for.
     general_missing = [a for a in missing
-                       if a.category == wa.DEFAULT_CATEGORY]
+                       if wa.DEFAULT_CATEGORY in a.categories]
     other_missing = [a for a in missing
-                     if a.category != wa.DEFAULT_CATEGORY]
+                     if wa.DEFAULT_CATEGORY not in a.categories]
 
     if general_missing:
         print()
@@ -555,8 +555,11 @@ def step_apps(opts) -> bool:
         print()
         print(f"  {WARN} Role-specific categories (Visual, Audio, RealTime, ...) "
               f"need a manual pick.")
-        print(f"  {dim('Re-run interactively to install them: '
-                       'python install.py --step apps')}")
+        if getattr(opts, "interactive_unattended", False):
+            print(f"  {dim('You will be asked at the end to pick a profile or individual apps.')}")
+        else:
+            print(f"  {dim('Re-run interactively to install them: '
+                           'python install.py --step apps')}")
         return True
 
     target = _pick_apps(wa, all_apps, other_missing, opts)
@@ -646,8 +649,13 @@ def _pick_by_category(wa, missing):
             if 0 <= i < len(cats):
                 picks.append(cats[i])
     out = []
+    seen: set[str] = set()
     for c in picks:
-        out.extend(by_cat.get(c, []))
+        for a in by_cat.get(c, []):
+            if a.name in seen:
+                continue  # multi-category app already picked under another cat
+            out.append(a)
+            seen.add(a.name)
     return out
 
 
@@ -805,6 +813,58 @@ def _offer_config_overwrite(opts) -> bool:
     print(f"  {CHECK} Wrote bundled example -> {cfg_path.name}")
     print(f"  {WARN} Open {bold(cfg_path.name)} and confirm the drive letters / paths match this PC.")
     return True
+
+
+def _offer_post_install_picker(opts) -> None:
+    """End-of-run prompt for role-specific apps after an interactive
+    unattended ('A' at start) install.
+
+    The point: 'A' is meant to be one-keystroke convenient, so we don't
+    pester the user mid-run about Visual/Audio/RealTime/... picks.
+    Instead, after the final report we re-surface what's missing and let
+    them pick a profile / category / individual apps — or just walk away.
+    Skipped silently when --yes was passed on the CLI (CI use case).
+    """
+    try:
+        wa = _import_workstation_apps()
+    except Exception:
+        return
+
+    wa.invalidate_program_cache()
+    all_apps = wa.load_apps()
+    if not all_apps:
+        return
+
+    skip_set = wa.load_skip_list()
+    missing = [a for a in all_apps
+               if a.name not in skip_set
+               and wa.DEFAULT_CATEGORY not in a.categories
+               and not wa.is_installed(a)]
+    if not missing:
+        return
+
+    print()
+    print(bold("  One more thing - role-specific apps"))
+    print(f"  {dim(f'{len(missing)} app(s) still missing across '
+                   f'Visual / RealTime / Audio / Physical / Photo / Media / Web.')}")
+    print(f"  {dim('Pick a profile (VJ rig / Audio rig / ...), a category, individual apps,')}")
+    print(f"  {dim('or press S / Enter to skip - install.py --step apps brings this back.')}")
+
+    # The picker uses input() directly and reads opts.yes for the
+    # downstream install confirmations — temporarily drop back to
+    # interactive so prompts actually fire.
+    saved_yes = opts.yes
+    opts.yes = False
+    try:
+        target = _pick_apps(wa, all_apps, missing, opts)
+        if not target:
+            print(f"  {dim('Skipped.')}")
+            return
+        _install_set(wa, target, opts,
+                     label=f"{len(target)} app(s)",
+                     force_yes=True)
+    finally:
+        opts.yes = saved_yes
 
 
 def _offer_skip(wa, app, opts):
@@ -1106,6 +1166,11 @@ def main():
     parser.add_argument("--skip-shortcut", action="store_true",
                         help="Skip Windows shortcut creation")
     opts = parser.parse_args()
+    # True only when the user picked "A" at the interactive start
+    # prompt (as opposed to passing --yes on the CLI). Drives the
+    # end-of-run picker for role-specific apps — CI users who pass
+    # --yes never see that prompt.
+    opts.interactive_unattended = False
 
     welcome()
 
@@ -1117,7 +1182,9 @@ def main():
             return
         if choice == "all":
             opts.yes = True
-            print(f"  {dim('Unattended mode enabled - skipping per-step prompts.')}")
+            opts.interactive_unattended = True
+            print(f"  {dim('Unattended mode - General apps install automatically;')}")
+            print(f"  {dim('you can pick role-specific apps at the end.')}")
             print()
 
     results: dict[str, bool] = {}
@@ -1154,6 +1221,13 @@ def main():
 
     if run_all:
         final_report(results, opts)
+        # Only the interactive 'A' path gets the post-run picker — CI
+        # users who passed --yes deliberately want zero prompts.
+        if (getattr(opts, "interactive_unattended", False)
+                and not opts.dry_run
+                and not opts.skip_apps
+                and results.get("Workstation apps", False)):
+            _offer_post_install_picker(opts)
     else:
         print()
         print(dim(f"  Step '{run}' done."))

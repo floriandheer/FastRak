@@ -70,6 +70,28 @@ def test_load_apps_defaults_category_when_missing(isolated_paths):
     })
     apps = wa.load_apps()
     assert apps[0].category == "General"
+    assert apps[0].categories == ["General"]
+
+
+def test_load_apps_accepts_list_category(isolated_paths):
+    """Polymorphic category field: an app can live in multiple
+    categories at once. Primary (a.category) is the first entry."""
+    _write(isolated_paths["cfg"], {
+        "workstation_apps": [
+            {"name": "MusicBee", "category": ["Audio", "Media"], "exe": "mb"},
+        ],
+    })
+    apps = wa.load_apps()
+    assert apps[0].categories == ["Audio", "Media"]
+    assert apps[0].category == "Audio"
+
+
+def test_load_apps_empty_list_category_falls_back_to_default(isolated_paths):
+    _write(isolated_paths["cfg"], {
+        "workstation_apps": [{"name": "X", "category": [], "exe": "x"}],
+    })
+    apps = wa.load_apps()
+    assert apps[0].categories == ["General"]
 
 
 def test_load_apps_falls_back_to_example(isolated_paths):
@@ -111,6 +133,36 @@ def test_apps_by_category_preserves_insertion_order(isolated_paths):
     # in document order.
     assert list(grouped.keys()) == ["Visual", "Audio"]
     assert [a.name for a in grouped["Visual"]] == ["V1", "V2"]
+
+
+def test_apps_by_category_lists_multicat_app_under_each(isolated_paths):
+    """A multi-category app appears once per category in the grouped
+    dict — the picker uses this to show it under each section."""
+    _write(isolated_paths["cfg"], {
+        "workstation_apps": [
+            {"name": "MusicBee", "category": ["Audio", "Media"], "exe": "mb"},
+            {"name": "Kodi",     "category": "Media",            "exe": "kodi"},
+        ],
+    })
+    grouped = wa.apps_by_category()
+    assert [a.name for a in grouped["Audio"]] == ["MusicBee"]
+    assert [a.name for a in grouped["Media"]] == ["MusicBee", "Kodi"]
+    # categories_present collapses dupes
+    assert wa.categories_present() == ["Audio", "Media"]
+
+
+def test_status_counts_treats_multicat_app_as_single(isolated_paths, monkeypatch):
+    """Even though MusicBee is in two categories, status_counts still
+    counts it once — otherwise the summary line over-reports."""
+    _write(isolated_paths["cfg"], {
+        "workstation_apps": [
+            {"name": "MusicBee", "category": ["Audio", "Media"], "exe": "mb"},
+        ],
+    })
+    monkeypatch.setattr(wa, "is_installed", lambda a: True)
+    counts = wa.status_counts()
+    assert counts.total == 1
+    assert counts.installed == 1
 
 
 # ============================================================
@@ -170,6 +222,22 @@ def test_expand_profile_dedupes(isolated_paths):
     })
     expanded = wa.expand_profile(wa.load_profiles()[0])
     assert [a.name for a in expanded] == ["A1"]
+
+
+def test_expand_profile_dedupes_multicat_app(isolated_paths):
+    """When a profile pulls two categories that share a multi-category
+    app, that app is still only listed once in the expansion."""
+    _write(isolated_paths["cfg"], {
+        "workstation_apps": [
+            {"name": "MusicBee", "category": ["Audio", "Media"], "exe": "mb"},
+            {"name": "Kodi",     "category": "Media",            "exe": "kodi"},
+        ],
+        "workstation_profiles": [
+            {"name": "AV", "categories": ["Audio", "Media"]},
+        ],
+    })
+    expanded = wa.expand_profile(wa.load_profiles()[0])
+    assert [a.name for a in expanded] == ["MusicBee", "Kodi"]
 
 
 def test_expand_profile_extras_case_insensitive(isolated_paths):
