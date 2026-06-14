@@ -128,6 +128,70 @@ def confirm(prompt: str, auto_yes: bool, default_yes: bool = True) -> bool:
 
 
 # ============================================================
+# Elevation - one UAC prompt at the start, then silent
+# ============================================================
+#
+# Without elevation, every winget install pops its own UAC prompt
+# ("do you want to allow this app to make changes to your device?").
+# If install.py runs elevated, subprocess inherits the elevated token
+# and winget skips those prompts entirely. We offer this once at the
+# start in interactive mode — never on CLI --yes (CI would block on
+# the UAC dialog forever) and never on non-Windows.
+
+def _is_admin() -> bool:
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes  # local — Windows-only
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
+def _relaunch_as_admin() -> bool:
+    """ShellExecute with the 'runas' verb fires UAC. Returns True if
+    the elevated process actually started (caller should sys.exit), or
+    False if the user clicked 'No' on the UAC prompt."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes  # local — Windows-only
+        script = str(SCRIPT_DIR / "install.py")
+        params = " ".join(f'"{a}"' for a in sys.argv[1:])
+        ret = ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", sys.executable,
+            f'"{script}" {params}', str(SCRIPT_DIR), 1,
+        )
+        # ShellExecuteW returns the instance handle on success (>32);
+        # 5 = SE_ERR_ACCESSDENIED, which is what we get when the user
+        # clicks "No" on UAC.
+        return ret > 32
+    except Exception:
+        return False
+
+
+def _offer_elevation(opts) -> None:
+    """Interactive-only: ask the user if they want to relaunch elevated
+    so per-app UAC prompts go away. If they accept and elevation
+    succeeds, the current process exits and the elevated one takes
+    over."""
+    if sys.platform != "win32" or _is_admin():
+        return
+    print()
+    print(f"  {dim('Heads up: every winget install will normally pop a UAC prompt')}")
+    print(f"  {dim('asking if it can make changes to your PC. Relaunching as admin')}")
+    print(f"  {dim('lets you click once now and stay silent for the rest of the run.')}")
+    if not confirm("Relaunch as administrator?",
+                   auto_yes=False, default_yes=True):
+        return
+    if _relaunch_as_admin():
+        print(f"  {dim('Elevated process launching - this window will close.')}")
+        sys.exit(0)
+    print(f"  {WARN} Elevation declined - continuing without admin "
+          f"(you'll see UAC for each install).")
+
+
+# ============================================================
 # Step 1: Prerequisites
 # ============================================================
 
@@ -586,32 +650,67 @@ def _print_apps_status(wa, apps, skip_set):
                 status(a.name, False, f"missing ({method}) - {a.why}", warn=True)
 
 
+_PICKER_BACK = object()  # sub-picker sentinel → return to top menu
+
+
 def _pick_apps(wa, all_apps, missing, opts):
     """Return the list of App objects the user wants to install, or None
-    to skip the step entirely. Empty list = nothing selected."""
-    print()
-    print(f"  {ARROW} How do you want to install the missing apps?")
-    print(f"    {bold('[E]')} Everything missing                  ({len(missing)} app(s))")
-    print(f"    {bold('[C]')} By category")
-    print(f"    {bold('[I]')} Individual pick")
-    print(f"    {bold('[P]')} Profile (VJ rig / Audio rig / ...)")
-    print(f"    {bold('[S]')} Skip this step")
-    print()
-    choice = input("  > ").strip().lower()
+    to skip the step entirely.
 
-    if choice in ("", "s", "skip", "q"):
-        return None
-    if choice in ("e", "all", "everything"):
-        return missing
-    if choice in ("c", "category", "categories"):
-        return _pick_by_category(wa, missing)
-    if choice in ("i", "individual", "pick"):
-        return _pick_individual(missing)
-    if choice in ("p", "profile"):
-        return _pick_by_profile(wa, all_apps, missing)
+    The picker loops: sub-pickers can return ``_PICKER_BACK`` (or the
+    user can answer N at the confirm prompt) to bounce back to the
+    top-level menu without losing context. Only the top-level [S]kip
+    leaves the picker.
+    """
+    while True:
+        print()
+        print(f"  {ARROW} How do you want to install the missing apps?")
+        print(f"    {bold('[E]')} Everything missing                  ({len(missing)} app(s))")
+        print(f"    {bold('[C]')} By category")
+        print(f"    {bold('[I]')} Individual pick")
+        print(f"    {bold('[P]')} Profile (VJ rig / Audio rig / ...)")
+        print(f"    {bold('[S]')} Skip this step")
+        print()
+        choice = input("  > ").strip().lower()
 
-    print(f"  {WARN} Unknown choice {choice!r}, skipping.")
-    return None
+        if choice in ("", "s", "skip", "q"):
+            return None
+        if choice in ("e", "all", "everything"):
+            target = missing
+        elif choice in ("c", "category", "categories"):
+            target = _pick_by_category(wa, missing)
+        elif choice in ("i", "individual", "pick"):
+            target = _pick_individual(missing)
+        elif choice in ("p", "profile"):
+            target = _pick_by_profile(wa, all_apps, missing)
+        else:
+            print(f"  {WARN} Unknown choice {choice!r}.")
+            continue
+
+        if target is _PICKER_BACK:
+            continue
+        if not target:
+            print(f"  {dim('Nothing selected. Back to the menu.')}")
+            continue
+        if _confirm_picker_selection(target):
+            return target
+        # User said no at the confirm — loop back to the top menu so
+        # they can pick a different approach (or skip entirely).
+
+
+def _confirm_picker_selection(apps) -> bool:
+    """Show what's about to install + ask for confirmation. N goes back
+    to the top picker; Y commits and starts the install."""
+    print()
+    print(f"  {ARROW} You picked {bold(str(len(apps)))} app(s):")
+    for a in apps:
+        method = "winget" if a.install_method == "winget" else "manual"
+        print(f"    {BULLET}{a.name:<22} {dim(f'[{method}] {a.why}')}")
+    print()
+    answer = input(
+        "  Install these? [Y]es / [N]o (back to menu): "
+    ).strip().lower()
+    return answer in ("", "y", "yes")
 
 
 def _pick_by_category(wa, missing):
@@ -619,15 +718,15 @@ def _pick_by_category(wa, missing):
     cats = list(by_cat.keys())
     if not cats:
         print(f"  {dim('No missing apps grouped by category.')}")
-        return []
+        return _PICKER_BACK
     print()
     print(f"  {ARROW} Categories with missing apps:")
     for idx, c in enumerate(cats, 1):
         print(f"    {cyn(str(idx))}. {c:<14} {dim(f'({len(by_cat[c])} missing)')}")
-    print(f"    {dim('Enter comma-separated numbers (e.g. 1,3) or A for all:')}")
+    print(f"    {dim('Comma-separated numbers (e.g. 1,3), A for all, B / Enter to go back:')}")
     raw = input("  > ").strip().lower()
-    if not raw:
-        return []
+    if not raw or raw in ("b", "back"):
+        return _PICKER_BACK
     if raw in ("a", "all"):
         picks = cats
     else:
@@ -656,10 +755,10 @@ def _pick_individual(missing):
     for idx, a in enumerate(missing, 1):
         method = "winget" if a.install_method == "winget" else "manual"
         print(f"    {cyn(str(idx))}. {a.name:<22} {dim(f'[{a.category}/{method}] {a.why}')}")
-    print(f"    {dim('Enter comma-separated numbers (e.g. 1,3,5) or A for all:')}")
+    print(f"    {dim('Comma-separated numbers (e.g. 1,3,5), A for all, B / Enter to go back:')}")
     raw = input("  > ").strip().lower()
-    if not raw:
-        return []
+    if not raw or raw in ("b", "back"):
+        return _PICKER_BACK
     if raw in ("a", "all"):
         return missing
     out = []
@@ -682,13 +781,15 @@ def _pick_by_profile(wa, all_apps, missing):
     print(f"  {ARROW} Profiles:")
     for idx, p in enumerate(profiles, 1):
         print(f"    {cyn(str(idx))}. {p.name:<14} {dim(p.description)}")
-    print(f"    {dim('Pick one number:')}")
-    raw = input("  > ").strip()
+    print(f"    {dim('One number, or B / Enter to go back:')}")
+    raw = input("  > ").strip().lower()
+    if not raw or raw in ("b", "back"):
+        return _PICKER_BACK
     if not raw.isdigit():
-        return []
+        return _PICKER_BACK
     i = int(raw) - 1
     if not (0 <= i < len(profiles)):
-        return []
+        return _PICKER_BACK
     profile_apps = wa.expand_profile(profiles[i], all_apps)
     # Only install the ones from the profile that are actually missing
     missing_names = {a.name for a in missing}
@@ -1173,6 +1274,13 @@ def main():
     opts.interactive_unattended = False
 
     welcome()
+
+    # Offer one-shot admin elevation before the start prompt so the
+    # winget installs in steps 3 + 5 don't trigger UAC per package.
+    # Interactive-only (--yes from CLI deliberately stays unelevated so
+    # CI doesn't hang on a UAC dialog).
+    if opts.step == "all" and not opts.yes:
+        _offer_elevation(opts)
 
     if opts.step == "all" and not opts.yes:
         choice = _prompt_start_choice()
