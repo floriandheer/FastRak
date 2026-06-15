@@ -289,6 +289,11 @@ def step_drives(cfg: dict, dry_run: bool, auto_yes: bool) -> bool:
         if not _ok:
             ok = False
 
+        # --- Explorer display label (cosmetic — matches Visual Subst) ---
+        label = m.get("label", "")
+        if label and not _ensure_drive_label(drive, label, dry_run):
+            ok = False
+
     # Verify accessibility
     if not dry_run:
         print()
@@ -300,6 +305,49 @@ def step_drives(cfg: dict, dry_run: bool, auto_yes: bool) -> bool:
                 ok = False
 
     return ok
+
+
+def _ensure_drive_label(drive: str, label: str, dry_run: bool) -> bool:
+    """
+    Set the Explorer display name for a drive (HKCU DriveIcons). Cosmetic only —
+    doesn't touch the underlying volume label, and is the same key Visual Subst
+    writes, so labels stay consistent between tools.
+    """
+    try:
+        import winreg
+    except ImportError:
+        return False
+
+    letter = drive.rstrip(":").upper()
+    key_path = (rf"Software\Microsoft\Windows\CurrentVersion\Explorer"
+                rf"\DriveIcons\{letter}\DefaultLabel")
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0,
+                            winreg.KEY_READ) as key:
+            existing, _ = winreg.QueryValueEx(key, "")
+            if existing == label:
+                status_line(f"{drive} label", True, f"already '{label}'")
+                return True
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+
+    if dry_run:
+        print(f"    [DRY RUN] Would set Explorer label '{drive}' = {label}")
+        return True
+
+    try:
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as key:
+            winreg.SetValueEx(key, "", 0, winreg.REG_SZ, label)
+        status_line(f"{drive} label", True, f"set to '{label}'")
+        logger.info(f"Drive label set: {drive} = {label}")
+        return True
+    except Exception as e:
+        status_line(f"{drive} label", False, str(e))
+        logger.error(f"Failed to set drive label {drive}: {e}")
+        return False
 
 
 def _ensure_registry_autorun(name: str, value: str, dry_run: bool) -> bool:
@@ -351,11 +399,18 @@ def _ensure_registry_autorun(name: str, value: str, dry_run: bool) -> bool:
 # Step 4: Synology Drive Check
 # ============================================================
 
-def step_synology(cfg: dict) -> bool:
-    """Check Synology Drive installation and sync folder status."""
+def step_synology(cfg: dict, auto_yes: bool = False) -> bool:
+    """
+    Check Synology Drive installation and sync folder status. When sync tasks
+    look missing, print a copy-paste card per task (server / username / local /
+    remote / mode / on-demand) and offer to launch the Drive Client GUI.
+    Synology Drive has no CLI for creating sync tasks, so this is the closest
+    we can get to "config-driven" without poking the app's SQLite DB.
+    """
     banner("Step 4: Synology Drive Check")
 
     sd_cfg = cfg.get("synology_drive", {})
+    conn = sd_cfg.get("connection", {}) or {}
     sync_folders = sd_cfg.get("sync_folders", [])
     ok = True
 
@@ -368,8 +423,13 @@ def step_synology(cfg: dict) -> bool:
         os.path.join(os.path.expanduser("~"), "AppData", "Local",
                      "SynologyDrive"),
     ]
-
-    installed = any(os.path.isdir(p) for p in install_paths)
+    drive_exe = None
+    for p in install_paths:
+        candidate = os.path.join(p, "SynologyDrive.exe")
+        if os.path.isfile(candidate):
+            drive_exe = candidate
+            break
+    installed = drive_exe is not None or any(os.path.isdir(p) for p in install_paths)
     status_line("Synology Drive installed", installed)
 
     # Check if running
@@ -387,37 +447,72 @@ def step_synology(cfg: dict) -> bool:
     if not installed:
         print("\n  ACTION REQUIRED: Install Synology Drive Client")
         print("    https://www.synology.com/en-global/dsm/feature/drive")
-        ok = False
+        return False
 
     # Check sync folders
     print()
-    missing_tasks = []
+    missing = []
     for sf in sync_folders:
         name = sf["name"]
-        expected = sf["expected_path"]
-        exists = os.path.isdir(expected)
+        local = sf.get("local_path") or sf.get("expected_path", "")
+        exists = os.path.isdir(local)
         populated = False
         if exists:
             try:
-                populated = len(os.listdir(expected)) > 0
+                populated = len(os.listdir(local)) > 0
             except OSError:
                 pass
 
         if exists and populated:
-            status_line(f"Sync: {name}", True, f"{expected} (populated)")
+            status_line(f"Sync: {name}", True, f"{local} (populated)")
         elif exists:
-            status_line(f"Sync: {name}", False, f"{expected} (empty - sync task may be missing)")
-            missing_tasks.append(name)
+            status_line(f"Sync: {name}", False, f"{local} (empty - sync task may be missing)")
+            missing.append(sf)
         else:
-            status_line(f"Sync: {name}", False, f"{expected} (not found)")
-            missing_tasks.append(name)
+            status_line(f"Sync: {name}", False, f"{local} (not found)")
+            missing.append(sf)
 
-    if missing_tasks:
-        print("\n  ACTION REQUIRED: Create Synology Drive sync tasks for:")
-        for t in missing_tasks:
-            print(f"    - {t}")
-        print("  (Synology Drive has no CLI/API - must be configured manually)")
-        ok = False
+    if not missing:
+        return ok
+
+    ok = False
+    host = conn.get("host") or "<your NAS host or IP>"
+    port = conn.get("port") or 6690
+    user = conn.get("username") or "<your username>"
+
+    print("\n  ACTION REQUIRED: Create the following Synology Drive sync tasks.")
+    print("  (No CLI exists for this — copy each block into the Drive Client GUI.)")
+    print(f"  Password is NOT stored here; enter it once in the GUI and it goes")
+    print(f"  into Windows Credential Manager.\n")
+
+    mode_label = {
+        "two_way":       "Bidirectional (two-way)",
+        "upload_only":   "Upload only (local -> NAS)",
+        "download_only": "Download only (NAS -> local)",
+    }
+
+    for sf in missing:
+        local  = sf.get("local_path") or sf.get("expected_path", "")
+        remote = sf.get("remote_path", "<remote path on NAS>")
+        mode   = mode_label.get(sf.get("sync_mode", "two_way"), sf.get("sync_mode", "two_way"))
+        ondem  = "Yes (Files On-Demand)" if sf.get("on_demand") else "No (full sync)"
+
+        print(f"  ---- {sf['name']} " + "-" * max(0, 60 - len(sf["name"])))
+        print(f"    Server:     {host}:{port}")
+        print(f"    Username:   {user}")
+        print(f"    Local:      {local}")
+        print(f"    Remote:     {remote}")
+        print(f"    Mode:       {mode}")
+        print(f"    On-demand:  {ondem}")
+        print()
+
+    if drive_exe and confirm("  Open Synology Drive Client now?", auto_yes):
+        try:
+            subprocess.Popen([drive_exe], close_fds=True)
+            print("  Drive Client launched.")
+        except Exception as e:
+            print(f"  Could not launch Drive Client: {e}")
+            print(f"    Run manually: {drive_exe}")
 
     return ok
 
@@ -575,7 +670,7 @@ def main():
 
     # Step 4: Synology
     if run_all or args.step == "synology":
-        results["Synology Drive"] = step_synology(cfg)
+        results["Synology Drive"] = step_synology(cfg, args.yes)
 
     # Step 5: Config
     if run_all or args.step == "config":

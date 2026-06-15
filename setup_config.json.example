@@ -1,18 +1,37 @@
 {
   "_comment": "New PC Setup Configuration - Copy to setup_config.json and edit paths to match your system",
 
+  "_drive_mappings_comment": "Virtual drives created via 'subst'. 'label' is the Explorer display name - cosmetic only, written to HKCU\\...\\Explorer\\DriveIcons\\<letter>\\DefaultLabel (same key Visual Subst uses, so they stay in sync). 'registry_name' is optional and defaults to SubstDrive_<letter> for the HKCU\\...\\Run autorun entry.",
   "drive_mappings": [
     {
       "drive_letter": "I:",
       "target_path": "D:\\_work\\Active",
-      "description": "Work drive - active projects",
-      "registry_name": "SubstDrive_I"
+      "label": "Active",
+      "description": "Active projects (Audio, Photo, Visual, VJ, Web)"
+    },
+    {
+      "drive_letter": "L:",
+      "target_path": "D:\\_work\\Library",
+      "label": "Library",
+      "description": "Library - important documents from the work directory"
+    },
+    {
+      "drive_letter": "M:",
+      "target_path": "D:\\music",
+      "label": "Music",
+      "description": "Music library"
     },
     {
       "drive_letter": "P:",
       "target_path": "D:\\_work\\_PIPELINE",
-      "description": "Pipeline drive - scripts, software, launchers",
-      "registry_name": "SubstDrive_P"
+      "label": "Pipeline",
+      "description": "Pipeline - scripts and files for software (settings, add-ons)"
+    },
+    {
+      "drive_letter": "F:",
+      "target_path": "D:\\personal",
+      "label": "Personal",
+      "description": "Personal files"
     }
   ],
 
@@ -20,14 +39,43 @@
     "bases": ["D:\\_work\\Active", "D:\\_work\\Archive"],
     "categories": ["Visual", "RealTime", "Audio", "Physical", "Photo", "Web"],
     "subcategories": {},
-    "extra_dirs": ["D:\\_work\\_PIPELINE"]
+    "extra_dirs": [
+      "D:\\_work\\_PIPELINE",
+      "D:\\_work\\Library",
+      "D:\\personal",
+      "D:\\music"
+    ]
   },
 
+  "_synology_drive_comment": "Synology Drive Client has no CLI / API for creating sync tasks, so setup_environment.py prints a per-task copy-paste card and opens the Drive Client GUI. NO credentials live in this file: 'host' / 'username' are placeholders shown in the card (leave blank to print '<your NAS host>' / '<your username>'); the password is entered once into the GUI, which stores it in Windows Credential Manager. sync_mode: 'two_way' | 'upload_only' | 'download_only'. on_demand: true streams files on access (Files On-Demand) instead of full local sync.",
   "synology_drive": {
+    "connection": {
+      "host": "",
+      "port": 6690,
+      "username": ""
+    },
     "sync_folders": [
-      { "name": "Active Projects", "expected_path": "D:\\_work\\Active" },
-      { "name": "Archive",         "expected_path": "D:\\_work\\Archive" },
-      { "name": "Pipeline",        "expected_path": "D:\\_work\\_PIPELINE" }
+      {
+        "name": "Work",
+        "local_path": "D:\\_work",
+        "remote_path": "/work",
+        "sync_mode": "two_way",
+        "on_demand": false
+      },
+      {
+        "name": "Personal",
+        "local_path": "D:\\personal",
+        "remote_path": "/personal",
+        "sync_mode": "two_way",
+        "on_demand": false
+      },
+      {
+        "name": "Music",
+        "local_path": "D:\\music",
+        "remote_path": "/music",
+        "sync_mode": "two_way",
+        "on_demand": false
+      }
     ]
   },
 
