@@ -596,11 +596,9 @@ def final_report(results: dict):
 
     print("\n  Manual steps remaining:")
     print("    1. Create Synology Drive sync tasks (if not done)")
-    print("    2. Use Visual Subst to set drive labels (I: = Work, P: = Pipeline)")
-    print("       https://www.ntwind.com/software/visual-subst.html")
-    print("    3. Reboot to verify drive persistence via registry")
-    print("    4. Launch Pipeline Manager and verify paths in Settings (Ctrl+,)")
-    print("    5. In Pipeline Manager > Settings, run 'Install Dependencies'")
+    print("    2. Reboot to verify drive persistence via registry")
+    print("    3. Launch Pipeline Manager and verify paths in Settings (Ctrl+,)")
+    print("    4. In Pipeline Manager > Settings, run 'Install Dependencies'")
     print("       and 'Create Shortcut' if not already done.")
 
 

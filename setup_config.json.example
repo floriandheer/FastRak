@@ -99,14 +99,6 @@
       "url": "https://www.synology.com/en-global/dsm/feature/drive"
     },
     {
-      "name": "Visual Subst",
-      "category": "General",
-      "install_method": "manual",
-      "exe": "visualsubst",
-      "why": "GUI for the subst drive mappings install.py creates",
-      "url": "https://www.ntwind.com/software/visual-subst.html"
-    },
-    {
       "name": "WizTree",
       "category": "General",
       "install_method": "winget",
