@@ -50,8 +50,30 @@ logger = get_logger(MODULE_NAME)
 # Predicate registry for the `applies_when` script field (see
 # pipeline_categories.py). Each predicate receives (project_dict, folder_path)
 # and returns True iff the corresponding action button should be shown.
+def _has_vitepress_dev_script(folder: str) -> bool:
+    """True iff <folder>/02_Development/package.json declares a docs:dev
+    script and the project isn't a WordPress install. Used to surface
+    Dev Server / Build buttons under VitePress-style projects (wiki, hobi)."""
+    import json as _json
+    if not folder or is_wordpress_project(folder):
+        return False
+    for sub in ("02_Development", "02_development"):
+        pkg = Path(folder) / sub / "package.json"
+        if not pkg.is_file():
+            continue
+        try:
+            with open(pkg, "r", encoding="utf-8") as f:
+                data = _json.load(f)
+            if "docs:dev" in (data.get("scripts") or {}):
+                return True
+        except Exception:
+            continue
+    return False
+
+
 PROJECT_ACTION_PREDICATES = {
     "wordpress": lambda project, folder: is_wordpress_project(folder),
+    "vitepress": lambda project, folder: _has_vitepress_dev_script(folder),
     "physical_product": lambda project, folder: (
         project.get("metadata", {}).get("physical_subtype", "") == "Product"
         or bool(project.get("metadata", {}).get("is_product"))
@@ -3372,7 +3394,8 @@ class ProjectTrackerApp:
 
         import subprocess
         folder = self._resolve_project_folder(self.selected_project)
-        args = [sys.executable, script_path, folder]
+        extra = script_data.get("script_args") or []
+        args = [sys.executable, script_path, folder, *extra]
         try:
             subprocess.Popen(args)
             logger.info(f"Launched {script_data.get('name')} for {folder}")

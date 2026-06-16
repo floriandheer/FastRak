@@ -426,6 +426,25 @@ CATEGORIES: Dict[str, Dict[str, Any]] = {
                 "context": "project",
                 "applies_when": "wordpress",
             },
+            {
+                "key": "vitepress_dev",
+                "name": "Dev Server",
+                "module": "PipelineScript_Web_DevServer",
+                "description": "Run `npm run docs:dev` in 02_Development and open the site in the browser",
+                "icon": "▶️",
+                "context": "project",
+                "applies_when": "vitepress",
+            },
+            {
+                "key": "vitepress_build",
+                "name": "Build",
+                "module": "PipelineScript_Web_DevServer",
+                "description": "Run `npm run docs:build` in 02_Development",
+                "icon": "📦",
+                "context": "project",
+                "applies_when": "vitepress",
+                "script_args": ["--build"],
+            },
         ],
         "subtypes": {
             "Web": {

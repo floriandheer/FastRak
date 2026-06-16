@@ -68,6 +68,8 @@ def _script_entry(spec: Dict[str, Any]) -> Dict[str, Any]:
         out["project_types"] = list(spec["project_types"])
     if "applies_when" in spec:
         out["applies_when"] = spec["applies_when"]
+    if "script_args" in spec:
+        out["script_args"] = list(spec["script_args"])
     return out
 
 
