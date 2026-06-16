@@ -10,12 +10,6 @@
       "description": "Work - active projects (Audio, Photo, Visual, VJ, Web)"
     },
     {
-      "drive_letter": "L:",
-      "target_path": "D:\\_work\\Library",
-      "label": "Library",
-      "description": "Library - important documents from the work directory"
-    },
-    {
       "drive_letter": "M:",
       "target_path": "D:\\music",
       "label": "Music",
@@ -41,7 +35,6 @@
     "subcategories": {},
     "extra_dirs": [
       "D:\\_work\\_PIPELINE",
-      "D:\\_work\\Library",
       "D:\\personal",
       "D:\\music"
     ]
