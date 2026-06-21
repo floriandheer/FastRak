@@ -74,3 +74,26 @@ def install_keep_on_bottom(root: tk.Tk) -> Optional[callable]:
     # from a minimized state.
     root.bind("<Map>", to_back, add="+")
     return to_back
+
+
+def uninstall_keep_on_bottom(root: tk.Tk) -> None:
+    """Remove the keep-on-bottom bindings and restore normal z-order."""
+    if sys.platform != "win32":
+        return
+
+    try:
+        root.unbind("<FocusIn>")
+        root.unbind("<Map>")
+    except Exception:
+        pass
+
+    # Lift back to normal z-order
+    try:
+        import ctypes
+        _HWND_NOTOPMOST = -2
+        user32 = ctypes.windll.user32
+        hwnd = user32.GetParent(root.winfo_id())
+        if hwnd:
+            user32.SetWindowPos(hwnd, _HWND_NOTOPMOST, 0, 0, 0, 0, _KEEP_FLAGS)
+    except Exception:
+        logger.exception("SetWindowPos(HWND_NOTOPMOST) failed")

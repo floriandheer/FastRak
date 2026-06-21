@@ -1579,11 +1579,20 @@ class ProfessionalPipelineGUI(KeyboardNavigatorMixin):
 
     def open_settings(self):
         """Open the settings dialog."""
+        prev_on_bottom = self.settings.get_always_on_bottom()
         dialog = SettingsDialog(self.root, self.settings)
         if dialog.show():
             self.update_status("Settings saved", "success")
             # Reload path config to reflect changes
             self.settings = get_rak_settings()
+            # Apply always-on-bottom change without restart
+            new_on_bottom = self.settings.get_always_on_bottom()
+            if new_on_bottom != prev_on_bottom:
+                from shared_window_zorder import install_keep_on_bottom, uninstall_keep_on_bottom
+                if new_on_bottom:
+                    install_keep_on_bottom(self.root)
+                else:
+                    uninstall_keep_on_bottom(self.root)
 
     def open_help(self):
         """Open the keyboard shortcuts documentation."""

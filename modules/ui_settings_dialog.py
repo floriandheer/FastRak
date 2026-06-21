@@ -145,6 +145,21 @@ class SettingsDialog:
         )
         cb.pack(anchor="w")
 
+        self.always_on_bottom_var = tk.BooleanVar(
+            value=self.settings.get_always_on_bottom()
+        )
+        tk.Checkbutton(
+            section,
+            text="Keep window behind all others (stick to background)",
+            variable=self.always_on_bottom_var,
+            font=font.Font(family="Segoe UI", size=10),
+            fg=COLORS["text_primary"],
+            bg=COLORS["bg_card"],
+            selectcolor=COLORS["bg_secondary"],
+            activebackground=COLORS["bg_card"],
+            activeforeground=COLORS["text_primary"]
+        ).pack(anchor="w")
+
         # Setup & Maintenance section
         setup_section = tk.LabelFrame(
             content_frame,
@@ -444,8 +459,9 @@ class SettingsDialog:
             lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
 
-        canvas.create_window((0, 0), window=content_frame, anchor="nw")
+        win_id_paths = canvas.create_window((0, 0), window=content_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.bind("<Configure>", lambda e, wid=win_id_paths: canvas.itemconfig(wid, width=e.width))
 
         # Enable mousewheel scrolling when mouse is over the canvas
         def _on_mousewheel(event):
@@ -901,8 +917,9 @@ class SettingsDialog:
             lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
 
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        win_id_sw = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.bind("<Configure>", lambda e, wid=win_id_sw: canvas.itemconfig(wid, width=e.width))
 
         # Enable mousewheel scrolling when mouse is over the canvas
         def _on_mousewheel(event):
@@ -1040,19 +1057,6 @@ class SettingsDialog:
             relief=tk.FLAT, cursor="hand2", padx=15, pady=6,
         ).pack(side=tk.LEFT, padx=(10, 0))
 
-        self._apps_show_skipped_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(
-            actions,
-            text="Show skipped apps",
-            variable=self._apps_show_skipped_var,
-            command=self._apps_refresh,
-            font=font.Font(family="Segoe UI", size=10),
-            fg=COLORS["text_primary"],
-            bg=COLORS["bg_primary"],
-            selectcolor=COLORS["bg_secondary"],
-            activebackground=COLORS["bg_primary"],
-            activeforeground=COLORS["text_primary"],
-        ).pack(side=tk.LEFT, padx=(20, 0))
 
         # Scrollable body for the per-category app lists
         body = tk.Frame(parent, bg=COLORS["bg_primary"])
@@ -1066,8 +1070,9 @@ class SettingsDialog:
             "<Configure>",
             lambda e: canvas.configure(scrollregion=canvas.bbox("all")),
         )
-        canvas.create_window((0, 0), window=self._apps_list_frame, anchor="nw")
+        win_id_apps = canvas.create_window((0, 0), window=self._apps_list_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.bind("<Configure>", lambda e, wid=win_id_apps: canvas.itemconfig(wid, width=e.width))
 
         def _on_mousewheel(event):
             canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
@@ -1106,21 +1111,14 @@ class SettingsDialog:
             self._apps_summary_var.set("No apps configured")
             return
 
-        skip_set = wa.load_skip_list()
-        counts = wa.status_counts(apps, skip_set)
+        counts = wa.status_counts(apps, set())
         self._apps_summary_var.set(
             f"{counts.installed}/{counts.total} installed, "
-            f"{counts.missing} missing, {counts.skipped} skipped"
+            f"{counts.missing} missing"
         )
 
-        show_skipped = self._apps_show_skipped_var.get()
         grouped = wa.apps_by_category(apps)
         for cat, cat_apps in grouped.items():
-            visible = [a for a in cat_apps
-                       if show_skipped or a.name not in skip_set]
-            if not visible:
-                continue
-
             section = tk.LabelFrame(
                 self._apps_list_frame,
                 text=f" {cat} ",
@@ -1130,24 +1128,32 @@ class SettingsDialog:
             )
             section.pack(fill=tk.X, pady=(0, 8), anchor="nw")
 
-            for a in visible:
-                self._build_app_row(section, a, skip_set, wa)
+            for a in cat_apps:
+                self._build_app_row(section, a, wa)
 
-    def _build_app_row(self, parent, app, skip_set, wa):
-        """One row per app: status icon, name, why, action button(s)."""
+    def _build_app_row(self, parent, app, wa):
+        """One row per app: status icon, name, description, download button."""
         row = tk.Frame(parent, bg=COLORS["bg_card"])
         row.pack(fill=tk.X, pady=2)
 
-        if app.name in skip_set:
-            icon, icon_color = "–", COLORS["text_secondary"]
-            status_text = f"skipped — {app.why}"
-        elif wa.is_installed(app):
+        if wa.is_installed(app):
             icon, icon_color = "✓", "#22c55e"
             status_text = app.why
         else:
             icon, icon_color = "✗", "#ef4444"
             method = "winget" if app.install_method == "winget" else "manual"
             status_text = f"missing ({method}) — {app.why}"
+
+        # Pack the download button first (side=RIGHT) so it is always
+        # visible; the status label fills whatever space remains and wraps.
+        if app.url:
+            tk.Button(
+                row, text="Download",
+                command=lambda a=app: self._wa.open_download_page(a),
+                bg=COLORS["bg_secondary"], fg=COLORS["text_primary"],
+                font=font.Font(family="Segoe UI", size=9),
+                relief=tk.FLAT, cursor="hand2", padx=8, pady=2,
+            ).pack(side=tk.RIGHT, padx=(4, 0))
 
         tk.Label(
             row, text=icon,
@@ -1159,62 +1165,25 @@ class SettingsDialog:
             row, text=app.name,
             font=font.Font(family="Segoe UI", size=10, weight="bold"),
             fg=COLORS["text_primary"], bg=COLORS["bg_card"],
-            width=22, anchor="w",
+            width=20, anchor="w",
         ).pack(side=tk.LEFT)
 
-        tk.Label(
+        status_label = tk.Label(
             row, text=status_text,
             font=font.Font(family="Segoe UI", size=9),
             fg=COLORS["text_secondary"], bg=COLORS["bg_card"],
-            anchor="w",
-        ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+            anchor="w", justify="left",
+        )
+        status_label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 0))
 
-        # Action buttons (right-aligned, packed in reverse since they're
-        # right-aligned: Install/Restore lands rightmost, then Skip, then Page).
-        if app.name in skip_set:
-            tk.Button(
-                row, text="Restore",
-                command=lambda n=app.name: self._apps_unskip(n),
-                bg=COLORS["bg_secondary"], fg=COLORS["text_primary"],
-                font=font.Font(family="Segoe UI", size=9),
-                relief=tk.FLAT, cursor="hand2", padx=8, pady=2,
-            ).pack(side=tk.RIGHT, padx=2)
-        elif not wa.is_installed(app):
-            tk.Button(
-                row, text="Install",
-                command=lambda a=app: self._apps_install_one(a),
-                bg=COLORS["accent_dark"], fg="#ffffff",
-                font=font.Font(family="Segoe UI", size=9, weight="bold"),
-                relief=tk.FLAT, cursor="hand2", padx=10, pady=2,
-            ).pack(side=tk.RIGHT, padx=2)
-            tk.Button(
-                row, text="Skip",
-                command=lambda n=app.name: self._apps_skip(n),
-                bg=COLORS["bg_secondary"], fg=COLORS["text_primary"],
-                font=font.Font(family="Segoe UI", size=9),
-                relief=tk.FLAT, cursor="hand2", padx=8, pady=2,
-            ).pack(side=tk.RIGHT, padx=2)
+        # Keep wraplength in sync with the label's actual width so text
+        # wraps instead of being clipped when the dialog is narrow.
+        def _update_wrap(e, lbl=status_label):
+            w = e.width - 4
+            if w > 10:
+                lbl.config(wraplength=w)
 
-        # Page button on every row that has a URL — installed apps get
-        # a quick path to the vendor for re-downloading / docs / etc.
-        if app.url:
-            tk.Button(
-                row, text="Page",
-                command=lambda a=app: self._wa.open_download_page(a),
-                bg=COLORS["bg_secondary"], fg=COLORS["text_primary"],
-                font=font.Font(family="Segoe UI", size=9),
-                relief=tk.FLAT, cursor="hand2", padx=8, pady=2,
-            ).pack(side=tk.RIGHT, padx=2)
-
-    def _apps_skip(self, name):
-        self._wa.mark_skipped(name)
-        logger.info("Workstation app marked as skipped: %s", name)
-        self._apps_refresh()
-
-    def _apps_unskip(self, name):
-        self._wa.unskip(name)
-        logger.info("Workstation app un-skipped: %s", name)
-        self._apps_refresh()
+        status_label.bind("<Configure>", _update_wrap)
 
     def _apps_install_one(self, app):
         """Install one app. winget = new console; manual = open URL."""
@@ -1526,6 +1495,7 @@ class SettingsDialog:
 
         # Save general settings
         self.settings.set_start_fullscreen(self.start_fullscreen_var.get())
+        self.settings.set_always_on_bottom(self.always_on_bottom_var.get())
 
         self.result = True
         self.dialog.destroy()
