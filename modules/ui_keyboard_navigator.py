@@ -120,9 +120,18 @@ class KeyboardNavigatorMixin:
             self.last_left_panel = self.focused_panel
             self.focused_panel = "tracker"
             self._update_panel_focus()
-            # Give focus to tracker's grid canvas for arrow key navigation
-            if hasattr(self, 'project_tracker') and hasattr(self.project_tracker, 'grid_canvas'):
-                self.project_tracker.grid_canvas.focus_set()
+            self._focus_tracker_widget()
+
+    def _focus_tracker_widget(self):
+        """Give focus to whichever tracker widget matches the active view."""
+        tracker = getattr(self, 'project_tracker', None)
+        if tracker is None:
+            return
+        view = tracker.view_mode.get() if hasattr(tracker, 'view_mode') else "grid"
+        if view == "list" and hasattr(tracker, 'project_tree'):
+            tracker.project_tree.focus_set()
+        elif hasattr(tracker, 'grid_canvas'):
+            tracker.grid_canvas.focus_set()
 
     def _nav_item_up(self):
         """Navigate up within current panel (Up arrow)."""
@@ -142,8 +151,12 @@ class KeyboardNavigatorMixin:
                 self.tools_focus_index -= 1
                 self._update_item_focus()
         elif self.focused_panel == "tracker":
-            if hasattr(self, 'project_tracker'):
-                self.project_tracker._on_grid_up(None)
+            tracker = getattr(self, 'project_tracker', None)
+            if tracker is not None:
+                if tracker.view_mode.get() == "list":
+                    tracker._on_list_up(None)
+                else:
+                    tracker._on_grid_up(None)
 
     def _nav_item_down(self):
         """Navigate down within current panel (Down arrow)."""
@@ -164,8 +177,12 @@ class KeyboardNavigatorMixin:
                 self.tools_focus_index += 1
                 self._update_item_focus()
         elif self.focused_panel == "tracker":
-            if hasattr(self, 'project_tracker'):
-                self.project_tracker._on_grid_down(None)
+            tracker = getattr(self, 'project_tracker', None)
+            if tracker is not None:
+                if tracker.view_mode.get() == "list":
+                    tracker._on_list_down(None)
+                else:
+                    tracker._on_grid_down(None)
 
     def _nav_item_left(self):
         """Navigate left within current panel (Left arrow)."""
@@ -182,8 +199,11 @@ class KeyboardNavigatorMixin:
                 self.operations_focus_index -= 1
                 self._select_focused_operation()
         elif self.focused_panel == "tracker":
-            if hasattr(self, 'project_tracker'):
-                self.project_tracker._on_grid_left(None)
+            tracker = getattr(self, 'project_tracker', None)
+            # Left/Right are meaningless in the 1-D list view; only forward
+            # to the grid handler when grid view is active.
+            if tracker is not None and tracker.view_mode.get() != "list":
+                tracker._on_grid_left(None)
 
     def _nav_item_right(self):
         """Navigate right within current panel (Right arrow)."""
@@ -200,8 +220,9 @@ class KeyboardNavigatorMixin:
                 self.operations_focus_index += 1
                 self._select_focused_operation()
         elif self.focused_panel == "tracker":
-            if hasattr(self, 'project_tracker'):
-                self.project_tracker._on_grid_right(None)
+            tracker = getattr(self, 'project_tracker', None)
+            if tracker is not None and tracker.view_mode.get() != "list":
+                tracker._on_grid_right(None)
 
     def _select_focused_category(self):
         """Select the currently focused category (auto-select on navigation)."""
@@ -317,6 +338,19 @@ class KeyboardNavigatorMixin:
         if hasattr(self, 'project_tracker') and hasattr(self.project_tracker, 'search_entry'):
             self.project_tracker.search_entry.focus_set()
 
+    def _toggle_tracker_view(self):
+        """Toggle the project tracker between list and grid view (T key)."""
+        if not self._should_handle_keyboard():
+            return
+        tracker = getattr(self, 'project_tracker', None)
+        if tracker is None or not hasattr(tracker, '_toggle_view_mode'):
+            return
+        tracker._toggle_view_mode()
+        # Keep arrow-key navigation working by re-focusing the now-visible
+        # view's widget when the user is already in the tracker panel.
+        if self.focused_panel == "tracker":
+            self._focus_tracker_widget()
+
     def _new_project(self):
         """Create new project for current category (Ctrl+N)."""
         if hasattr(self, 'project_tracker') and self.project_tracker:
@@ -348,8 +382,7 @@ class KeyboardNavigatorMixin:
         self._update_panel_focus()
         # Set appropriate focus based on panel type
         if self.focused_panel == "tracker":
-            if hasattr(self, 'project_tracker') and hasattr(self.project_tracker, 'grid_canvas'):
-                self.project_tracker.grid_canvas.focus_set()
+            self._focus_tracker_widget()
         else:
             self.root.focus_set()
 
@@ -422,8 +455,7 @@ class KeyboardNavigatorMixin:
         # 6. Focus tracker panel
         self.focused_panel = "tracker"
         self._update_panel_focus()
-        if hasattr(tracker, 'grid_canvas'):
-            tracker.grid_canvas.focus_set()
+        self._focus_tracker_widget()
 
         # 7. Select the newly created project
         if project_data and project_data.get('path'):
@@ -564,7 +596,7 @@ class KeyboardNavigatorMixin:
             "categories": "Arrows: navigate | Shift+Letter: quick select | S: operations | D: tracker",
             "operations": "Left/Right: navigate | W: categories | S: tools | D: tracker",
             "tools": "Up/Down: navigate | Enter: run | G: folder | N: notes | W/S: panels",
-            "tracker": "Arrows: navigate | Enter: open | A: left panel | /: search",
+            "tracker": "Arrows: navigate | Enter: open | T: list/grid | A: left panel | /: search",
         }
         if hasattr(self, 'header_hint_label'):
             self.header_hint_label.config(text=hints.get(self.focused_panel, ""))

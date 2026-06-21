@@ -83,6 +83,7 @@ Layer 4: Quick Actions (context-sensitive)
 | **Ctrl+,** | Open settings |
 | **Ctrl+L** | Open logs folder |
 | **Ctrl+F** | Focus search field |
+| **T** | Toggle project tracker between list and grid view |
 | **Esc** | Close project creation panel |
 
 ### Scope Filters (affects both categories and projects)
@@ -120,7 +121,8 @@ Layer 4: Quick Actions (context-sensitive)
 | **Categories** | Move by row (±2) | Move by 1 | Auto-selects |
 | **Operations** | - | Move by 1 | Auto-selects |
 | **Tools** | Move through list | - | Run tool |
-| **Tracker** | Move by row | Move by 1 | Open project folder |
+| **Tracker (grid)** | Move by row | Move by 1 | Open project folder |
+| **Tracker (list)** | Move 1 row | — | Open project folder |
 
 ### Category Quick Select (Shift+Letter)
 

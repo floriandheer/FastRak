@@ -2371,6 +2371,10 @@ def main():
     root.bind('<Control-n>', lambda e: app._new_project())
     root.bind('<Control-N>', lambda e: app._new_project())
 
+    # Toggle project tracker between list and grid view
+    root.bind('t', lambda e: app._toggle_tracker_view())
+    root.bind('T', lambda e: app._toggle_tracker_view())
+
     # Start the main loop
     root.mainloop()
 

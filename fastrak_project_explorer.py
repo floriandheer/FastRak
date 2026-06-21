@@ -1434,17 +1434,28 @@ class ProjectTrackerApp:
         # View toggle buttons
         self.view_mode = tk.StringVar(value="list")
 
+        # Toggle uses accent blue (#58a6ff) as the selected background so the
+        # active view is unmistakable; unselected sits on a slightly raised
+        # surface (#1c2128) so both buttons still read as clickable.
         grid_btn = tk.Radiobutton(list_header, text="⊞", variable=self.view_mode, value="grid",
-                                  bg="#0d1117", fg="white", selectcolor="#1c2128",
-                                  indicatoron=False, padx=8, pady=2, font=("Arial", 12),
+                                  bg="#1c2128", fg="#8b949e", selectcolor="#58a6ff",
+                                  activebackground="#2d333b", activeforeground="white",
+                                  indicatoron=False, padx=10, pady=3, font=("Arial", 12, "bold"),
+                                  borderwidth=0, highlightthickness=0,
                                   command=self._switch_view)
         grid_btn.pack(side=tk.RIGHT, padx=2)
 
         list_btn = tk.Radiobutton(list_header, text="≡", variable=self.view_mode, value="list",
-                                  bg="#0d1117", fg="white", selectcolor="#1c2128",
-                                  indicatoron=False, padx=8, pady=2, font=("Arial", 12),
+                                  bg="#1c2128", fg="#8b949e", selectcolor="#58a6ff",
+                                  activebackground="#2d333b", activeforeground="white",
+                                  indicatoron=False, padx=10, pady=3, font=("Arial", 12, "bold"),
+                                  borderwidth=0, highlightthickness=0,
                                   command=self._switch_view)
         list_btn.pack(side=tk.RIGHT, padx=2)
+
+        # Track the buttons so _switch_view can refresh fg colour on the
+        # selected one (Radiobutton's selectcolor only affects bg).
+        self._view_mode_buttons = {"grid": grid_btn, "list": list_btn}
 
         # Separate scale sliders for list and grid views
         self.list_scale_value = tk.IntVar(value=100)
@@ -1568,6 +1579,10 @@ class ProjectTrackerApp:
         self.project_tree.bind('<<TreeviewSelect>>', self._on_project_selected)
         self.project_tree.bind('<Return>', self._on_enter_key)
         self.project_tree.bind('<Double-1>', self._on_enter_key)
+        # Override the Treeview's native arrow handling so we don't double-move
+        # when the global root binding also fires _nav_item_up/down.
+        self.project_tree.bind('<Up>', self._on_list_up)
+        self.project_tree.bind('<Down>', self._on_list_down)
 
         # === GRID VIEW ===
         self.grid_frame = tk.Frame(self.view_container, bg="#0d1117", highlightthickness=0, bd=0)
@@ -2231,6 +2246,11 @@ class ProjectTrackerApp:
             self.grid_frame.pack(fill=tk.BOTH, expand=True)
             self.grid_scale_frame.pack(side=tk.RIGHT, padx=(10, 2))
 
+        # Sync toggle-button fg with the active view (selectcolor only swaps bg).
+        if hasattr(self, "_view_mode_buttons"):
+            for mode, btn in self._view_mode_buttons.items():
+                btn.configure(fg="white" if mode == saved_view_mode else "#8b949e")
+
         # Update filter button styles based on saved filter
         self._update_filter_button_styles()
 
@@ -2466,6 +2486,12 @@ class ProjectTrackerApp:
 
         # Save view mode preference
         self.settings.set("view_mode", view)
+
+        # Refresh button fg so the active view's icon is white on the accent
+        # bg while the inactive one stays muted (selectcolor only swaps bg).
+        if hasattr(self, "_view_mode_buttons"):
+            for mode, btn in self._view_mode_buttons.items():
+                btn.configure(fg="white" if mode == view else "#8b949e")
 
         if view == "list":
             self.grid_frame.pack_forget()
@@ -2895,6 +2921,46 @@ class ProjectTrackerApp:
             self.selected_project = self.grid_projects[index]
             self._display_project_details(self.selected_project)
             self._highlight_grid_card(index)
+
+    def _on_list_up(self, event=None):
+        """Navigate up in list view (previous tree item)."""
+        if not self.tree_item_to_project:
+            return "break"
+        items = self.project_tree.get_children()
+        if not items:
+            return "break"
+        selection = self.project_tree.selection()
+        if not selection:
+            target = items[0]
+        else:
+            target = self.project_tree.prev(selection[0]) or selection[0]
+        self.project_tree.selection_set(target)
+        self.project_tree.focus(target)
+        self.project_tree.see(target)
+        return "break"
+
+    def _on_list_down(self, event=None):
+        """Navigate down in list view (next tree item)."""
+        if not self.tree_item_to_project:
+            return "break"
+        items = self.project_tree.get_children()
+        if not items:
+            return "break"
+        selection = self.project_tree.selection()
+        if not selection:
+            target = items[0]
+        else:
+            target = self.project_tree.next(selection[0]) or selection[0]
+        self.project_tree.selection_set(target)
+        self.project_tree.focus(target)
+        self.project_tree.see(target)
+        return "break"
+
+    def _toggle_view_mode(self):
+        """Flip between list and grid view (bound to T)."""
+        new_view = "grid" if self.view_mode.get() == "list" else "list"
+        self.view_mode.set(new_view)
+        self._switch_view()
 
     def _on_enter_key(self, event):
         """Handle Enter key to open selected project folder."""
