@@ -144,7 +144,11 @@ class RakSettings:
             # the foreground, other apps always appear on top.
             # Standalone module windows (Tk Toplevels from subprocess
             # launchers) are unaffected and float above as usual.
-            "always_on_bottom": True
+            "always_on_bottom": True,
+            # Remembered "WxH+X+Y" for the Settings dialog so the user's
+            # manual resize sticks across sessions. Empty = use default
+            # size (and center on parent).
+            "settings_dialog_geometry": ""
         },
         # Global software version defaults (one version per software, used everywhere)
         "software_defaults": {
@@ -332,6 +336,19 @@ class RakSettings:
         if "ui" not in self.config:
             self.config["ui"] = {}
         self.config["ui"]["always_on_bottom"] = value
+        self._save()
+
+    def get_settings_dialog_geometry(self) -> str:
+        """Remembered "WxH+X+Y" string from the Settings dialog. Empty
+        means "use the default + center on parent"."""
+        return self.config.get("ui", {}).get("settings_dialog_geometry", "")
+
+    def set_settings_dialog_geometry(self, geo: str):
+        """Persist the Settings dialog's current geometry. Pass "" to
+        clear (will go back to default size on next open)."""
+        if "ui" not in self.config:
+            self.config["ui"] = {}
+        self.config["ui"]["settings_dialog_geometry"] = geo or ""
         self._save()
 
     def get_work_drive(self) -> str:

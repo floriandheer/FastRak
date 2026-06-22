@@ -30,7 +30,7 @@ logger = get_logger("setup_environment")
 # Constants
 # ============================================================
 
-STEPS = ("folders", "drives", "synology", "config")
+STEPS = ("folders", "drives", "synology", "config", "startup")
 BANNER_WIDTH = 60
 
 
@@ -577,7 +577,61 @@ def step_config(cfg: dict, dry_run: bool) -> bool:
 
 
 # ============================================================
-# Step 6: Final Report
+# Step 6: Startup Apps Launcher
+# ============================================================
+
+def step_startup(cfg: dict, auto_yes: bool = False, dry_run: bool = False) -> bool:
+    """Deploy the startup-apps PowerShell launcher under %LOCALAPPDATA% and
+    optionally register the FastRak_StartupLauncher scheduled task. Idempotent
+    — re-running this step is safe.
+
+    The launcher reads %LOCALAPPDATA%\\PipelineManager\\startup_apps.json,
+    which is owned by the FastRak Settings dialog's "Startup Apps" tab.
+    """
+    banner("Step 6: Startup Apps Launcher")
+
+    if sys.platform != "win32":
+        print("  Skipping (Windows-only).")
+        return True
+
+    try:
+        import startup_apps_manager as sam
+    except ImportError as e:
+        status_line("startup_apps_manager", False, str(e))
+        return False
+
+    # 1. Deploy the script
+    if dry_run:
+        print(f"  [DRY RUN] Would copy launcher + AHK to "
+              f"{sam.deployed_launcher_path().parent}")
+    else:
+        ok, detail = sam.deploy_launcher_script()
+        status_line("Deploy launcher", ok, detail)
+        if not ok:
+            return False
+
+    # 2. Scheduled task
+    if sam.is_task_installed():
+        status_line("Scheduled task", True, f"already registered as {sam.TASK_NAME}")
+        print("  (Use Settings > Startup Apps > Uninstall to remove it.)")
+        return True
+
+    if dry_run:
+        print(f"  [DRY RUN] Would register scheduled task {sam.TASK_NAME}")
+        return True
+
+    if not confirm(f"\n  Register scheduled task '{sam.TASK_NAME}' to run at logon?",
+                   auto_yes):
+        print("  Skipped — you can install it later via Settings > Startup Apps.")
+        return True
+
+    ok, detail = sam.install_scheduled_task()
+    status_line("Scheduled task", ok, detail)
+    return ok
+
+
+# ============================================================
+# Step 7: Final Report
 # ============================================================
 
 def final_report(results: dict):
@@ -674,7 +728,11 @@ def main():
     if run_all or args.step == "config":
         results["Pipeline Config"] = step_config(cfg, args.dry_run)
 
-    # Step 6: Report
+    # Step 6: Startup Apps Launcher
+    if run_all or args.step == "startup":
+        results["Startup Apps"] = step_startup(cfg, args.yes, args.dry_run)
+
+    # Step 7: Report
     final_report(results)
 
     # Windows console keep-alive

@@ -34,19 +34,28 @@ class SettingsDialog:
         # Create dialog window
         self.dialog = tk.Toplevel(parent)
         self.dialog.title("Rak Settings")
-        self.dialog.geometry("750x750")
+        # Default sized for the Startup Apps tab (deps panel + monitors
+        # strip + apps list + actions row + add footer stack tall).
+        self.dialog.geometry("800x900")
         self.dialog.minsize(700, 600)
         self.dialog.configure(bg=COLORS["bg_primary"])
 
         # Make dialog modal
         self.dialog.transient(parent)
         self.dialog.grab_set()
+        # X-button on title bar = treat as Cancel (also persists geometry).
+        self.dialog.protocol("WM_DELETE_WINDOW", self._cancel)
 
-        # Center on parent
+        # Restore the user's last size/position if they previously
+        # resized; otherwise center the default size on the parent.
+        saved_geo = settings.get_settings_dialog_geometry()
         self.dialog.update_idletasks()
-        x = parent.winfo_x() + (parent.winfo_width() - self.dialog.winfo_width()) // 2
-        y = parent.winfo_y() + (parent.winfo_height() - self.dialog.winfo_height()) // 2
-        self.dialog.geometry(f"+{x}+{y}")
+        if saved_geo:
+            self.dialog.geometry(saved_geo)
+        else:
+            x = parent.winfo_x() + (parent.winfo_width() - self.dialog.winfo_width()) // 2
+            y = parent.winfo_y() + (parent.winfo_height() - self.dialog.winfo_height()) // 2
+            self.dialog.geometry(f"+{x}+{y}")
 
         # Store original values for cancel
         self._original_work_drive = settings.get_work_drive()
@@ -107,6 +116,11 @@ class SettingsDialog:
         software_tab = tk.Frame(self.notebook, bg=COLORS["bg_primary"])
         self.notebook.add(software_tab, text="Software Defaults")
         self._build_software_tab(software_tab)
+
+        # === STARTUP APPS TAB ===
+        startup_tab = tk.Frame(self.notebook, bg=COLORS["bg_primary"])
+        self.notebook.add(startup_tab, text="Startup Apps")
+        self._build_startup_apps_tab(startup_tab)
 
         # === WORKSTATION APPS TAB ===
         apps_tab = tk.Frame(self.notebook, bg=COLORS["bg_primary"])
@@ -1000,6 +1014,649 @@ class SettingsDialog:
                 self.software_entries[software] = var
 
     # ============================================================
+    # Startup Apps tab
+    # ============================================================
+    #
+    # Editor for the data-driven launcher in tools/startup/StartupLauncher.ps1.
+    # The sidecar JSON at %LOCALAPPDATA%\PipelineManager\startup_apps.json is
+    # owned by modules/startup_apps_manager.py — this tab is the user-facing
+    # surface. Saves go through sam.save_config() in _save(); the scheduled-
+    # task install/uninstall buttons mutate Windows state immediately (not
+    # tied to the Save button) because they're irreversible-ish operations
+    # the user should opt into explicitly.
+
+    _STARTUP_POSITIONS = ("maximize", "fullscreen", "free")
+    _STARTUP_DESKTOP_CHOICES = (1, 2, 3, 4, 5, 6)
+
+    @staticmethod
+    def _startup_make_toggle(parent, var, on_text="ON", off_text="OFF"):
+        """Replacement for tk.Checkbutton — the default indicator reads
+        poorly against the dark theme. This button flips between a vivid
+        green (on) and muted grey (off) so state is obvious at a glance.
+        Tracks the BooleanVar two-way so programmatic changes update the
+        visual."""
+        btn = tk.Button(
+            parent,
+            font=font.Font(family="Segoe UI", size=8, weight="bold"),
+            relief=tk.FLAT, cursor="hand2", width=3, padx=4, pady=2,
+            borderwidth=0, highlightthickness=0,
+        )
+
+        def render():
+            if var.get():
+                btn.config(text=on_text, bg="#22c55e", fg="white",
+                           activebackground="#16a34a", activeforeground="white")
+            else:
+                btn.config(text=off_text, bg="#374151", fg="#d1d5db",
+                           activebackground="#4b5563", activeforeground="white")
+
+        def toggle():
+            var.set(not var.get())
+
+        btn.config(command=toggle)
+        render()
+        var.trace_add("write", lambda *_a: render())
+        return btn
+
+    def _build_startup_apps_tab(self, parent):
+        try:
+            import startup_apps_manager as sam  # noqa: WPS433
+        except ImportError as e:
+            tk.Label(
+                parent,
+                text=f"startup_apps_manager module not available:\n{e}",
+                font=font.Font(family="Segoe UI", size=10),
+                fg=COLORS["text_secondary"],
+                bg=COLORS["bg_primary"],
+                justify="left",
+            ).pack(padx=20, pady=20, anchor="nw")
+            return
+
+        self._sam = sam
+        self._startup_cfg = sam.load_config()
+        self._startup_monitors = sam.detect_monitors()
+        self._startup_row_vars = []  # parallel to cfg["apps"]
+        self._startup_workstation_choices = sam.list_workstation_choices()
+
+        # ----- Top: master toggle -----
+        top = tk.Frame(parent, bg=COLORS["bg_primary"])
+        top.pack(fill=tk.X, padx=20, pady=(10, 4))
+
+        self._startup_enabled_var = tk.BooleanVar(
+            value=bool(self._startup_cfg.get("enabled", False))
+        )
+        # Toggle button + plain label gives a clearer on/off signal than
+        # a default Checkbutton's tiny indicator on a dark background.
+        self._startup_make_toggle(top, self._startup_enabled_var).pack(side=tk.LEFT)
+        tk.Label(
+            top,
+            text="  Enable startup app launcher  (read by the scheduled task on logon)",
+            font=font.Font(family="Segoe UI", size=10, weight="bold"),
+            fg=COLORS["text_primary"], bg=COLORS["bg_primary"],
+        ).pack(side=tk.LEFT)
+
+        # ----- Dependencies panel -----
+        # Compact view of what the launcher needs to work — kept in this
+        # tab (not a separate Dependencies tab) because every dep here
+        # exists solely to enable this feature.
+        self._startup_deps_frame = tk.LabelFrame(
+            parent, text=" Dependencies ",
+            font=font.Font(family="Segoe UI", size=10, weight="bold"),
+            fg=COLORS["text_primary"], bg=COLORS["bg_card"],
+            padx=10, pady=6,
+        )
+        self._startup_deps_frame.pack(fill=tk.X, padx=20, pady=(6, 4))
+        self._startup_render_deps()
+
+        # ----- Actions row -----
+        actions = tk.Frame(parent, bg=COLORS["bg_primary"])
+        actions.pack(fill=tk.X, padx=20, pady=(4, 4))
+
+        self._startup_task_btn = tk.Button(
+            actions, text="...",
+            command=self._startup_toggle_task,
+            bg=COLORS["bg_secondary"], fg=COLORS["text_primary"],
+            font=font.Font(family="Segoe UI", size=10),
+            relief=tk.FLAT, cursor="hand2", padx=15, pady=6,
+        )
+        self._startup_task_btn.pack(side=tk.LEFT)
+
+        tk.Button(
+            actions, text="Test now",
+            command=self._startup_test_now,
+            bg=COLORS["bg_secondary"], fg=COLORS["text_primary"],
+            font=font.Font(family="Segoe UI", size=10),
+            relief=tk.FLAT, cursor="hand2", padx=15, pady=6,
+        ).pack(side=tk.LEFT, padx=(8, 0))
+
+        tk.Button(
+            actions, text="Refresh paths",
+            command=self._startup_refresh_paths,
+            bg=COLORS["bg_secondary"], fg=COLORS["text_primary"],
+            font=font.Font(family="Segoe UI", size=10),
+            relief=tk.FLAT, cursor="hand2", padx=15, pady=6,
+        ).pack(side=tk.LEFT, padx=(8, 0))
+
+        self._startup_import_btn = tk.Button(
+            actions, text="Import legacy Startup folder",
+            command=self._startup_import_legacy,
+            bg=COLORS["bg_secondary"], fg=COLORS["text_primary"],
+            font=font.Font(family="Segoe UI", size=10),
+            relief=tk.FLAT, cursor="hand2", padx=15, pady=6,
+        )
+        self._startup_import_btn.pack(side=tk.LEFT, padx=(8, 0))
+
+        # ----- Monitor strip -----
+        mon_frame = tk.Frame(parent, bg=COLORS["bg_primary"])
+        mon_frame.pack(fill=tk.X, padx=20, pady=(4, 4))
+
+        if not self._startup_monitors:
+            mon_text = "Monitors: detection unavailable (non-Windows or display API failed)"
+        else:
+            parts = []
+            for m in self._startup_monitors:
+                tag = " primary" if m["primary"] else ""
+                parts.append(
+                    f"  [{m['index']}] {m['width']}x{m['height']} @ ({m['x']},{m['y']}){tag}"
+                )
+            mon_text = "Monitors:" + "  ".join(parts)
+        tk.Label(
+            mon_frame, text=mon_text,
+            font=font.Font(family="Segoe UI", size=9),
+            fg=COLORS["text_secondary"], bg=COLORS["bg_primary"],
+            anchor="w", justify="left",
+        ).pack(anchor="w")
+
+        # ----- Add-app footer -----
+        # Packed BEFORE the apps list with side=tk.BOTTOM so the apps
+        # list (which expands) eats the slack ABOVE it. Same trick the
+        # bottom Save/Cancel button row uses — without it the footer
+        # gets pushed off-screen whenever the dialog is shorter than
+        # the unconstrained app list would be.
+        add_frame = tk.Frame(parent, bg=COLORS["bg_primary"])
+        add_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=(4, 10))
+
+        # ----- Apps list (scrollable, takes remaining vertical space) -----
+        list_frame = tk.LabelFrame(
+            parent, text=" Apps ",
+            font=font.Font(family="Segoe UI", size=10, weight="bold"),
+            fg=COLORS["text_primary"], bg=COLORS["bg_card"],
+            padx=8, pady=6,
+        )
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(4, 4))
+
+        canvas = tk.Canvas(list_frame, bg=COLORS["bg_card"], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
+        self._startup_list_inner = tk.Frame(canvas, bg=COLORS["bg_card"])
+
+        self._startup_list_inner.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all")),
+        )
+        win_id = canvas.create_window((0, 0), window=self._startup_list_inner, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.bind("<Configure>", lambda e, wid=win_id: canvas.itemconfig(wid, width=e.width))
+
+        def _on_mw(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _on_mw))
+        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Plain-text indicator (no icons): show the name as-is when the
+        # app resolves to a launchable exe, append "(not installed)"
+        # otherwise. Matches the pre-checkmark presentation.
+        choice_labels = []
+        self._startup_choice_map = {}  # label -> workstation name
+        for choice in self._startup_workstation_choices:
+            name = choice["name"]
+            if choice["resolved_path"]:
+                label = name
+            else:
+                label = f"{name}  (not installed)"
+            choice_labels.append(label)
+            self._startup_choice_map[label] = name
+
+        tk.Label(
+            add_frame, text="Add workstation app:",
+            font=font.Font(family="Segoe UI", size=9),
+            fg=COLORS["text_secondary"], bg=COLORS["bg_primary"],
+        ).pack(side=tk.LEFT)
+
+        self._startup_add_combo = ttk.Combobox(
+            add_frame, values=choice_labels, state="readonly", width=32,
+        )
+        self._startup_add_combo.pack(side=tk.LEFT, padx=(6, 4))
+
+        tk.Button(
+            add_frame, text="Add",
+            command=self._startup_add_workstation,
+            bg=COLORS["bg_secondary"], fg=COLORS["text_primary"],
+            font=font.Font(family="Segoe UI", size=9),
+            relief=tk.FLAT, cursor="hand2", padx=10, pady=2,
+        ).pack(side=tk.LEFT)
+
+        tk.Label(
+            add_frame, text="    or    ",
+            font=font.Font(family="Segoe UI", size=9),
+            fg=COLORS["text_secondary"], bg=COLORS["bg_primary"],
+        ).pack(side=tk.LEFT)
+
+        tk.Button(
+            add_frame, text="Browse for file...",
+            command=self._startup_browse_custom,
+            bg=COLORS["bg_secondary"], fg=COLORS["text_primary"],
+            font=font.Font(family="Segoe UI", size=9),
+            relief=tk.FLAT, cursor="hand2", padx=10, pady=2,
+        ).pack(side=tk.LEFT)
+
+        # Initial render
+        self._startup_update_task_button()
+        self._startup_render_list()
+
+    # ---------- Dependencies panel ----------
+
+    def _startup_render_deps(self):
+        """Re-run the dep check and rebuild the panel. Called on tab
+        build and from the Recheck button."""
+        for child in self._startup_deps_frame.winfo_children():
+            child.destroy()
+        deps = self._sam.check_dependencies()
+
+        # Header with Recheck button on the right
+        hdr = tk.Frame(self._startup_deps_frame, bg=COLORS["bg_card"])
+        hdr.pack(fill=tk.X, pady=(0, 4))
+        n_ok = sum(1 for d in deps if d["ok"])
+        n_req_missing = sum(1 for d in deps if d["required"] and not d["ok"])
+        summary = f"{n_ok}/{len(deps)} present"
+        if n_req_missing:
+            summary += f" — {n_req_missing} required missing"
+        tk.Label(
+            hdr, text=summary,
+            font=font.Font(family="Segoe UI", size=9),
+            fg=COLORS["warning"] if n_req_missing else COLORS["text_secondary"],
+            bg=COLORS["bg_card"],
+        ).pack(side=tk.LEFT)
+        tk.Button(
+            hdr, text="Recheck",
+            command=self._startup_render_deps,
+            bg=COLORS["bg_secondary"], fg=COLORS["text_primary"],
+            font=font.Font(family="Segoe UI", size=9),
+            relief=tk.FLAT, cursor="hand2", padx=10, pady=2,
+        ).pack(side=tk.RIGHT)
+
+        for dep in deps:
+            self._startup_build_dep_row(dep)
+
+    def _startup_build_dep_row(self, dep):
+        row = tk.Frame(self._startup_deps_frame, bg=COLORS["bg_card"])
+        row.pack(fill=tk.X, pady=1)
+
+        ok = dep["ok"]
+        icon = "✓" if ok else ("!" if not dep["required"] else "✗")
+        icon_color = (
+            "#22c55e" if ok
+            else ("#f59e0b" if not dep["required"] else "#ef4444")
+        )
+
+        # Install button on the right first so the detail label can fill
+        # the remaining space and wrap cleanly.
+        if dep.get("install_label") and dep.get("install_action") and not ok:
+            tk.Button(
+                row, text=dep["install_label"],
+                command=lambda a=dep["install_action"]: self._startup_run_install(a),
+                bg=COLORS["bg_secondary"], fg=COLORS["text_primary"],
+                font=font.Font(family="Segoe UI", size=9),
+                relief=tk.FLAT, cursor="hand2", padx=10, pady=2,
+            ).pack(side=tk.RIGHT, padx=(4, 0))
+        elif dep.get("install_label") and dep.get("install_action") and ok:
+            # Already installed but offer a Reinstall path (useful for the
+            # VirtualDesktop module after a Windows update breaks it).
+            tk.Button(
+                row, text=dep["install_label"],
+                command=lambda a=dep["install_action"]: self._startup_run_install(a),
+                bg=COLORS["bg_card"], fg=COLORS["text_secondary"],
+                font=font.Font(family="Segoe UI", size=9),
+                relief=tk.FLAT, cursor="hand2", padx=10, pady=2,
+            ).pack(side=tk.RIGHT, padx=(4, 0))
+
+        tk.Label(
+            row, text=icon, width=2,
+            font=font.Font(family="Segoe UI", size=11, weight="bold"),
+            fg=icon_color, bg=COLORS["bg_card"],
+        ).pack(side=tk.LEFT)
+
+        name_text = dep["name"]
+        if dep["required"] and not ok:
+            name_text += "  (required)"
+        tk.Label(
+            row, text=name_text, width=28, anchor="w",
+            font=font.Font(family="Segoe UI", size=10, weight="bold"),
+            fg=COLORS["text_primary"], bg=COLORS["bg_card"],
+        ).pack(side=tk.LEFT)
+
+        tk.Label(
+            row, text=dep.get("detail", ""),
+            font=font.Font(family="Segoe UI", size=9),
+            fg=COLORS["text_secondary"], bg=COLORS["bg_card"],
+            anchor="w", justify="left",
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 0))
+
+    def _startup_run_install(self, action):
+        ok, detail = self._sam.run_install_action(action)
+        if ok:
+            messagebox.showinfo(
+                "Installer launched",
+                detail + "\n\nClick Recheck once it's done to refresh the status.",
+                parent=self.dialog,
+            )
+        else:
+            messagebox.showerror("Could not launch installer", detail, parent=self.dialog)
+
+    # ---------- Apps list rendering ----------
+
+    def _startup_render_list(self):
+        """Rebuild every row from the in-memory cfg. Called whenever the
+        list changes (add/remove/reorder/import)."""
+        for child in self._startup_list_inner.winfo_children():
+            child.destroy()
+        self._startup_row_vars = []
+
+        apps = self._startup_cfg.get("apps", [])
+        if not apps:
+            tk.Label(
+                self._startup_list_inner,
+                text="No startup apps configured. Add one from the picker below, "
+                     "or click Import to pull in existing shortcuts.",
+                font=font.Font(family="Segoe UI", size=9, slant="italic"),
+                fg=COLORS["text_secondary"], bg=COLORS["bg_card"],
+                wraplength=600, justify="left",
+            ).pack(anchor="nw", padx=4, pady=8)
+            return
+
+        # Header row
+        hdr = tk.Frame(self._startup_list_inner, bg=COLORS["bg_card"])
+        hdr.pack(fill=tk.X, padx=2, pady=(0, 4))
+        for text, width in [
+            ("On", 3), ("Label", 22), ("Monitor", 8), ("Desktop", 8),
+            ("Position", 12), ("Order", 8),
+        ]:
+            tk.Label(
+                hdr, text=text, width=width, anchor="w",
+                font=font.Font(family="Segoe UI", size=9, weight="bold"),
+                fg=COLORS["text_secondary"], bg=COLORS["bg_card"],
+            ).pack(side=tk.LEFT)
+
+        monitor_count = max(1, len(self._startup_monitors) or 1)
+        monitor_choices = list(range(1, max(monitor_count, 1) + 1))
+
+        for idx, app in enumerate(apps):
+            self._startup_build_row(idx, app, monitor_choices)
+
+    def _startup_build_row(self, idx, app, monitor_choices):
+        row = tk.Frame(self._startup_list_inner, bg=COLORS["bg_card"])
+        row.pack(fill=tk.X, padx=2, pady=1)
+
+        enabled_var = tk.BooleanVar(value=bool(app.get("enabled", True)))
+        monitor_var = tk.IntVar(value=int(app.get("monitor") or 1))
+        desktop_var = tk.IntVar(value=int(app.get("virtual_desktop") or 1))
+        position_var = tk.StringVar(value=str(app.get("position") or "maximize"))
+
+        # Wire each var so changes flow into the cfg immediately. Saves
+        # pick up the latest cfg in _save() with no extra wiring.
+        def _bind(var, key, cast):
+            def _cb(*_a, key=key, cast=cast, var=var, idx=idx):
+                try:
+                    self._startup_cfg["apps"][idx][key] = cast(var.get())
+                except (ValueError, IndexError):
+                    pass
+            var.trace_add("write", _cb)
+        _bind(enabled_var, "enabled", bool)
+        _bind(monitor_var, "monitor", int)
+        _bind(desktop_var, "virtual_desktop", int)
+        _bind(position_var, "position", str)
+
+        self._startup_row_vars.append({
+            "enabled": enabled_var, "monitor": monitor_var,
+            "desktop": desktop_var, "position": position_var,
+        })
+
+        self._startup_make_toggle(row, enabled_var).pack(side=tk.LEFT, padx=(2, 6))
+
+        label = app.get("label") or "(unnamed)"
+        path = app.get("resolved_path") or app.get("custom_path") or ""
+        path_ok = bool(path) and os.path.isfile(path)
+        label_color = COLORS["text_primary"] if path_ok else "#f59e0b"  # amber when missing
+        tooltip = path or "(unresolved path)"
+        lbl = tk.Label(
+            row, text=label, width=22, anchor="w",
+            font=font.Font(family="Segoe UI", size=10),
+            fg=label_color, bg=COLORS["bg_card"],
+        )
+        lbl.pack(side=tk.LEFT)
+        # Lightweight "tooltip": click the label to print path to status — keep simple
+        lbl.bind("<Button-1>", lambda e, p=tooltip: messagebox.showinfo("Path", p, parent=self.dialog))
+
+        ttk.Combobox(
+            row, textvariable=monitor_var, values=monitor_choices,
+            state="readonly", width=4,
+        ).pack(side=tk.LEFT, padx=(4, 6))
+
+        ttk.Combobox(
+            row, textvariable=desktop_var, values=list(self._STARTUP_DESKTOP_CHOICES),
+            state="readonly", width=4,
+        ).pack(side=tk.LEFT, padx=(4, 6))
+
+        ttk.Combobox(
+            row, textvariable=position_var, values=list(self._STARTUP_POSITIONS),
+            state="readonly", width=10,
+        ).pack(side=tk.LEFT, padx=(4, 6))
+
+        # Order is implicit (list index within its desktop); show order
+        # number for clarity but the buttons drive it.
+        order_label = tk.Label(
+            row, text=str(app.get("launch_order", 0)), width=4, anchor="w",
+            font=font.Font(family="Segoe UI", size=9),
+            fg=COLORS["text_secondary"], bg=COLORS["bg_card"],
+        )
+        order_label.pack(side=tk.LEFT, padx=(4, 4))
+
+        # Right-side action buttons
+        tk.Button(
+            row, text="×", command=lambda i=idx: self._startup_remove(i),
+            bg=COLORS["bg_card"], fg="#ef4444",
+            font=font.Font(family="Segoe UI", size=11, weight="bold"),
+            relief=tk.FLAT, cursor="hand2", width=2, padx=0, pady=0,
+        ).pack(side=tk.RIGHT, padx=(2, 0))
+        tk.Button(
+            row, text="↓", command=lambda i=idx: self._startup_move(i, +1),
+            bg=COLORS["bg_card"], fg=COLORS["text_secondary"],
+            font=font.Font(family="Segoe UI", size=10),
+            relief=tk.FLAT, cursor="hand2", width=2, padx=0, pady=0,
+        ).pack(side=tk.RIGHT)
+        tk.Button(
+            row, text="↑", command=lambda i=idx: self._startup_move(i, -1),
+            bg=COLORS["bg_card"], fg=COLORS["text_secondary"],
+            font=font.Font(family="Segoe UI", size=10),
+            relief=tk.FLAT, cursor="hand2", width=2, padx=0, pady=0,
+        ).pack(side=tk.RIGHT)
+
+    # ---------- List mutations ----------
+
+    def _startup_remove(self, idx):
+        try:
+            removed = self._startup_cfg["apps"].pop(idx)
+        except IndexError:
+            return
+        self._startup_renumber_orders()
+        self._startup_render_list()
+        logger.info("Removed startup app: %s", removed.get("label"))
+
+    def _startup_move(self, idx, delta):
+        apps = self._startup_cfg.get("apps", [])
+        new_idx = idx + delta
+        if new_idx < 0 or new_idx >= len(apps):
+            return
+        apps[idx], apps[new_idx] = apps[new_idx], apps[idx]
+        self._startup_renumber_orders()
+        self._startup_render_list()
+
+    def _startup_renumber_orders(self):
+        """Renumber launch_order within each virtual_desktop based on
+        list position. Keeps the JSON tidy + the launcher deterministic."""
+        per_desktop_counter: dict = {}
+        for app in self._startup_cfg.get("apps", []):
+            vd = int(app.get("virtual_desktop") or 1)
+            per_desktop_counter.setdefault(vd, 0)
+            app["launch_order"] = per_desktop_counter[vd]
+            per_desktop_counter[vd] += 1
+
+    def _startup_add_workstation(self):
+        label = self._startup_add_combo.get()
+        if not label:
+            return
+        name = self._startup_choice_map.get(label)
+        if not name:
+            return
+        sam = self._sam
+        resolved = sam.resolve_workstation_app(name) or ""
+        entry = sam.new_app_entry(
+            label=name,
+            source="workstation_app",
+            workstation_name=name,
+            resolved_path=resolved,
+            monitor=1,
+            virtual_desktop=1,
+            position="maximize",
+            launch_order=len(self._startup_cfg.get("apps", [])),
+            enabled=True,
+        )
+        self._startup_cfg.setdefault("apps", []).append(entry)
+        self._startup_renumber_orders()
+        self._startup_render_list()
+        self._startup_add_combo.set("")
+
+    def _startup_browse_custom(self):
+        path = filedialog.askopenfilename(
+            parent=self.dialog,
+            title="Pick an .exe, .lnk, .bat, or .url to launch at startup",
+            filetypes=[
+                ("Launchable", "*.exe *.lnk *.bat *.url *.cmd *.vbs"),
+                ("All files", "*.*"),
+            ],
+        )
+        if not path:
+            return
+        sam = self._sam
+        label = os.path.splitext(os.path.basename(path))[0]
+        if path.lower().endswith(".lnk"):
+            target, args = sam.resolve_shortcut(path)
+        else:
+            target, args = path, ""
+        entry = sam.new_app_entry(
+            label=label,
+            source="custom_path",
+            custom_path=path,
+            resolved_path=target,
+            args=args,
+            monitor=1,
+            virtual_desktop=1,
+            position="maximize",
+            launch_order=len(self._startup_cfg.get("apps", [])),
+            enabled=True,
+        )
+        self._startup_cfg.setdefault("apps", []).append(entry)
+        self._startup_renumber_orders()
+        self._startup_render_list()
+
+    def _startup_import_legacy(self):
+        sam = self._sam
+        discovered = sam.find_importable_shortcuts()
+        if not discovered:
+            messagebox.showinfo(
+                "Nothing to import",
+                "No DesktopN subfolders or shortcuts found under "
+                f"{os.path.expanduser('~')}\\Startup.",
+                parent=self.dialog,
+            )
+            return
+        existing = len(self._startup_cfg.get("apps", []))
+        msg = (
+            f"Found {len(discovered)} shortcut(s) under your legacy Startup folder.\n\n"
+            "Replace the current list, or append to it?\n\n"
+            f"  Yes  = REPLACE (current list of {existing} will be discarded)\n"
+            "  No   = APPEND\n"
+            "  Cancel = do nothing"
+        )
+        choice = messagebox.askyesnocancel("Import startup shortcuts", msg, parent=self.dialog)
+        if choice is None:
+            return
+        sam.import_existing_shortcuts(self._startup_cfg, replace=bool(choice))
+        self._startup_renumber_orders()
+        self._startup_render_list()
+
+    def _startup_refresh_paths(self):
+        """Re-resolve every entry's resolved_path. Useful after installing
+        an app or moving a custom file."""
+        self._sam.refresh_resolved_paths(self._startup_cfg)
+        self._startup_render_list()
+
+    # ---------- Scheduled task ----------
+
+    def _startup_update_task_button(self):
+        installed = self._sam.is_task_installed()
+        self._startup_task_btn.config(
+            text=("Uninstall scheduled task" if installed else "Install scheduled task")
+        )
+
+    def _startup_toggle_task(self):
+        sam = self._sam
+        if sam.is_task_installed():
+            if not messagebox.askyesno(
+                "Uninstall scheduled task?",
+                "This removes the FastRak_StartupLauncher entry from Task Scheduler.\n"
+                "The launcher will no longer run automatically on logon.\n\n"
+                "Continue?",
+                parent=self.dialog,
+            ):
+                return
+            ok, detail = sam.uninstall_scheduled_task()
+        else:
+            # Make sure the launcher is deployed before we register a task
+            # that points at it.
+            deploy_ok, deploy_detail = sam.deploy_launcher_script()
+            if not deploy_ok:
+                messagebox.showerror(
+                    "Could not deploy launcher",
+                    f"Cannot install scheduled task because the launcher "
+                    f"could not be copied to your AppData folder:\n\n{deploy_detail}",
+                    parent=self.dialog,
+                )
+                return
+            ok, detail = sam.install_scheduled_task()
+        if ok:
+            messagebox.showinfo("Done", detail, parent=self.dialog)
+        else:
+            messagebox.showerror("Scheduled task error", detail, parent=self.dialog)
+        self._startup_update_task_button()
+
+    def _startup_test_now(self):
+        """Save current settings first, then invoke the launcher in a
+        visible console so the user can watch."""
+        sam = self._sam
+        self._startup_cfg["enabled"] = bool(self._startup_enabled_var.get())
+        try:
+            sam.save_config(self._startup_cfg)
+        except OSError as e:
+            messagebox.showerror("Save failed", str(e), parent=self.dialog)
+            return
+        ok, detail = sam.run_launcher_now()
+        if not ok:
+            messagebox.showerror("Could not run launcher", detail, parent=self.dialog)
+
+    # ============================================================
     # Workstation Apps tab
     # ============================================================
     #
@@ -1497,14 +2154,40 @@ class SettingsDialog:
         self.settings.set_start_fullscreen(self.start_fullscreen_var.get())
         self.settings.set_always_on_bottom(self.always_on_bottom_var.get())
 
+        # Save startup apps sidecar (if the tab was built — guard so the
+        # save doesn't fail when the module wasn't importable).
+        if hasattr(self, "_sam") and hasattr(self, "_startup_cfg"):
+            try:
+                self._startup_cfg["enabled"] = bool(self._startup_enabled_var.get())
+                self._sam.save_config(self._startup_cfg)
+            except OSError as e:
+                messagebox.showerror(
+                    "Startup apps save failed",
+                    f"Could not write startup_apps.json:\n{e}",
+                    parent=self.dialog,
+                )
+                return
+
+        self._persist_geometry()
         self.result = True
         self.dialog.destroy()
         logger.info("Settings saved")
 
     def _cancel(self):
         """Cancel and close dialog."""
+        self._persist_geometry()
         self.result = False
         self.dialog.destroy()
+
+    def _persist_geometry(self):
+        """Save the dialog's current WxH+X+Y so the next open restores
+        it. Swallows errors so a missing geometry never blocks close."""
+        try:
+            geo = self.dialog.geometry()  # "WxH+X+Y"
+            if geo:
+                self.settings.set_settings_dialog_geometry(geo)
+        except (tk.TclError, OSError) as e:
+            logger.debug("Could not persist settings dialog geometry: %s", e)
 
     def show(self) -> bool:
         """

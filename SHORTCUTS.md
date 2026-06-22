@@ -183,3 +183,15 @@ Note: Scope (1/2/3) and Status (4/5/6) filters are **not** in WASD navigation - 
 3. **Search shortcut**: Press / or Ctrl+F from anywhere to search projects
 4. **Cycle scope quickly**: Use backtick (`) to cycle Personal → Work → All
 5. **Keyboard-only workflow**: WASD + Arrows + Enter = full navigation without mouse
+
+---
+
+## Startup Apps
+
+There's no keyboard shortcut for this — it's a settings tab. Open `Ctrl+,` → **Startup Apps**.
+
+- Picker pulls from the same `workstation_apps` registry the **Workstation Apps** tab uses; **Browse for file...** adds anything else (.exe, .lnk, .bat, .url).
+- Per app you set: enable toggle, monitor, virtual desktop, position mode (maximize / fullscreen / free), and launch order.
+- **Install scheduled task** registers `FastRak_StartupLauncher` (logon-triggered, current-user privilege). **Test now** runs the launcher manually in a visible console.
+- **Import legacy Startup folder** pulls in shortcuts from `C:\Users\<you>\Startup\DesktopN\` — useful if you're migrating from the old `1_StartupScript_AppsToDesktop.ps1` workflow. The old script and its scheduled task are not touched; uninstall them yourself once you're happy.
+- Config sidecar: `%LOCALAPPDATA%\PipelineManager\startup_apps.json`. Logs: `%LOCALAPPDATA%\PipelineManager\logs\startup_launcher.log`.

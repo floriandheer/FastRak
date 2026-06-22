@@ -235,23 +235,25 @@ def expand_profile(profile: Profile,
 # Detection
 # ============================================================
 
-def _read_uninstall_display_names() -> set[str]:
-    """Read DisplayName values from Windows uninstall registry keys.
+def _read_uninstall_entries() -> list[dict]:
+    """Read DisplayName + DisplayIcon + InstallLocation from each
+    uninstall registry key under HKLM/HKLM-WOW6432Node/HKCU.
 
-    This is the authoritative list of installed programs from the
-    user's perspective — MSI installers, NSIS installers, winget,
-    Add/Remove Programs all populate the same hives. Pure Python via
-    ``winreg``; no admin needed; both HKLM (system-wide) and HKCU
-    (per-user) are read so apps installed for the current user only
-    are also caught."""
+    Returns one dict per entry. Pure Python via ``winreg``; no admin
+    needed. The triple of fields is what the workstation-apps catalog
+    needs to (a) detect that an app is installed (DisplayName) and
+    (b) derive the actual exe path for the startup launcher
+    (DisplayIcon usually points right at the .exe; InstallLocation is
+    a directory the .exe lives under).
+    """
     if sys.platform != "win32":
-        return set()
+        return []
     try:
         import winreg  # local — Windows-only
     except ImportError:
-        return set()
+        return []
 
-    names: set[str] = set()
+    entries: list[dict] = []
     targets = [
         (winreg.HKEY_LOCAL_MACHINE,
          r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
@@ -268,51 +270,198 @@ def _read_uninstall_display_names() -> set[str]:
                     try:
                         child_name = winreg.EnumKey(key, i)
                         with winreg.OpenKey(key, child_name) as child:
-                            display, _ = winreg.QueryValueEx(child, "DisplayName")
-                            if isinstance(display, str) and display.strip():
-                                names.add(display.lower())
+                            try:
+                                display, _ = winreg.QueryValueEx(child, "DisplayName")
+                            except OSError:
+                                continue
+                            if not isinstance(display, str) or not display.strip():
+                                continue
+                            icon = ""
+                            try:
+                                v, _ = winreg.QueryValueEx(child, "DisplayIcon")
+                                if isinstance(v, str):
+                                    icon = v.strip()
+                            except OSError:
+                                pass
+                            location = ""
+                            try:
+                                v, _ = winreg.QueryValueEx(child, "InstallLocation")
+                                if isinstance(v, str):
+                                    location = v.strip().strip('"')
+                            except OSError:
+                                pass
+                            entries.append({
+                                "display_name": display,
+                                "display_icon": icon,
+                                "install_location": location,
+                            })
                     except OSError:
                         continue
         except OSError:
             continue
-    return names
+    return entries
 
 
-_INSTALLED_PROGRAMS_CACHE: Optional[set[str]] = None
+_INSTALLED_ENTRIES_CACHE: Optional[list[dict]] = None
+
+
+def _installed_entries() -> list[dict]:
+    """Memoised list of (display_name, display_icon, install_location).
+
+    Cached for the lifetime of the process — registry walk is mildly
+    expensive (~50-200 ms). Call ``invalidate_program_cache()`` after
+    running an installer."""
+    global _INSTALLED_ENTRIES_CACHE
+    if _INSTALLED_ENTRIES_CACHE is None:
+        _INSTALLED_ENTRIES_CACHE = _read_uninstall_entries()
+    return _INSTALLED_ENTRIES_CACHE
 
 
 def installed_programs() -> set[str]:
-    """Memoised view of installed-program DisplayNames (lowercased).
-
-    Cached for the lifetime of the process because reading the registry
-    is mildly expensive (~50–200 ms). Call
-    ``invalidate_program_cache()`` after running an installer so the
-    next ``is_installed()`` reflects the new state."""
-    global _INSTALLED_PROGRAMS_CACHE
-    if _INSTALLED_PROGRAMS_CACHE is None:
-        _INSTALLED_PROGRAMS_CACHE = _read_uninstall_display_names()
-    return _INSTALLED_PROGRAMS_CACHE
+    """Set of installed-program DisplayNames (lowercased). Back-compat
+    view derived from ``_installed_entries``."""
+    return {e["display_name"].lower() for e in _installed_entries()}
 
 
 def invalidate_program_cache() -> None:
-    global _INSTALLED_PROGRAMS_CACHE
-    _INSTALLED_PROGRAMS_CACHE = None
+    global _INSTALLED_ENTRIES_CACHE
+    _INSTALLED_ENTRIES_CACHE = None
 
 
-def is_installed(app: App) -> bool:
-    """Three independent checks, fast first:
-      1. ``shutil.which(exe)`` — covers anything on PATH
-      2. ``detect_paths`` — explicit absolute paths (env vars expanded)
-      3. Registry DisplayName substring match (catches most GUI apps)
+def _parse_display_icon(icon: str) -> Optional[str]:
+    """DisplayIcon is often ``"C:\\path\\to\\app.exe,0"`` (path + icon
+    index) or just the path. Strip the optional trailing ``,<n>`` and
+    surrounding quotes, return the path if it points at an .exe."""
+    if not icon:
+        return None
+    raw = icon.strip().strip('"')
+    # Trim a trailing ",<index>" only when the comma comes after .exe
+    # (paths can legitimately contain commas).
+    low = raw.lower()
+    idx = low.rfind(".exe")
+    if idx != -1:
+        end = idx + len(".exe")
+        candidate = raw[:end]
+        if os.path.isfile(candidate):
+            return candidate
+    if low.endswith(".exe") and os.path.isfile(raw):
+        return raw
+    return None
+
+
+def _resolve_from_registry(app: App) -> Optional[str]:
+    """Third-stage path resolver: walk cached registry entries, match
+    DisplayName against the app's needle, then try DisplayIcon and
+    InstallLocation to find a real .exe.
+
+    Honours ``app.detect_name`` when set (same as ``is_installed``)
+    so a catalog entry named "Affinity Suite" with
+    ``detect_name="Affinity Photo"`` resolves to the Photo exe.
     """
-    if app.exe and shutil.which(app.exe):
-        return True
+    needle = (app.detect_name or app.name).lower().strip()
+    if not needle:
+        return None
+    target_exe = app.exe if app.exe else ""
+    target_exe_lower = target_exe.lower()
+    for entry in _installed_entries():
+        display = entry["display_name"].lower()
+        if needle not in display:
+            continue
+        # DisplayIcon usually wins — points right at the .exe.
+        path = _parse_display_icon(entry.get("display_icon", ""))
+        if path:
+            return path
+        # Otherwise look in InstallLocation for app.exe by name.
+        location = entry.get("install_location", "")
+        if location and os.path.isdir(location):
+            if target_exe:
+                candidate = os.path.join(location, target_exe)
+                if os.path.isfile(candidate):
+                    return candidate
+                # Some catalogs store "MusicBee" with exe "MusicBee.exe";
+                # add the .exe suffix when missing.
+                if not target_exe_lower.endswith(".exe"):
+                    candidate = os.path.join(location, target_exe + ".exe")
+                    if os.path.isfile(candidate):
+                        return candidate
+            # Last resort: pick the first .exe in the install dir whose
+            # name contains the needle (e.g. "Resolume Arena 7" dir holds
+            # "Arena.exe" — we want it even if app.exe is empty).
+            try:
+                for fname in os.listdir(location):
+                    if fname.lower().endswith(".exe"):
+                        full = os.path.join(location, fname)
+                        if os.path.isfile(full):
+                            base = os.path.splitext(fname)[0].lower()
+                            if needle in base or base in needle:
+                                return full
+            except OSError:
+                pass
+    return None
+
+
+def _detect_paths_present(app: App) -> bool:
+    """True if any ``detect_paths`` entry exists (file or directory).
+    Used for installed-ness only — some catalog entries point at a
+    directory (e.g. ``%ProgramData%\\Affinity``) because the suite has
+    no single canonical exe."""
+    for raw in app.detect_paths:
+        if not raw:
+            continue
+        if Path(os.path.expandvars(raw)).exists():
+            return True
+    return False
+
+
+def resolve_exe_path(app: App) -> Optional[str]:
+    """Resolve the absolute exe path for an app, or None if unresolvable.
+
+    Three strategies, in order:
+      1. ``shutil.which(exe)`` — anything on PATH.
+      2. ``detect_paths`` — file entries return directly; directory
+         entries are searched for ``app.exe`` (with optional ``.exe``
+         suffix). Directories alone never resolve.
+      3. Registry uninstall entry — match DisplayName, then derive the
+         exe path from DisplayIcon or InstallLocation + ``app.exe``.
+
+    "Installed but no specific exe to launch" is a real state (Affinity
+    Suite is the canonical example). Callers see ``None`` and should
+    fall back to a Browse picker or skip the entry.
+    """
+    if app.exe:
+        which = shutil.which(app.exe)
+        if which:
+            return which
+    exe_lower = app.exe.lower() if app.exe else ""
     for raw in app.detect_paths:
         if not raw:
             continue
         expanded = Path(os.path.expandvars(raw))
-        if expanded.exists():
-            return True
+        if expanded.is_file():
+            return str(expanded)
+        if expanded.is_dir() and app.exe:
+            candidate = expanded / app.exe
+            if candidate.is_file():
+                return str(candidate)
+            if not exe_lower.endswith(".exe"):
+                candidate = expanded / f"{app.exe}.exe"
+                if candidate.is_file():
+                    return str(candidate)
+    return _resolve_from_registry(app)
+
+
+def is_installed(app: App) -> bool:
+    """Three independent checks, fast first:
+      1. ``resolve_exe_path`` — covers PATH + detect_paths file/dir hits + registry-derived exe.
+      2. ``detect_paths`` directory presence — catches install-marker
+         directories that have no single canonical exe.
+      3. Registry DisplayName substring match — catches GUI apps with
+         no detect_paths configured.
+    """
+    if resolve_exe_path(app) is not None:
+        return True
+    if _detect_paths_present(app):
+        return True
     needle = (app.detect_name or app.name).lower().strip()
     if needle:
         for display in installed_programs():

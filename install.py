@@ -1113,6 +1113,25 @@ def step_doctor(opts) -> bool:
            else "missing - hub will disable Business tab",
            warn=not inv_cfg.exists())
 
+    # Startup launcher dependencies (informational — never blocks green).
+    # Required = VirtualDesktop PS module; optional = AHK v2, pywin32.
+    try:
+        modules_dir = str(SCRIPT_DIR / "modules")
+        if modules_dir not in sys.path:
+            sys.path.insert(0, modules_dir)
+        import startup_apps_manager as sam  # type: ignore[import-not-found]
+        deps = sam.check_dependencies()
+        ok_count = sum(1 for d in deps if d["ok"])
+        req_missing = [d["name"] for d in deps if d["required"] and not d["ok"]]
+        detail = f"{ok_count}/{len(deps)} present"
+        if req_missing:
+            detail += f"  (required missing: {', '.join(req_missing)})"
+        status("startup launcher deps", not req_missing, detail,
+               warn=bool(req_missing))
+    except Exception as e:
+        status("startup launcher deps", False,
+               f"could not check: {e}", warn=True)
+
     return all_ok
 
 
