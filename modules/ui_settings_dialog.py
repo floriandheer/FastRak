@@ -2,6 +2,7 @@
 UI Settings Dialog - Multi-tab settings window for the Pipeline Manager.
 """
 
+import json
 import os
 import shutil
 import subprocess
@@ -112,6 +113,11 @@ class SettingsDialog:
         self.notebook.add(paths_tab, text="Paths")
         self._build_paths_tab(paths_tab)
 
+        # === DRIVES TAB ===
+        drives_tab = tk.Frame(self.notebook, bg=COLORS["bg_primary"])
+        self.notebook.add(drives_tab, text="Drives")
+        self._build_drives_tab(drives_tab)
+
         # === SOFTWARE TAB ===
         software_tab = tk.Frame(self.notebook, bg=COLORS["bg_primary"])
         self.notebook.add(software_tab, text="Software Defaults")
@@ -204,19 +210,6 @@ class SettingsDialog:
 
         tk.Button(
             setup_row,
-            text="Run Environment Setup...",
-            command=self._run_environment_setup,
-            bg=COLORS["bg_secondary"],
-            fg=COLORS["text_primary"],
-            font=font.Font(family="Segoe UI", size=10),
-            relief=tk.FLAT,
-            cursor="hand2",
-            padx=15,
-            pady=6
-        ).pack(side=tk.LEFT, padx=(10, 0))
-
-        tk.Button(
-            setup_row,
             text="Create Shortcut",
             command=self._create_shortcut,
             bg=COLORS["bg_secondary"],
@@ -228,14 +221,58 @@ class SettingsDialog:
             pady=6
         ).pack(side=tk.LEFT, padx=(10, 0))
 
+        # Environment Setup: one button per step in setup_environment.py.
+        # "Run All" preserves the original behaviour; the per-step buttons
+        # launch the script with --step <name> so you can re-test or
+        # re-apply a single piece (e.g. just remap drives) on a PC that
+        # is already partially set up.
+        tk.Label(
+            setup_section,
+            text="Environment Setup:",
+            font=font.Font(family="Segoe UI", size=10, weight="bold"),
+            fg=COLORS["text_primary"],
+            bg=COLORS["bg_card"],
+        ).pack(anchor="w", pady=(10, 2))
+
+        env_row = tk.Frame(setup_section, bg=COLORS["bg_card"])
+        env_row.pack(fill=tk.X, pady=2)
+
+        # (button_label, step_name) — step matches setup_environment.STEPS,
+        # plus "all" which the script also accepts.
+        env_steps = (
+            ("Run All",  "all"),
+            ("Folders",  "folders"),
+            ("Drives",   "drives"),
+            ("Synology", "synology"),
+            ("Config",   "config"),
+            ("Startup",  "startup"),
+        )
+        for label, step in env_steps:
+            tk.Button(
+                env_row,
+                text=label,
+                command=lambda s=step: self._run_environment_setup(s),
+                bg=COLORS["bg_secondary"],
+                fg=COLORS["text_primary"],
+                font=font.Font(family="Segoe UI", size=10),
+                relief=tk.FLAT,
+                cursor="hand2",
+                padx=12,
+                pady=6,
+            ).pack(side=tk.LEFT, padx=(0, 6))
+
         tk.Label(
             setup_section,
             text=(
                 "Install Dependencies: runs install_dependencies.py via pip in a new console.\n"
-                "Run Environment Setup: provisions folders, drive mappings, Synology checks "
-                "and pipeline config in a new console window.\n"
                 "Create Shortcut: regenerates Fastrak.lnk next to fastrak_hub.py.\n"
-                "Environment Setup and Create Shortcut are Windows only."
+                "Environment Setup steps (all run in a new console; Windows only):\n"
+                "  Run All  - everything below in one pass\n"
+                "  Folders  - create Active/Archive/category dirs from setup_config.json\n"
+                "  Drives   - subst mappings + HKCU autorun + Explorer drive labels\n"
+                "  Synology - check Drive Client install + sync folder status\n"
+                "  Config   - generate/update rak_config.json from setup_config.json\n"
+                "  Startup  - deploy startup-apps launcher + scheduled task"
             ),
             font=font.Font(family="Segoe UI", size=9, slant="italic"),
             fg=COLORS["text_secondary"],
@@ -294,8 +331,28 @@ class SettingsDialog:
             )
             return False
 
-    def _run_environment_setup(self):
-        """Launch setup_environment.py in a new console window."""
+    # Per-step blurbs for the confirmation dialog. Keys match
+    # setup_environment.STEPS plus "all".
+    _ENV_STEP_BLURBS = {
+        "all":      "create folders, configure drive mappings, check Synology "
+                    "Drive status, generate the pipeline config, and deploy the "
+                    "startup-apps launcher",
+        "folders":  "create the Active/Archive/category folder structure defined "
+                    "in setup_config.json",
+        "drives":   "set up subst drive mappings, persist them via HKCU autorun, "
+                    "and write Explorer drive labels",
+        "synology": "check Synology Drive Client installation and report sync "
+                    "folder status (no changes are made automatically)",
+        "config":   "generate or update rak_config.json from setup_config.json's "
+                    "pipeline_config section",
+        "startup":  "deploy the startup-apps PowerShell launcher and register the "
+                    "logon scheduled task",
+    }
+
+    def _run_environment_setup(self, step="all"):
+        """Launch setup_environment.py in a new console window, optionally
+        scoped to a single step. ``step`` is one of "all" or any value in
+        setup_environment.STEPS."""
         if sys.platform != "win32":
             messagebox.showwarning(
                 "Windows Only",
@@ -319,10 +376,12 @@ class SettingsDialog:
         if not self._ensure_setup_config(project_root):
             return
 
+        blurb = self._ENV_STEP_BLURBS.get(step, self._ENV_STEP_BLURBS["all"])
+        title = "Run Environment Setup" if step == "all" \
+            else f"Run Environment Setup — {step}"
         if not messagebox.askyesno(
-            "Run Environment Setup",
-            "This will create folders, configure drive mappings, and check Synology "
-            "Drive status on this PC.\n\n"
+            title,
+            f"This will {blurb} on this PC.\n\n"
             "The script runs interactively in a new console window — you can answer "
             "prompts there. Continue?",
             parent=self.dialog,
@@ -330,15 +389,18 @@ class SettingsDialog:
             return
 
         exe = self._console_python()
+        cmd = ["cmd", "/k", exe, script_path]
+        if step != "all":
+            cmd += ["--step", step]
         try:
             # Wrap with `cmd /k` so the console stays open after the script exits,
             # even if it fails fast (otherwise the window closes before you can read it).
             subprocess.Popen(
-                ["cmd", "/k", exe, script_path],
+                cmd,
                 cwd=project_root,
                 creationflags=subprocess.CREATE_NEW_CONSOLE,
             )
-            logger.info("Launched setup_environment.py in new console")
+            logger.info("Launched setup_environment.py (step=%s) in new console", step)
         except Exception as e:
             logger.exception("Failed to launch setup_environment.py")
             messagebox.showerror(
@@ -918,6 +980,350 @@ class SettingsDialog:
                         fg=COLORS["text_secondary"],
                         bg=COLORS["bg_card"]
                     ).pack(side=tk.LEFT, padx=(10, 0))
+
+    # ============================================================
+    # Drives tab
+    # ============================================================
+    #
+    # Editor for setup_config.json's drive_mappings list. Edits here
+    # save to setup_config.json (NOT rak_config.json); the actual
+    # subst / HKCU autorun / Explorer-label writes happen when you run
+    # Environment Setup > Drives. This tab edits intent; the Drives
+    # step applies it. The "Run Drives step now" button below is a
+    # shortcut to that same step.
+
+    def _build_drives_tab(self, parent):
+        """Build the Drives configuration tab."""
+        self._drives_config_path = os.path.join(
+            self._project_root(), "setup_config.json"
+        )
+        self._drives_cfg = self._drives_load_config()
+
+        # Header explanation
+        intro = (
+            "Drive mappings applied by Environment Setup > Drives. Each row "
+            "defines a `subst` mapping: a virtual drive letter pointing at an "
+            "existing folder on disk. Edits save to setup_config.json — click "
+            "'Run Drives step now' below to apply them."
+        )
+        tk.Label(
+            parent, text=intro,
+            font=font.Font(family="Segoe UI", size=9),
+            fg=COLORS["text_secondary"], bg=COLORS["bg_primary"],
+            justify="left", anchor="w", wraplength=720,
+        ).pack(anchor="w", padx=20, pady=(10, 6))
+
+        # Actions row (above the list so it stays in view)
+        actions = tk.Frame(parent, bg=COLORS["bg_primary"])
+        actions.pack(fill=tk.X, padx=20, pady=(0, 6))
+
+        tk.Button(
+            actions, text="+ Add mapping",
+            command=self._drives_add_mapping,
+            bg=COLORS["bg_secondary"], fg=COLORS["text_primary"],
+            font=font.Font(family="Segoe UI", size=10),
+            relief=tk.FLAT, cursor="hand2", padx=15, pady=6,
+        ).pack(side=tk.LEFT)
+
+        tk.Button(
+            actions, text="Run Drives step now",
+            command=lambda: self._run_environment_setup("drives"),
+            bg=COLORS["bg_secondary"], fg=COLORS["text_primary"],
+            font=font.Font(family="Segoe UI", size=10),
+            relief=tk.FLAT, cursor="hand2", padx=15, pady=6,
+        ).pack(side=tk.LEFT, padx=(10, 0))
+
+        tk.Button(
+            actions, text="Reload from disk",
+            command=self._drives_reload,
+            bg=COLORS["bg_secondary"], fg=COLORS["text_primary"],
+            font=font.Font(family="Segoe UI", size=10),
+            relief=tk.FLAT, cursor="hand2", padx=15, pady=6,
+        ).pack(side=tk.LEFT, padx=(10, 0))
+
+        # Scrollable list of rows
+        list_frame = tk.LabelFrame(
+            parent, text=" Drive mappings ",
+            font=font.Font(family="Segoe UI", size=10, weight="bold"),
+            fg=COLORS["text_primary"], bg=COLORS["bg_card"],
+            padx=8, pady=6,
+        )
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 10))
+
+        canvas = tk.Canvas(list_frame, bg=COLORS["bg_card"], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
+        self._drives_list_inner = tk.Frame(canvas, bg=COLORS["bg_card"])
+
+        self._drives_list_inner.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all")),
+        )
+        win_id = canvas.create_window(
+            (0, 0), window=self._drives_list_inner, anchor="nw"
+        )
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.bind(
+            "<Configure>",
+            lambda e, wid=win_id: canvas.itemconfig(wid, width=e.width),
+        )
+
+        def _on_mw(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _on_mw))
+        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self._drives_render_list()
+
+    def _drives_load_config(self):
+        """Read setup_config.json into a dict. If the file is missing,
+        seed from setup_config.json.example so the user sees the
+        canonical mapping list; if neither exists, return a skeleton
+        with an empty drive_mappings list."""
+        path = self._drives_config_path
+        if os.path.isfile(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except (OSError, json.JSONDecodeError) as e:
+                logger.error("Could not load setup_config.json: %s", e)
+                messagebox.showerror(
+                    "setup_config.json error",
+                    f"Could not parse setup_config.json:\n{e}\n\n"
+                    "Drives tab will open empty; fix the file on disk "
+                    "and click 'Reload from disk' to recover.",
+                    parent=self.dialog,
+                )
+                return {"drive_mappings": []}
+
+        example = os.path.join(
+            self._project_root(), "setup_config.json.example"
+        )
+        if os.path.isfile(example):
+            try:
+                with open(example, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except (OSError, json.JSONDecodeError):
+                pass
+        return {"drive_mappings": []}
+
+    def _drives_reload(self):
+        """Discard in-memory edits and re-read from disk."""
+        if not messagebox.askyesno(
+            "Reload drive mappings?",
+            "Reload from setup_config.json on disk?\n\n"
+            "Any unsaved changes in this tab will be lost.",
+            parent=self.dialog,
+        ):
+            return
+        self._drives_cfg = self._drives_load_config()
+        self._drives_render_list()
+
+    def _drives_render_list(self):
+        """Rebuild every row from self._drives_cfg["drive_mappings"]."""
+        for child in self._drives_list_inner.winfo_children():
+            child.destroy()
+        self._drives_row_vars = []
+
+        mappings = self._drives_cfg.get("drive_mappings", []) or []
+
+        # Header row
+        hdr = tk.Frame(self._drives_list_inner, bg=COLORS["bg_card"])
+        hdr.pack(fill=tk.X, padx=2, pady=(0, 4))
+        for text, width in [
+            ("Letter", 5), ("Target Path", 30), ("Label", 12),
+            ("Description", 24), ("OK", 3),
+        ]:
+            tk.Label(
+                hdr, text=text, width=width, anchor="w",
+                font=font.Font(family="Segoe UI", size=9, weight="bold"),
+                fg=COLORS["text_secondary"], bg=COLORS["bg_card"],
+            ).pack(side=tk.LEFT)
+
+        if not mappings:
+            tk.Label(
+                self._drives_list_inner,
+                text=("No drive mappings configured. Click '+ Add mapping' "
+                      "to create one."),
+                font=font.Font(family="Segoe UI", size=9, slant="italic"),
+                fg=COLORS["text_secondary"], bg=COLORS["bg_card"],
+            ).pack(anchor="nw", padx=4, pady=8)
+            return
+
+        for idx, m in enumerate(mappings):
+            self._drives_build_row(idx, m)
+
+    def _drives_build_row(self, idx, mapping):
+        row = tk.Frame(self._drives_list_inner, bg=COLORS["bg_card"])
+        row.pack(fill=tk.X, padx=2, pady=1)
+
+        letter_var = tk.StringVar(value=mapping.get("drive_letter", ""))
+        target_var = tk.StringVar(value=mapping.get("target_path", ""))
+        label_var  = tk.StringVar(value=mapping.get("label", ""))
+        desc_var   = tk.StringVar(value=mapping.get("description", ""))
+
+        # Wire changes back into the in-memory cfg so _save picks them
+        # up without an extra Apply step — same pattern the Startup
+        # Apps tab uses.
+        def _bind(var, key):
+            def _cb(*_a, key=key, var=var, idx=idx):
+                try:
+                    self._drives_cfg["drive_mappings"][idx][key] = var.get()
+                except (IndexError, KeyError):
+                    pass
+                if key == "target_path":
+                    self._drives_update_status(idx, var.get())
+            var.trace_add("write", _cb)
+        _bind(letter_var, "drive_letter")
+        _bind(target_var, "target_path")
+        _bind(label_var,  "label")
+        _bind(desc_var,   "description")
+
+        tk.Entry(
+            row, textvariable=letter_var, width=5,
+            font=font.Font(family="Segoe UI", size=10),
+            bg=COLORS["bg_secondary"], fg=COLORS["text_primary"],
+            insertbackground=COLORS["text_primary"],
+        ).pack(side=tk.LEFT, padx=(2, 4))
+
+        tk.Entry(
+            row, textvariable=target_var, width=30,
+            font=font.Font(family="Segoe UI", size=10),
+            bg=COLORS["bg_secondary"], fg=COLORS["text_primary"],
+            insertbackground=COLORS["text_primary"],
+        ).pack(side=tk.LEFT, padx=(0, 2))
+
+        tk.Button(
+            row, text="...",
+            command=lambda v=target_var: self._drives_browse_target(v),
+            bg=COLORS["bg_card"], fg=COLORS["text_secondary"],
+            font=font.Font(family="Segoe UI", size=9),
+            relief=tk.FLAT, cursor="hand2", padx=4, pady=0, width=2,
+        ).pack(side=tk.LEFT, padx=(0, 4))
+
+        tk.Entry(
+            row, textvariable=label_var, width=12,
+            font=font.Font(family="Segoe UI", size=10),
+            bg=COLORS["bg_secondary"], fg=COLORS["text_primary"],
+            insertbackground=COLORS["text_primary"],
+        ).pack(side=tk.LEFT, padx=(0, 4))
+
+        tk.Entry(
+            row, textvariable=desc_var, width=24,
+            font=font.Font(family="Segoe UI", size=10),
+            bg=COLORS["bg_secondary"], fg=COLORS["text_primary"],
+            insertbackground=COLORS["text_primary"],
+        ).pack(side=tk.LEFT, padx=(0, 4))
+
+        status_lbl = tk.Label(
+            row, width=3, anchor="center",
+            font=font.Font(family="Segoe UI", size=11, weight="bold"),
+            bg=COLORS["bg_card"],
+        )
+        status_lbl.pack(side=tk.LEFT)
+
+        tk.Button(
+            row, text="×",
+            command=lambda i=idx: self._drives_remove(i),
+            bg=COLORS["bg_card"], fg="#ef4444",
+            font=font.Font(family="Segoe UI", size=11, weight="bold"),
+            relief=tk.FLAT, cursor="hand2", width=2, padx=0, pady=0,
+        ).pack(side=tk.RIGHT, padx=(2, 0))
+
+        self._drives_row_vars.append({
+            "letter": letter_var, "target": target_var,
+            "label":  label_var,  "description": desc_var,
+            "status_lbl": status_lbl,
+        })
+        self._drives_update_status(idx, target_var.get())
+
+    def _drives_update_status(self, idx, target_path):
+        """Refresh the OK/missing indicator for a row when target_path
+        changes (or when the row is built)."""
+        try:
+            lbl = self._drives_row_vars[idx]["status_lbl"]
+        except (IndexError, KeyError):
+            return
+        if target_path and os.path.isdir(target_path):
+            lbl.config(text="✓", fg="#22c55e")
+        else:
+            lbl.config(text="✗", fg="#ef4444")
+
+    def _drives_browse_target(self, var):
+        """Open folder browser to pick a target path for a mapping."""
+        current = var.get()
+        initial_dir = current if os.path.isdir(current) else None
+        folder = filedialog.askdirectory(
+            parent=self.dialog,
+            title="Select drive mapping target folder",
+            initialdir=initial_dir,
+        )
+        if folder:
+            var.set(folder.replace("/", "\\"))
+
+    def _drives_add_mapping(self):
+        """Append a blank mapping and rebuild the list."""
+        mappings = self._drives_cfg.setdefault("drive_mappings", [])
+        mappings.append({
+            "drive_letter": "",
+            "target_path":  "",
+            "label":        "",
+            "description":  "",
+        })
+        self._drives_render_list()
+
+    def _drives_remove(self, idx):
+        """Remove a mapping by index and rebuild."""
+        mappings = self._drives_cfg.get("drive_mappings", [])
+        if not (0 <= idx < len(mappings)):
+            return
+        removed = mappings.pop(idx)
+        logger.info("Removed drive mapping: %s -> %s",
+                    removed.get("drive_letter"), removed.get("target_path"))
+        self._drives_render_list()
+
+    def _drives_save_config(self):
+        """Write self._drives_cfg back to setup_config.json. Normalizes
+        drive_letter to upper-case "X:" form and target_path to
+        backslashes to match the file's existing style. Drops fully
+        blank rows. Preserves all other top-level keys
+        (folder_structure, synology_drive, workstation_apps, etc.)
+        because we round-tripped the whole file. Raises OSError on
+        write failure so the caller can surface it."""
+        mappings = self._drives_cfg.get("drive_mappings", []) or []
+        cleaned = []
+        for m in mappings:
+            letter = (m.get("drive_letter") or "").strip().upper()
+            # Accept "M", "m", "M:", "M:\" etc -> "M:"
+            letter = letter.rstrip("\\").rstrip(":")
+            if letter:
+                letter = f"{letter[0]}:"
+            target = (m.get("target_path") or "").strip().replace("/", "\\")
+            entry = {
+                "drive_letter": letter,
+                "target_path":  target,
+                "label":        (m.get("label") or "").strip(),
+                "description":  (m.get("description") or "").strip(),
+            }
+            # Skip totally blank rows so they don't pollute the file.
+            if not entry["drive_letter"] and not entry["target_path"]:
+                continue
+            # Preserve any extras (registry_name, custom keys) from
+            # the original mapping.
+            for k, v in m.items():
+                if k not in entry:
+                    entry[k] = v
+            cleaned.append(entry)
+
+        self._drives_cfg["drive_mappings"] = cleaned
+
+        with open(self._drives_config_path, "w", encoding="utf-8") as f:
+            json.dump(self._drives_cfg, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        logger.info("Wrote drive_mappings (%d entries) to %s",
+                    len(cleaned), self._drives_config_path)
 
     def _build_software_tab(self, parent):
         """Build the Software Defaults settings tab."""
@@ -2154,6 +2560,41 @@ class SettingsDialog:
         self.settings.set_start_fullscreen(self.start_fullscreen_var.get())
         self.settings.set_always_on_bottom(self.always_on_bottom_var.get())
 
+        # Sync drive_mappings + wait_for_drives into the startup-apps
+        # config from the Drives tab's current mappings. The launcher
+        # uses drive_mappings to run `subst` itself at logon — HKCU\Run
+        # subst entries on cold boot regularly take 30+ seconds (or
+        # never fire within the wait window). wait_for_drives stays as
+        # a belt-and-suspenders verification. The Drives tab is the
+        # single knob; no separate UI for either.
+        if hasattr(self, "_drives_cfg") and hasattr(self, "_startup_cfg"):
+            letters = []
+            seen = set()
+            drive_mappings = []
+            for m in self._drives_cfg.get("drive_mappings", []) or []:
+                raw = (m.get("drive_letter") or "").strip().upper()
+                raw = raw.rstrip("\\").rstrip(":")
+                if raw and raw[0].isalpha():
+                    norm = f"{raw[0]}:"
+                    if norm not in seen:
+                        seen.add(norm)
+                        letters.append(norm)
+                    target = (m.get("target_path") or "").strip().replace("/", "\\")
+                    if target:
+                        drive_mappings.append({"letter": norm, "target": target})
+            self._startup_cfg["wait_for_drives"] = letters
+            self._startup_cfg["drive_mappings"] = drive_mappings
+
+            # One-time auto-migration: the original final_init_delay_ms
+            # default was 5000ms, which doesn't give pythonw apps
+            # (FastRak) time to show their main window before the
+            # launcher Switch-Desktops back to 1 — so they end up on
+            # the wrong desktop. The old startup script used 13000ms;
+            # we use 15000ms. Bump any config still pinned to 5000.
+            timing = self._startup_cfg.setdefault("timing", {})
+            if timing.get("final_init_delay_ms") == 5000:
+                timing["final_init_delay_ms"] = 15000
+
         # Save startup apps sidecar (if the tab was built — guard so the
         # save doesn't fail when the module wasn't importable).
         if hasattr(self, "_sam") and hasattr(self, "_startup_cfg"):
@@ -2164,6 +2605,19 @@ class SettingsDialog:
                 messagebox.showerror(
                     "Startup apps save failed",
                     f"Could not write startup_apps.json:\n{e}",
+                    parent=self.dialog,
+                )
+                return
+
+        # Save drive mappings to setup_config.json (only if the tab was
+        # built — same guard pattern as startup apps above).
+        if hasattr(self, "_drives_cfg") and hasattr(self, "_drives_config_path"):
+            try:
+                self._drives_save_config()
+            except OSError as e:
+                messagebox.showerror(
+                    "Drive mappings save failed",
+                    f"Could not write setup_config.json:\n{e}",
                     parent=self.dialog,
                 )
                 return

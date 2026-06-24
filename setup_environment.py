@@ -114,6 +114,33 @@ def parse_subst_output() -> dict:
     return mapping
 
 
+def parse_mountvol_letters() -> set:
+    """Return the set of drive letters held by an actual volume mount point
+    (real disks, removable media, SD readers, recovery partitions). Subst
+    mappings are NOT included. Used to detect "letter already taken by
+    hardware" cases that would otherwise make `subst` fail silently — this
+    is the original-startup-script's `mountvol F: /d` step, automated.
+
+    `mountvol` output format::
+
+            \\\\?\\Volume{GUID}\\
+                F:\\
+    """
+    letters = set()
+    try:
+        result = subprocess.run(
+            ["mountvol"], capture_output=True, text=True, timeout=10
+        )
+        for line in result.stdout.splitlines():
+            s = line.strip()
+            # Match "X:\" — single letter + colon + backslash, no other text.
+            if len(s) == 3 and s[0].isalpha() and s[1] == ":" and s[2] == "\\":
+                letters.add(s[:2].upper())
+    except Exception as e:
+        logger.warning(f"Could not parse mountvol output: {e}")
+    return letters
+
+
 # ============================================================
 # Step 1: Prerequisites
 # ============================================================
@@ -239,6 +266,7 @@ def step_drives(cfg: dict, dry_run: bool, auto_yes: bool) -> bool:
         return True
 
     current_subst = parse_subst_output()
+    held_letters = parse_mountvol_letters()
     ok = True
 
     for m in mappings:
@@ -264,6 +292,33 @@ def step_drives(cfg: dict, dry_run: bool, auto_yes: bool) -> bool:
                 ok = False
                 continue
         else:
+            # Verify the target dir exists. `subst` fails silently here
+            # otherwise, which is why M:->D:\music etc. used to die with
+            # an empty error message on a fresh PC. We deliberately do
+            # NOT auto-create — the user may want to point the mapping
+            # at a differently-named folder (e.g. _music vs music). Edit
+            # the mapping in Settings -> Drives, or create the folder
+            # manually, then re-run this step.
+            if not os.path.isdir(target):
+                status_line(f"{drive} subst", False,
+                            f"target does not exist: {target}")
+                print(f"    This mapping has no destination on disk yet.")
+                print(f"    Open Settings -> Drives to point it at an existing folder")
+                print(f"    or create {target} manually before retrying.")
+                ok = False
+                continue
+
+            # If the letter is held by a real volume (SD reader, USB slot,
+            # recovery partition) `subst` will fail. The original startup
+            # .bat did `mountvol F: /d` for exactly this — automate it,
+            # but ALWAYS prompt (ignore --yes) because dismounting the
+            # wrong letter can take down the system drive.
+            if drive in held_letters:
+                if not _release_volume_letter(drive, dry_run):
+                    ok = False
+                    continue
+                held_letters.discard(drive)
+
             if dry_run:
                 print(f"    [DRY RUN] Would run: subst {drive} \"{target}\"")
             else:
@@ -278,8 +333,14 @@ def step_drives(cfg: dict, dry_run: bool, auto_yes: bool) -> bool:
                     status_line(f"{drive} subst", True, "mounted")
                     logger.info(f"Mounted subst drive: {drive} -> {target}")
                 except subprocess.CalledProcessError as e:
-                    status_line(f"{drive} subst", False, f"subst failed: {e.stderr.strip()}")
-                    logger.error(f"subst failed for {drive}: {e}")
+                    # `subst` writes its errors to STDOUT, not stderr, so
+                    # we have to fall back through both streams to surface
+                    # a useful message.
+                    msg = ((e.stderr or "").strip()
+                           or (e.stdout or "").strip()
+                           or f"exit code {e.returncode}")
+                    status_line(f"{drive} subst", False, f"subst failed: {msg}")
+                    logger.error(f"subst failed for {drive}: {msg}")
                     ok = False
                     continue
 
@@ -305,6 +366,41 @@ def step_drives(cfg: dict, dry_run: bool, auto_yes: bool) -> bool:
                 ok = False
 
     return ok
+
+
+def _release_volume_letter(drive: str, dry_run: bool) -> bool:
+    """Free a drive letter held by a real volume via `mountvol <drive> /d`,
+    so a subsequent `subst` can claim it. Always prompts (ignores --yes)
+    because the wrong letter here could detach the system drive."""
+    if dry_run:
+        print(f"    [DRY RUN] Would run: mountvol {drive} /d")
+        return True
+
+    print(f"    {drive} is held by a mounted volume (SD reader, USB slot,")
+    print(f"    recovery partition, or similar). It must be released before")
+    print(f"    subst can map it.")
+    # auto_yes=False on purpose — destructive op deserves an explicit y/N
+    # even if the surrounding step ran with --yes.
+    if not confirm(f"    Release {drive} via `mountvol {drive} /d`?",
+                   auto_yes=False):
+        print(f"    Skipped — {drive} remains held; subst will fail.")
+        return False
+
+    try:
+        subprocess.run(
+            ["mountvol", drive, "/d"],
+            check=True, capture_output=True, text=True, timeout=10
+        )
+        status_line(f"{drive} mountvol", True, "released")
+        logger.info(f"Released volume letter via mountvol: {drive}")
+        return True
+    except subprocess.CalledProcessError as e:
+        msg = ((e.stderr or "").strip()
+               or (e.stdout or "").strip()
+               or f"exit code {e.returncode}")
+        status_line(f"{drive} mountvol", False, f"mountvol failed: {msg}")
+        logger.error(f"mountvol failed for {drive}: {msg}")
+        return False
 
 
 def _ensure_drive_label(drive: str, label: str, dry_run: bool) -> bool:

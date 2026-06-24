@@ -86,7 +86,13 @@ DEFAULT_CONFIG: dict = {
         "move_to_monitor_delay_ms": 100,
         "maximize_delay_ms": 12,
         "after_maximize_delay_ms": 100,
-        "final_init_delay_ms": 5000,
+        # 15s mirrors the legacy 1_StartupScript_AppsToDesktop.ps1 value.
+        # 5s was too short: pythonw apps (FastRak) hadn't shown their
+        # main window before the launcher switched back to desktop 1,
+        # which placed them on the wrong desktop. See _save() in
+        # ui_settings_dialog.py for the one-time migration that bumps
+        # legacy 5000-pinned configs.
+        "final_init_delay_ms": 15000,
     },
     # Process-name remap for apps launched via a stub launcher whose
     # window lives on a different process name. These mirror the
@@ -108,6 +114,21 @@ DEFAULT_CONFIG: dict = {
     # Empty = launcher uses its built-in default
     # (C:\Program Files\AutoHotkey\v2\AutoHotkey.exe).
     "ahk_exe": "",
+    # Subst drive mappings the launcher applies directly at logon —
+    # this is the authoritative way drives get set up under the
+    # launcher's control. HKCU\Run subst entries also exist (set up by
+    # setup_environment.py's Drives step) as redundancy, but they
+    # routinely lose the race against Defender / OneDrive / indexer on
+    # cold boot. Auto-populated by the Settings dialog from the
+    # Drives tab. Schema: [{"letter": "M:", "target": "D:\\music"}, ...]
+    "drive_mappings": [],
+    # Drive letters the launcher should *verify* are accessible before
+    # launching apps. With drive_mappings handling the subst, this
+    # becomes a near-instant sanity check rather than a 30s gamble.
+    # Same source of truth as drive_mappings (Drives tab) but stored
+    # as a flat letter list for the PS1's simple poll loop.
+    "wait_for_drives": [],
+    "drive_wait_timeout_ms": 30000,
     "apps": [],
 }
 
